@@ -118,12 +118,19 @@ mod tests {
     fn previous_makes_the_chain_walkable() {
         let mut isolate = Isolate::new();
         let outer = isolate.new_function_context(1, Tagged::ZERO);
-        let middle = isolate.new_function_context(1, outer.tagged());
-        let inner = isolate.new_function_context(1, middle.tagged());
+        isolate.handles.push(outer.tagged());
+        let middle = isolate.new_function_context(1, isolate.handles[0]);
+        isolate.handles.push(middle.tagged());
+        let inner = isolate.new_function_context(1, isolate.handles[1]);
+        isolate.handles.push(inner.tagged());
 
+        let at = |isolate: &Isolate, index: usize| {
+            Context::unchecked_cast(isolate.handles[index].to_strong_heap_object().unwrap())
+        };
+        let inner = at(&isolate, 2);
         assert_eq!(inner.at_depth(&isolate.heap, 0), inner);
-        assert_eq!(inner.at_depth(&isolate.heap, 1), middle);
-        assert_eq!(inner.at_depth(&isolate.heap, 2), outer);
+        assert_eq!(inner.at_depth(&isolate.heap, 1), at(&isolate, 1));
+        assert_eq!(inner.at_depth(&isolate.heap, 2), at(&isolate, 0));
     }
 
     #[test]

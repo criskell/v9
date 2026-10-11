@@ -360,6 +360,10 @@ impl Isolate {
 
 #[cfg(test)]
 mod tests {
+    fn rooted(isolate: &Isolate) -> JSObject {
+        JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap())
+    }
+
     use super::*;
     use crate::objects::descriptor_array::K_NOT_FOUND;
     use crate::objects::heap_number::number_value;
@@ -534,17 +538,20 @@ mod tests {
     fn properties_spill_into_a_backing_store_when_the_inline_slots_run_out() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
+        isolate.handles.push(object.tagged());
         let inline_slots = object.map(&isolate.heap).inobject_properties(&isolate.heap);
         assert_eq!(inline_slots, Map::K_INITIAL_INOBJECT_SLACK);
 
         let count = inline_slots + 3;
         for i in 0..count {
             let name = format!("p{i}");
+            let object = rooted(&isolate);
             assert!(isolate.set_property_by_str(object, &name, Smi::from_int(i)));
         }
 
         for i in 0..count {
             let name = format!("p{i}");
+            let object = rooted(&isolate);
             assert_eq!(
                 Smi::to_int(isolate.get_property_by_str(object, &name)),
                 i,
@@ -552,6 +559,7 @@ mod tests {
             );
         }
 
+        let object = rooted(&isolate);
         let array = object.property_array(&isolate.heap);
         assert!(
             array.length(&isolate.heap) >= count - inline_slots,
@@ -699,16 +707,20 @@ mod tests {
     fn a_long_shape_chain_stays_consistent() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
+        isolate.handles.push(object.tagged());
         const N: i32 = 40;
         for i in 0..N {
+            let object = rooted(&isolate);
             assert!(isolate.set_property_by_str(object, &format!("f{i}"), Smi::from_int(i * 3)));
         }
 
+        let object = rooted(&isolate);
         let map = object.map(&isolate.heap);
         assert_eq!(map.number_of_own_descriptors(&isolate.heap), N);
         assert_eq!(map.own_property_names(&isolate.heap).len() as i32, N);
 
         for i in 0..N {
+            let object = rooted(&isolate);
             assert_eq!(
                 Smi::to_int(isolate.get_property_by_str(object, &format!("f{i}"))),
                 i * 3

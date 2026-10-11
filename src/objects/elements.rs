@@ -487,21 +487,28 @@ mod tests {
     fn converting_to_double_elements_unboxes_what_was_there() {
         let mut isolate = Isolate::new();
         let array = isolate.new_js_array(2);
-        let object = array.as_js_object();
+        isolate.handles.push(array.tagged());
+        let rooted = |isolate: &Isolate| {
+            JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap())
+        };
+        let target = rooted(&isolate);
         ElementsAccessor::for_kind(PackedSmiElements).set(
             &mut isolate,
-            object,
+            target,
             0,
             Smi::from_int(7),
         );
 
+        let target = rooted(&isolate);
         let elements = isolate.convert_elements_with_capacity(
-            object,
+            target,
             PackedSmiElements,
             PackedDoubleElements,
             4,
         );
-        let doubles = FixedDoubleArray::unchecked_cast(elements.to_strong_heap_object().unwrap());
+        isolate.handles.push(elements);
+        let doubles =
+            FixedDoubleArray::unchecked_cast(isolate.handles[1].to_strong_heap_object().unwrap());
         assert_eq!(doubles.length(&isolate.heap), 4);
         assert_eq!(doubles.get_scalar(&isolate.heap, 0), 7.0);
         assert!(

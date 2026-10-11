@@ -173,6 +173,7 @@ fn delete_on_an_array_punches_a_hole_and_keeps_the_length() {
 #[test]
 fn a_dictionary_object_survives_a_collection() {
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     isolate.setup_global_object();
     let value = isolate
         .run_script(

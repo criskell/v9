@@ -157,7 +157,7 @@ impl TransitionsAccessor {
     }
 
     /// `TransitionsAccessor::GetSimpleTransition`
-    fn simple_transition(heap: &Heap, map: Map) -> Option<Map> {
+    pub(crate) fn simple_transition(heap: &Heap, map: Map) -> Option<Map> {
         let raw = map.raw_transitions(heap);
         Some(Map::unchecked_cast(raw.to_heap_object()?))
     }

@@ -112,12 +112,16 @@ fn an_object_graph_survives_repeated_collections_with_a_tiny_nursery() {
     const LENGTH: i32 = 40;
     let head = isolate.new_fixed_array(2);
     isolate.handles.push(head.tagged());
-    let mut tail = head;
+    isolate.handles.push(head.tagged());
     for i in 0..LENGTH {
         let value = isolate.new_heap_number(i as f64 + 0.5).tagged();
-        let next = isolate.new_fixed_array(2);
+        isolate.handles.push(value);
+        let next = isolate.new_fixed_array(2).tagged();
+        let value = isolate.handles.pop().unwrap();
+        let tail = FixedArray::unchecked_cast(isolate.handles[1].to_strong_heap_object().unwrap());
         tail.set(&mut isolate.heap, 0, value);
-        tail.set(&mut isolate.heap, 1, next.tagged());
+        tail.set(&mut isolate.heap, 1, next);
+        isolate.handles[1] = next;
 
         // Churn, so a collection is worth doing.
         for j in 0..20 {
@@ -129,9 +133,10 @@ fn an_object_graph_survives_repeated_collections_with_a_tiny_nursery() {
         // collection may have moved what they point at. Walking back from
         // the root is the discipline a moving collector requires, and it
         // doubles as a check that every link was updated.
-        let mut node =
-            FixedArray::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap());
+        let mut node_address = isolate.handles[0];
         for step in 0..=i {
+            let mut node =
+                FixedArray::unchecked_cast(node_address.to_strong_heap_object().unwrap());
             let value = node.get(&isolate.heap, 0);
             assert_eq!(
                 number_value(&isolate.heap, value),
@@ -142,8 +147,8 @@ fn an_object_graph_survives_repeated_collections_with_a_tiny_nursery() {
             node = FixedArray::unchecked_cast(
                 node.get(&isolate.heap, 1).to_strong_heap_object().unwrap(),
             );
+            node_address = node.tagged();
         }
-        tail = node;
     }
 
     assert!(isolate.heap.gc_count >= LENGTH as usize);
@@ -187,6 +192,7 @@ fn inherited_and_own_properties_resolve_in_the_right_order() {
 fn numbers_choose_between_immediate_and_boxed_representations() {
     let mut isolate = Isolate::new();
     let object = isolate.new_js_object();
+    isolate.handles.push(object.tagged());
 
     let cases: [(f64, bool); 6] = [
         (0.0, true),
@@ -205,7 +211,9 @@ fn numbers_choose_between_immediate_and_boxed_representations() {
             "{value} should {}be a Smi",
             if expect_smi { "" } else { "not " }
         );
+        let object = JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap());
         isolate.set_property_by_str(object, "n", tagged);
+        let object = JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap());
         let read_back = isolate.get_property_by_str(object, "n");
         assert_eq!(
             number_value(&isolate.heap, read_back).map(f64::to_bits),

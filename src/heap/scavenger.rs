@@ -206,12 +206,14 @@ mod tests {
     use crate::objects::tagged::Tagged;
 
     fn small_nursery_isolate() -> Isolate {
-        Isolate::with_heap(Heap::with_config(HeapConfig {
+        let mut isolate = Isolate::with_heap(Heap::with_config(HeapConfig {
             read_only_space_size: 256 * crate::common::globals::K_KB,
             semi_space_size: 8 * crate::common::globals::K_KB,
             initial_old_space_size: 256 * crate::common::globals::K_KB,
             max_old_space_size: 16 * crate::common::globals::K_MB,
-        }))
+        }));
+        isolate.set_allocation_gc_interval(0);
+        isolate
     }
 
     fn collect_keeping(isolate: &mut Isolate, value: Tagged) -> (Tagged, ScavengeStats) {

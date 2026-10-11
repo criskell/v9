@@ -599,8 +599,12 @@ impl Isolate {
             fresh
         };
 
+        let scope = self.handle_scope();
+        let descriptors_handle = self.create_object_handle(new_descriptors.object());
         let new_map = self.copy_map_shell(map);
-        new_map.set_instance_descriptors(&mut self.heap, new_descriptors.tagged());
+        let new_descriptors = descriptors_handle.get(self);
+        self.close_handle_scope(scope);
+        new_map.set_instance_descriptors(&mut self.heap, new_descriptors);
         new_map.set_number_of_own_descriptors(&mut self.heap, number_of_own + 1);
         new_map.set_owns_descriptors(&mut self.heap, true);
         new_map.set_constructor_or_back_pointer(&mut self.heap, map.tagged());

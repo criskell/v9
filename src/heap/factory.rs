@@ -102,6 +102,8 @@ impl Isolate {
         kind: ElementsKind,
         length: u32,
     ) -> JSArray {
+        let scope = self.handle_scope();
+        let elements_handle = self.create_handle(elements);
         let map = self
             .roots
             .get_initial_js_array_map(kind)
@@ -115,6 +117,8 @@ impl Isolate {
         array
             .as_js_object()
             .set_raw_properties_or_hash(&mut self.heap, empty);
+        let elements = elements_handle.get(self);
+        self.close_handle_scope(scope);
         array.set_elements(&mut self.heap, elements);
         array.set_length_value(&mut self.heap, length);
         array
@@ -865,13 +869,17 @@ mod tests {
     fn growing_a_property_array_preserves_its_contents() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.grow_property_array(object, 2);
-        let array = object.property_array(&isolate.heap);
+        isolate.handles.push(object.tagged());
+        let rooted = |isolate: &Isolate| {
+            JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap())
+        };
+        isolate.grow_property_array(rooted(&isolate), 2);
+        let array = rooted(&isolate).property_array(&isolate.heap);
         array.set(&mut isolate.heap, 0, Smi::from_int(7));
         array.set(&mut isolate.heap, 1, Smi::from_int(8));
 
-        isolate.grow_property_array(object, 5);
-        let grown = object.property_array(&isolate.heap);
+        isolate.grow_property_array(rooted(&isolate), 5);
+        let grown = rooted(&isolate).property_array(&isolate.heap);
         assert_eq!(grown.length(&isolate.heap), 5);
         assert_eq!(Smi::to_int(grown.get(&isolate.heap, 0)), 7);
         assert_eq!(Smi::to_int(grown.get(&isolate.heap, 1)), 8);
@@ -881,9 +889,11 @@ mod tests {
             "new slots start as undefined"
         );
 
-        isolate.grow_property_array(object, 1);
+        isolate.grow_property_array(rooted(&isolate), 1);
         assert_eq!(
-            object.property_array(&isolate.heap).length(&isolate.heap),
+            rooted(&isolate)
+                .property_array(&isolate.heap)
+                .length(&isolate.heap),
             5
         );
     }

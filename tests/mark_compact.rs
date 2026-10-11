@@ -32,6 +32,7 @@ fn tenured_arrays(isolate: &mut Isolate, count: i32, keep_every: i32) -> Vec<Tag
 #[test]
 fn dead_old_space_objects_give_their_bytes_back() {
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     let kept = tenured_arrays(&mut isolate, 100, 10);
     let before = isolate.heap.old_space().size();
 
@@ -55,6 +56,7 @@ fn dead_old_space_objects_give_their_bytes_back() {
 #[test]
 fn a_surviving_object_still_reads_correctly_after_moving() {
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     tenured_arrays(&mut isolate, 100, 10);
     let addresses_before: Vec<u64> = isolate
         .handles
@@ -93,6 +95,7 @@ fn references_between_survivors_are_updated() {
     // The hard part of compaction: a pointer held *inside* a moved object
     // to another moved object.
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
 
     // Garbage *before* the inner array as well, or it would sit at the
     // bottom of old space and never move -- and then the test would pass
@@ -138,6 +141,7 @@ fn a_weak_reference_to_something_dead_comes_back_cleared() {
     // The scavenger treats weak references as strong, so this is the first
     // collection that can actually clear one.
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     let target = isolate.new_fixed_array_tenured(2);
     let holder = isolate.new_fixed_array_tenured(2);
     holder.set(&mut isolate.heap, 0, target.object().tagged_weak());
@@ -161,6 +165,7 @@ fn a_weak_reference_to_something_dead_comes_back_cleared() {
 #[test]
 fn a_weak_reference_to_something_alive_survives_and_is_updated() {
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     let target = isolate.new_fixed_array_tenured(2);
     target.set(&mut isolate.heap, 0, Smi::from_int(99));
     for _ in 0..50 {
@@ -196,6 +201,7 @@ fn a_whole_engine_heap_survives_a_major_collection() {
     // global object, feedback vectors, closures -- goes through the same
     // update pass. Reading the globals back afterwards exercises all of it.
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     isolate.setup_global_object();
     isolate
         .run_script(
@@ -241,6 +247,7 @@ fn a_whole_engine_heap_survives_a_major_collection() {
 #[test]
 fn collecting_twice_in_a_row_is_stable() {
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     isolate.setup_global_object();
     isolate
         .run_script("var a = [1, 2, 3]; var o = { x: a };")
@@ -281,6 +288,7 @@ fn a_transitioned_map_is_reached_through_the_object_that_wears_it() {
     // the map's descriptor array is swept out from under the object and the
     // next property read walks off the end of it.
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     let object = isolate.new_js_object();
     isolate.handles.push(object.tagged());
     isolate.set_property_by_str(object, "alpha", Smi::from_int(11));
@@ -321,6 +329,7 @@ fn read_only_objects_are_never_moved() {
     // Maps live in read-only space precisely so that nothing has to update
     // a reference to them.
     let mut isolate = Isolate::new();
+    isolate.set_allocation_gc_interval(0);
     isolate.setup_global_object();
     let before = isolate.roots.js_object_map;
     let object = isolate.new_js_object();

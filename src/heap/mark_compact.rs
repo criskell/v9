@@ -101,6 +101,11 @@ impl Isolate {
             for slot in slots {
                 let value = self.heap.read_tagged(slot);
                 if value.is_weak() {
+                    if let Some(target) = value.to_heap_object() {
+                        if !self.is_in_old_space(target.address()) {
+                            self.mark_object(bitmap, worklist, target.tagged());
+                        }
+                    }
                     continue;
                 }
                 self.mark_object(bitmap, worklist, value);
