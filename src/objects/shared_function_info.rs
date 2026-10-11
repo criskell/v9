@@ -1,31 +1,3 @@
-//! Ported from `src/objects/shared-function-info.h` and
-//! `shared-function-info.tq`.
-//!
-//! Everything about a function *literal* that every closure over it shares:
-//! its name, its compiled bytecode, how many parameters it declares. A
-//! `function` written once inside a loop produces many [`JSFunction`]s and
-//! exactly one `SharedFunctionInfo`, which is the point -- the bytecode is
-//! compiled once.
-//!
-//! ```text
-//!   0  map
-//!   8  function_data           tagged (BytecodeArray)
-//!  16  name                    tagged (String)
-//!  24  length                  u16   -- declared parameters, no receiver
-//!  26  formal_parameter_count  u16   -- including the receiver
-//!  28  flags                   u32
-//!  32  == SharedFunctionInfo::kSize
-//! ```
-//!
-//! Deviations, tracked in `PORTING.md`: V8 splits `function_data` into a
-//! trusted and an untrusted half for the sandbox, and overloads it to hold a
-//! `Code` object, a lazy-compilation stub or a builtin id depending on the
-//! function's compilation state. `vx` compiles eagerly and has one tier, so
-//! it holds a `BytecodeArray` or `undefined` for a native. There is also no
-//! `ScopeInfo` (no closures yet) and no `Script`.
-//!
-//! [`JSFunction`]: crate::objects::js_function::JSFunction
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::bytecode_array::BytecodeArray;
@@ -36,15 +8,11 @@ object_type!(
     SharedFunctionInfo
 );
 
-/// `SharedFunctionInfo::flags`, reduced to what `vx` tracks.
 const IS_NATIVE_BIT: u32 = 0;
 
 impl SharedFunctionInfo {
     pub const K_FUNCTION_DATA_OFFSET: i32 = K_TAGGED_SIZE;
     pub const K_NAME_OFFSET: i32 = Self::K_FUNCTION_DATA_OFFSET + K_TAGGED_SIZE;
-    /// `SharedFunctionInfo::feedback_metadata`. V8 overloads
-    /// `outer_scope_info_or_feedback_metadata` for this; `vx` has no scope
-    /// info, so it is its own field.
     pub const K_FEEDBACK_METADATA_OFFSET: i32 = Self::K_NAME_OFFSET + K_TAGGED_SIZE;
     pub const K_LENGTH_OFFSET: i32 = Self::K_FEEDBACK_METADATA_OFFSET + K_TAGGED_SIZE;
     pub const K_FORMAL_PARAMETER_COUNT_OFFSET: i32 = Self::K_LENGTH_OFFSET + 2;
@@ -100,8 +68,6 @@ impl SharedFunctionInfo {
         self.field(Self::K_NAME_OFFSET)
     }
 
-    /// `SharedFunctionInfo::feedback_metadata`: the slot kinds of this
-    /// function's feedback vector, shared by every closure over it.
     #[inline]
     pub fn feedback_metadata(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_FEEDBACK_METADATA_OFFSET))
@@ -117,8 +83,6 @@ impl SharedFunctionInfo {
         self.field(Self::K_FEEDBACK_METADATA_OFFSET)
     }
 
-    /// `SharedFunctionInfo::length`: declared parameters, receiver excluded.
-    /// This is what `Function.prototype.length` reports.
     #[inline]
     pub fn length(self, heap: &Heap) -> i32 {
         heap.read_u16(self.field(Self::K_LENGTH_OFFSET)) as i32
@@ -153,8 +117,6 @@ impl SharedFunctionInfo {
         heap.write_u32(self.field(Self::K_FLAGS_OFFSET), value);
     }
 
-    /// `SharedFunctionInfo::native`: implemented in Rust rather than in
-    /// JavaScript. `function_data` then holds the builtin's id as a Smi.
     #[inline]
     pub fn is_native(self, heap: &Heap) -> bool {
         self.flags(heap) & (1 << IS_NATIVE_BIT) != 0
@@ -170,7 +132,6 @@ impl SharedFunctionInfo {
         self.set_flags(heap, updated);
     }
 
-    /// The builtin id of a native function, from `function_data`.
     pub fn builtin_id(self, heap: &Heap) -> i32 {
         debug_assert!(self.is_native(heap));
         crate::objects::smi::Smi::to_int(self.function_data(heap))

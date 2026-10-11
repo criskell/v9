@@ -1,19 +1,6 @@
-//! Ported from `src/heap/new-spaces.h` / `new-spaces.cc`.
-//!
-//! The nursery: two equally sized halves that swap roles at every scavenge.
-//! Allocation always goes into to-space; a collection evacuates the live
-//! objects out of from-space and then drops it whole.
-//!
-//! `SemiSpaceNewSpace` owns both halves *and* the age mark, which is what
-//! makes the generational boundary a property of the nursery rather than of
-//! the heap: survivors are copied to the bottom of to-space and fresh
-//! allocation continues above them, so one address separates "has survived a
-//! collection" from "has not".
-
 use crate::heap::spaces::{AllocationSpace, Space};
 use crate::objects::tagged::Address;
 
-/// `SemiSpace final : public Space`
 #[derive(Clone, Debug)]
 pub struct SemiSpace {
     space: Space,
@@ -30,9 +17,6 @@ impl SemiSpace {
         }
     }
 
-    /// `SemiSpace::Swap`: the two halves exchange roles. Their address ranges
-    /// are unaffected -- only the label moves, which is why an object's
-    /// address still says which half it is in.
     pub fn swap(from: &mut SemiSpace, to: &mut SemiSpace) {
         std::mem::swap(&mut from.space, &mut to.space);
         from.space.set_id_for_swap(AllocationSpace::FromSpace);
@@ -100,8 +84,6 @@ impl SemiSpace {
 pub struct SemiSpaceNewSpace {
     to_space: SemiSpace,
     from_space: SemiSpace,
-    /// `SemiSpaceNewSpace::age_mark_`: everything in to-space below this
-    /// address has already survived one scavenge.
     age_mark: Address,
 }
 
@@ -155,14 +137,10 @@ impl SemiSpaceNewSpace {
         &mut self.from_space
     }
 
-    /// `NewSpace::AllocateRaw`: always into to-space.
     #[inline]
     pub fn allocate_raw(&mut self, size_in_bytes: usize) -> Option<Address> {
         self.to_space.allocate_raw(size_in_bytes)
     }
-
-    // `NewSpace`'s own accessors describe the half being allocated into,
-    // which is what callers asking "how full is new space?" mean.
 
     #[inline]
     pub fn start(&self) -> Address {
@@ -177,8 +155,6 @@ impl SemiSpaceNewSpace {
     pub fn size(&self) -> usize {
         self.to_space.size()
     }
-    /// `NewSpace::Capacity`: of one half. Total committed memory is twice
-    /// this, since the other half is reserved for the next collection.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.to_space.capacity()
@@ -188,8 +164,6 @@ impl SemiSpaceNewSpace {
         self.to_space.available()
     }
 
-    /// `NewSpace::Contains`: in *either* half. This is the generational
-    /// predicate -- an object is young if it is anywhere in the nursery.
     #[inline]
     pub fn contains(&self, address: Address) -> bool {
         self.to_space.contains(address) || self.from_space.contains(address)
@@ -227,7 +201,6 @@ mod tests {
         assert_eq!(space.from_space().start(), to_start);
         assert_eq!(space.to_space().id(), AllocationSpace::NewSpace);
         assert_eq!(space.from_space().id(), AllocationSpace::FromSpace);
-        // The object did not move, but it is now in the half being evacuated.
         assert!(space.from_space().contains(address));
         assert!(space.contains(address), "still young either way");
     }
@@ -243,7 +216,6 @@ mod tests {
     #[test]
     fn the_age_mark_separates_survivors_from_fresh_allocations() {
         let mut space = new_space();
-        // Pretend a collection just evacuated 32 bytes of survivors.
         let survivor = space.allocate_raw(32).unwrap();
         space.set_age_mark(space.top());
         let fresh = space.allocate_raw(16).unwrap();

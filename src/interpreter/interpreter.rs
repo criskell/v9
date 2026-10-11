@@ -1,34 +1,3 @@
-//! Ported from `src/interpreter/interpreter.h` and the bytecode handlers in
-//! `src/interpreter/interpreter-generator.cc`.
-//!
-//! The dispatch loop. V8's handlers are not a loop at all: each bytecode has
-//! its own machine-code handler, generated from CSA, and each one ends by
-//! jumping straight to the next handler through a dispatch table. `vx`'s is a
-//! `match` in a loop -- the same semantics, one indirect branch instead of a
-//! tail call per bytecode.
-//!
-//! The frame
-//! ---------
-//! Registers live on [`Isolate::stack`], so the collector traces them as
-//! roots: an object held only in a register across an allocation still
-//! survives.
-//!
-//! ```text
-//!   stack: [ ... | receiver | arg0 | arg1 | r0 | r1 | ... ]
-//!                 ^params_base              ^registers_base
-//! ```
-//!
-//! A parameter's register index is negative, so the two halves are addressed
-//! from the same signed index -- see [`crate::interpreter::bytecode_register`].
-//!
-//! Deviations, tracked in `PORTING.md`: the fixed frame slots (the closure,
-//! the context, the feedback vector) are fields of the Rust frame rather than
-//! stack slots, because nothing reads them through a register yet. A call
-//! recurses into this function rather than pushing a machine frame, so
-//! JavaScript recursion is bounded by Rust's stack and is checked explicitly.
-//! Keyed property access converts its key to a string name, so an array is
-//! an object with `"0"`, `"1"` ... properties and has no `length`.
-
 use crate::builtins::builtins::Builtin;
 use crate::execution::isolate::Isolate;
 use crate::interpreter::bytecode_operands::OperandScale;
@@ -40,43 +9,25 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
-/// A thrown value, propagating up. V8 unwinds through the handler table;
-/// `vx` has no `try`, so this always reaches the top.
 #[derive(Copy, Clone, Debug)]
 pub struct Thrown(pub Tagged);
 
 pub type ExecutionResult = Result<Tagged, Thrown>;
 
-/// How deep JavaScript calls may nest. Each one is a Rust frame, so this
-/// stands in for V8's stack guard.
 const K_MAX_CALL_DEPTH: usize = 180;
 
-/// The part of the interpreter frame that is not on the value stack.
-/// How many fixed slots the frame has: the argument count, the closure, the
-/// current context, the bytecode array and the feedback vector -- the ones
-/// [`Register`] addresses with its small negative indices.
 const K_FIXED_SLOT_COUNT: usize = 5;
 
 struct InterpreterFrame {
     bytecode: BytecodeArray,
-    /// This closure's feedback vector, where the inline caches live.
-    /// `None` for a function compiled without one.
     feedback_vector: Option<crate::objects::feedback_vector::FeedbackVector>,
-    /// Where the receiver sits on `isolate.stack`; parameter *i* is at
-    /// `params_base + i`.
     params_base: usize,
     params_count: usize,
-    /// Where the fixed slots sit. Slot `-k` is at `fixed_base + (k - 1)`.
     fixed_base: usize,
-    /// Where `r0` sits.
     registers_base: usize,
 }
 
 impl Isolate {
-    /// `Interpreter::Execute`: runs `function` and returns its value.
-    ///
-    /// `args` excludes the receiver. Missing parameters become `undefined`
-    /// and extra arguments are dropped, as the specification requires.
     pub fn execute(
         &mut self,
         function: JSFunction,
@@ -102,8 +53,6 @@ impl Isolate {
         let params_count = bytecode.parameter_count(&self.heap) as usize;
         let register_count = bytecode.register_count(&self.heap) as usize;
 
-        // Lay the frame out on the value stack, so everything in it is a
-        // root for the collector.
         let params_base = self.stack.len();
         self.stack.push(receiver);
         let undefined = self.undefined_value();
@@ -111,11 +60,6 @@ impl Isolate {
             self.stack
                 .push(args.get(index).copied().unwrap_or(undefined));
         }
-        // The fixed slots are real frame slots, as in V8, so that
-        // `Register::current_context()` is an ordinary register and
-        // `PushContext` needs no special case. They are traced like any
-        // other stack slot, which is what keeps a context alive while its
-        // frame runs.
         let fixed_base = self.stack.len();
         for _ in 0..K_FIXED_SLOT_COUNT {
             self.stack.push(undefined);
@@ -126,7 +70,6 @@ impl Isolate {
             self.stack.push(undefined);
         }
 
-        // `--trace-ic` and, in V8, the tier-up decision read this.
         let feedback_vector = crate::objects::feedback_vector::try_cast_feedback_vector(
             &self.heap,
             function.feedback_vector(&self.heap),
@@ -144,8 +87,6 @@ impl Isolate {
             registers_base,
         };
 
-        // The closure's own context becomes the frame's current one. A
-        // function that captured nothing simply keeps using it.
         let context = function.context(&self.heap);
         self.write_register(&frame, Register::current_context(), context);
         self.write_register(&frame, Register::function_closure(), function.tagged());
@@ -154,16 +95,10 @@ impl Isolate {
         let result = self.dispatch(&frame);
         self.call_depth -= 1;
 
-        // Pop the frame whether or not the call threw.
         self.stack.truncate(params_base);
         result
     }
 
-    /// Where a register lives on the value stack.
-    ///
-    /// Three ranges, as [`Register`]'s encoding implies: non-negative is the
-    /// register file, a small negative is one of the fixed slots, and
-    /// anything further down is a parameter.
     #[inline]
     fn register_slot(&self, frame: &InterpreterFrame, register: Register) -> usize {
         let index = register.index();
@@ -178,7 +113,6 @@ impl Isolate {
             );
             return frame.params_base + parameter as usize;
         }
-        // A fixed slot: index -1 is the first, -5 the last.
         let fixed = (-index - 1) as usize;
         debug_assert!(fixed < K_FIXED_SLOT_COUNT, "unknown fixed slot {index}");
         frame.fixed_base + fixed
@@ -195,7 +129,6 @@ impl Isolate {
         self.stack[slot] = value;
     }
 
-    /// The dispatch loop proper.
     fn dispatch(&mut self, frame: &InterpreterFrame) -> ExecutionResult {
         let bytecode_array = frame.bytecode;
         let length = bytecode_array.length(&self.heap);
@@ -203,8 +136,6 @@ impl Isolate {
         let mut offset: i32 = 0;
 
         while offset < length {
-            // Resolve the prefix: a Wide/ExtraWide byte scales every
-            // scalable operand of the instruction that follows it.
             let mut scale = OperandScale::Single;
             let mut opcode_offset = offset;
             let mut bytecode = Bytecode::from_byte(bytecode_array.get(&self.heap, offset))
@@ -234,7 +165,6 @@ impl Isolate {
             let register_operand =
                 |isolate: &Isolate, index: usize| Register::from_operand(operand(isolate, index));
 
-            // Advance past the instruction; a jump overwrites this.
             let instruction_size = (opcode_offset - offset) + bytecode.size(scale) as i32;
             let mut next_offset = offset + instruction_size;
 
@@ -275,15 +205,12 @@ impl Isolate {
                     let scope_info = bytecode_array
                         .constant_pool(&self.heap)
                         .get(&self.heap, index);
-                    // `previous` is whatever is current now, so the chain is
-                    // built by the act of creating the context in the frame.
                     let previous = self.read_register(frame, Register::current_context());
                     let context = self.new_function_context(slots, previous);
                     context.set_scope_info(&mut self.heap, scope_info);
                     accumulator = context.tagged();
                 }
                 Bytecode::PushContext => {
-                    // Save the current context, install the new one.
                     let register = register_operand(self, 0);
                     let current = self.read_register(frame, Register::current_context());
                     self.write_register(frame, register, current);
@@ -365,7 +292,6 @@ impl Isolate {
                     let name = self.constant_name(bytecode_array, operand(self, 1));
                     let slot = operand(self, 2);
                     self.store_named_property_ic(frame, object, name, accumulator, slot)?;
-                    // Both bytecodes clobber the accumulator.
                     accumulator = self.undefined_value();
                 }
                 Bytecode::SetKeyedProperty => {
@@ -389,7 +315,6 @@ impl Isolate {
                 | Bytecode::ShiftLeft
                 | Bytecode::ShiftRight
                 | Bytecode::ShiftRightLogical => {
-                    // `acc = reg op acc`: the register is the left operand.
                     let left = self.read_register(frame, register_operand(self, 0));
                     accumulator = self.apply_binary_op(bytecode, left, accumulator);
                 }
@@ -398,7 +323,6 @@ impl Isolate {
                 | Bytecode::MulSmi
                 | Bytecode::DivSmi
                 | Bytecode::ModSmi => {
-                    // `acc = acc op imm`, the other way round.
                     let right = Smi::from_int(operand(self, 0));
                     accumulator = self.apply_binary_op(bytecode, accumulator, right);
                 }
@@ -422,8 +346,6 @@ impl Isolate {
                     accumulator = self.boolean_value(!truthy);
                 }
                 Bytecode::LogicalNot => {
-                    // The operand is already a boolean, so this is identity
-                    // on the other oddball rather than a coercion.
                     accumulator = self.boolean_value(accumulator != self.true_value());
                 }
                 Bytecode::TypeOf => accumulator = self.type_of(accumulator),
@@ -460,8 +382,6 @@ impl Isolate {
                     accumulator = self.boolean_value(left == accumulator);
                 }
                 Bytecode::TestUndetectable => {
-                    // True for `null` and `undefined`; in V8 also for
-                    // `document.all`, which `vx` has no way to create.
                     let null = self.null_value();
                     let undefined = self.undefined_value();
                     accumulator =
@@ -485,8 +405,6 @@ impl Isolate {
                     accumulator = self.new_js_object().tagged();
                 }
                 Bytecode::CreateEmptyArrayLiteral => {
-                    // Deviation: an array is a plain object here, so it has
-                    // no `length`. See the module docs.
                     accumulator = self.new_js_object().tagged();
                 }
                 Bytecode::CreateClosure => {
@@ -494,9 +412,6 @@ impl Isolate {
                     let shared_index = bytecode_array
                         .constant_pool(&self.heap)
                         .get(&self.heap, index);
-                    // The closure records the context it is created in --
-                    // the one field that makes a closure close over
-                    // anything at all.
                     let context = self.read_register(frame, Register::current_context());
                     accumulator =
                         self.closure_for_with_context(Smi::to_int(shared_index) as usize, context);
@@ -515,7 +430,6 @@ impl Isolate {
                     }
 
                     let (receiver, arguments) = if bytecode == Bytecode::CallProperty {
-                        // The receiver is the first register of the list.
                         let receiver = arguments.remove(0);
                         (receiver, arguments)
                     } else {
@@ -557,8 +471,6 @@ impl Isolate {
                 | Bytecode::JumpIfUndefinedConstant
                 | Bytecode::JumpIfNotUndefinedConstant
                 | Bytecode::JumpIfUndefinedOrNullConstant => {
-                    // The offset is either the operand or, for the
-                    // `*Constant` forms, a Smi in the constant pool.
                     let delta = if bytecode.is_jump_constant() {
                         let index = operand(self, 0);
                         Smi::to_int(
@@ -570,7 +482,6 @@ impl Isolate {
                         operand(self, 0)
                     };
                     if self.jump_condition_holds(bytecode, accumulator) {
-                        // Relative to the opcode byte, not to the prefix.
                         next_offset = opcode_offset + delta;
                     }
                 }
@@ -596,12 +507,9 @@ impl Isolate {
             offset = next_offset;
         }
 
-        // Control fell off the end. The generator appends an explicit
-        // `return undefined`, so this is unreachable in generated code.
         Ok(self.undefined_value())
     }
 
-    /// Whether a conditional jump is taken.
     fn jump_condition_holds(&mut self, bytecode: Bytecode, accumulator: Tagged) -> bool {
         use Bytecode::*;
         match bytecode {
@@ -657,7 +565,6 @@ impl Isolate {
         }
     }
 
-    /// Walks `depth` links out from the context in `base` and reads `slot`.
     fn context_slot(
         &mut self,
         frame: &InterpreterFrame,
@@ -697,9 +604,6 @@ impl Isolate {
             {
                 Ok(Context::unchecked_cast(object).at_depth(&self.heap, depth))
             }
-            // Only reachable if scope analysis and the generator disagree,
-            // so it is a bug rather than a program error -- but throwing
-            // beats reading a non-context as one.
             _ => {
                 let message = self
                     .new_string("internal: no context in this frame")
@@ -715,8 +619,6 @@ impl Isolate {
             .get(&self.heap, index)
     }
 
-    /// Any value used as a property key becomes an internalized name, which
-    /// is what lets the lookup compare it by address.
     fn key_to_name(&mut self, key: Tagged) -> Tagged {
         if let Some(string) = crate::objects::string::String::try_cast(&self.heap, key) {
             if string.is_internalized(&self.heap) {
@@ -727,8 +629,6 @@ impl Isolate {
         self.internalize_string(&text).tagged()
     }
 
-    /// `LoadIC`: the cached path when this site has a feedback vector, and
-    /// the plain lookup when it does not.
     fn load_named_property_ic(
         &mut self,
         frame: &InterpreterFrame,
@@ -747,7 +647,6 @@ impl Isolate {
             {
                 Ok(self.load_ic(JSObject::unchecked_cast(receiver), name, vector, slot))
             }
-            // Not an object: the error path, which no cache helps with.
             _ => self.load_property(object, name),
         }
     }
@@ -793,8 +692,6 @@ impl Isolate {
                 Ok(self.get_property(JSObject::unchecked_cast(receiver), name))
             }
             _ => {
-                // Reading a property of undefined or null is a TypeError,
-                // and the message naming both is why it is built here.
                 let object_text = self.to_string(object);
                 let name_text = self.to_string(name);
                 let message = self
@@ -841,7 +738,6 @@ impl Isolate {
 mod tests {
     use super::*;
 
-    /// Runs a script and returns what the last expression statement produced.
     fn run(source: &str) -> std::result::Result<String, String> {
         let mut isolate = Isolate::new();
         isolate.setup_global_object();
@@ -942,8 +838,6 @@ mod tests {
 
     #[test]
     fn short_circuiting_in_a_condition_does_not_evaluate_the_rest() {
-        // `a && b` as a *test* never materialises a boolean, and must not
-        // evaluate `b` when `a` is falsy.
         assert_eq!(
             evaluate("var ran = 0; function mark() { ran = 1; return true; } if (false && mark()) { } ran"),
             "0"
@@ -990,7 +884,6 @@ mod tests {
             evaluate("var i = 0; while (true) { i++; if (i > 3) { break; } } i"),
             "4"
         );
-        // `continue` must still run the increment, or this never terminates.
         assert_eq!(
             evaluate("var total = 0; for (var i = 0; i < 5; i++) { if (i == 2) { continue; } total += i; } total"),
             "8"
@@ -1009,9 +902,7 @@ mod tests {
             "undefined",
             "a function with no return yields undefined"
         );
-        // Callable before its definition, because declarations are hoisted.
         assert_eq!(evaluate("var r = f(); function f() { return 7; } r"), "7");
-        // Missing arguments are undefined, extra ones dropped.
         assert_eq!(evaluate("function f(a, b) { return b; } f(1)"), "undefined");
         assert_eq!(evaluate("function f(a) { return a; } f(1, 2)"), "1");
     }

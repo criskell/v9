@@ -1,22 +1,3 @@
-//! Ported from `src/objects/js-objects.h` and `js-objects.tq`.
-//!
-//! ```text
-//!   0  map                   (HeapObject)
-//!   8  properties_or_hash    (JSReceiver)  -- the out-of-object store
-//!  16  elements              (JSObject)    -- indexed properties
-//!  24  inline property slots ...           -- as many as the map says
-//! ```
-//!
-//! A property lives in one of two places, and which one is decided when the
-//! property is added, never later: the first few go in the inline slots
-//! inside the object, and the rest in the `PropertyArray` hanging off
-//! `properties_or_hash`. The map records the split, so a load is still a
-//! fixed offset either way.
-//!
-//! V8 encodes an out-of-object field index as a negative number in the
-//! property details; `vx` keeps the same convention via
-//! [`JSObject::property_address`].
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::fixed_array::PropertyArray;
@@ -33,7 +14,6 @@ impl JSObject {
     pub const K_PROPERTIES_OR_HASH_OFFSET: i32 = K_TAGGED_SIZE;
     /// `JSObject::kElementsOffset`
     pub const K_ELEMENTS_OFFSET: i32 = Self::K_PROPERTIES_OR_HASH_OFFSET + K_TAGGED_SIZE;
-    /// `JSObject::kHeaderSize`: where the inline property slots begin.
     pub const K_HEADER_SIZE: i32 = Self::K_ELEMENTS_OFFSET + K_TAGGED_SIZE;
 
     #[inline]
@@ -81,7 +61,6 @@ impl JSObject {
         heap.map_of(self.object())
     }
 
-    /// `JSObject::RawFastPropertyAt` for an inline slot.
     #[inline]
     pub fn in_object_property_at(self, heap: &Heap, map: Map, index: i32) -> Tagged {
         debug_assert!(index < map.inobject_properties(heap));
@@ -95,10 +74,6 @@ impl JSObject {
         heap.write_tagged(self.field(offset), value);
     }
 
-    /// Reads the property at a map-assigned `field_index`, picking the inline
-    /// slot or the backing store as the map dictates. This -- a map check
-    /// followed by one indexed read -- is the whole point of hidden classes,
-    /// and it is exactly what an inline cache memoizes.
     pub fn fast_property_at(self, heap: &Heap, field_index: i32) -> Tagged {
         let map = self.map(heap);
         let inobject = map.inobject_properties(heap);
@@ -120,8 +95,6 @@ impl JSObject {
         }
     }
 
-    /// The address of a field, for the GC to visit and for inline caches to
-    /// remember.
     pub fn property_address(self, heap: &Heap, field_index: i32) -> Address {
         let map = self.map(heap);
         let inobject = map.inobject_properties(heap);
@@ -133,7 +106,6 @@ impl JSObject {
         }
     }
 
-    /// How many out-of-object slots a map with `field_count` fields needs.
     pub fn out_of_object_property_count(heap: &Heap, map: Map, field_count: i32) -> i32 {
         (field_count - map.inobject_properties(heap)).max(0)
     }

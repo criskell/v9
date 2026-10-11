@@ -1,60 +1,16 @@
-//! Ported from `src/interpreter/bytecode-array-writer.h` /
-//! `bytecode-array-writer.cc`.
-//!
-//! Turns [`BytecodeNode`]s into bytes, and resolves jumps.
-//!
-//! How a forward jump gets encoded
-//! ------------------------------
-//! The distance is unknown when the jump is emitted, but the width of its
-//! operand has to be decided *now*. V8's answer is to reserve a constant
-//! pool entry:
-//!
-//! 1. [`Self::write_jump`] calls `create_reserved_entry`, which claims a slot
-//!    in the narrowest constant pool slice with room and reports how wide an
-//!    index into that slice is. The jump is emitted with an operand that
-//!    wide, filled with a placeholder.
-//! 2. When the label binds, [`Self::patch_jump`] computes the real offset. If
-//!    it fits in the operand already emitted, the reservation is discarded
-//!    and the offset is written in place.
-//! 3. If it does not fit, the reservation is committed: the offset goes into
-//!    the constant pool and the jump is rewritten to its `*Constant` form,
-//!    whose operand is the index -- which fits by construction, because the
-//!    slot came from the slice with exactly that index width.
-//!
-//! Two details that are easy to get wrong, and both come straight from the
-//! original:
-//!
-//! * **The offset is relative to the opcode byte, not to the start of the
-//!   instruction.** A jump that needed a `Wide` prefix therefore has one
-//!   subtracted from its delta, because the interpreter resumes from the
-//!   opcode.
-//! * **A label holds exactly one jump.** Several jumps to one target are a
-//!   [`BytecodeLabels`] set, bound together.
-
 use crate::interpreter::bytecode_label::{BytecodeLabel, BytecodeLabels, BytecodeLoopHeader};
 use crate::interpreter::bytecode_node::BytecodeNode;
 use crate::interpreter::bytecode_operands::{OperandScale, OperandSize};
 use crate::interpreter::bytecodes::Bytecode;
 use crate::interpreter::constant_array_builder::ConstantArrayBuilder;
 
-/// `BytecodeArrayWriter::k8BitJumpPlaceholder` and friends. The value is
-/// arbitrary -- it is always overwritten by patching -- but a recognisable
-/// one makes a half-patched array obvious in a dump.
 const K_JUMP_PLACEHOLDER_BYTE: u8 = 0x7f;
 
 pub struct BytecodeArrayWriter {
     bytecodes: Vec<u8>,
     constant_array_builder: ConstantArrayBuilder,
-    /// How many forward jumps are still waiting for their label. Must be zero
-    /// before the array is handed over.
     unbound_jumps: usize,
-    /// `BytecodeArrayWriter::exit_seen_in_block_`.
-    ///
-    /// Set once this basic block has emitted something control cannot pass
-    /// (a `Return`, a `Throw`, an unconditional jump). Everything after it is
-    /// unreachable, so the writer drops it rather than encoding dead bytes.
     exit_seen_in_block: bool,
-    /// Offset -> source position, V8's `SourcePositionTableBuilder`.
     source_position_table: Vec<(usize, usize)>,
 }
 
@@ -95,7 +51,6 @@ impl BytecodeArrayWriter {
         &self.source_position_table
     }
 
-    /// The offset the next bytecode will be written at.
     #[inline]
     pub fn offset(&self) -> usize {
         self.bytecodes.len()
@@ -105,14 +60,11 @@ impl BytecodeArrayWriter {
         self.unbound_jumps
     }
 
-    /// Whether control can reach the next bytecode written.
     #[inline]
     pub fn exit_seen_in_block(&self) -> bool {
         self.exit_seen_in_block
     }
 
-    /// `BytecodeArrayWriter::StartBasicBlock`: control can arrive here from
-    /// somewhere else, so whatever was unreachable before is reachable now.
     pub fn start_basic_block(&mut self) {
         self.exit_seen_in_block = false;
     }
@@ -121,16 +73,12 @@ impl BytecodeArrayWriter {
     pub fn write(&mut self, node: &BytecodeNode) {
         debug_assert!(!node.bytecode().is_jump(), "use write_jump");
         if self.exit_seen_in_block {
-            // Unreachable: V8 calls this "eliding" and so does the comment in
-            // `UpdateExitSeenInBlock`. Dropping it is not an optimisation,
-            // it is what keeps the offsets honest after a `return`.
             return;
         }
         self.update_exit_seen_in_block(node.bytecode());
         self.emit_bytecode(node);
     }
 
-    /// `BytecodeArrayWriter::WriteJump`: a forward jump to an unbound label.
     pub fn write_jump(&mut self, node: &BytecodeNode, label: &mut BytecodeLabel) {
         debug_assert!(node.bytecode().is_forward_jump());
         debug_assert_eq!(node.operand(0), 0, "the offset is filled in by patching");
@@ -142,8 +90,6 @@ impl BytecodeArrayWriter {
         self.update_exit_seen_in_block(node.bytecode());
     }
 
-    /// `BytecodeArrayWriter::WriteJumpLoop`: a backward jump to a header that
-    /// is already bound, so the distance is known and nothing is patched.
     pub fn write_jump_loop(&mut self, node: &BytecodeNode, loop_header: &BytecodeLoopHeader) {
         debug_assert_eq!(node.bytecode(), Bytecode::JumpLoop);
         if self.exit_seen_in_block {
@@ -156,7 +102,6 @@ impl BytecodeArrayWriter {
     /// `BytecodeArrayWriter::BindLabel`
     pub fn bind_label(&mut self, label: &mut BytecodeLabel) {
         if !label.has_referrer_jump() {
-            // Nothing jumped here -- the branch was elided as unreachable.
             label.bind();
             self.start_basic_block();
             return;
@@ -168,7 +113,6 @@ impl BytecodeArrayWriter {
         self.start_basic_block();
     }
 
-    /// `BytecodeLabels::Bind`: bind every jump in the set to here.
     pub fn bind_labels(&mut self, labels: &mut BytecodeLabels) {
         for index in labels.pending() {
             let jump_offset = labels.label(index).jump_offset();
@@ -184,7 +128,6 @@ impl BytecodeArrayWriter {
     /// `BytecodeArrayWriter::BindLoopHeader`
     pub fn bind_loop_header(&mut self, loop_header: &mut BytecodeLoopHeader) {
         loop_header.bind_to(self.offset());
-        // V8 does not start a basic block when the whole loop is dead.
         if self.exit_seen_in_block {
             return;
         }
@@ -209,9 +152,6 @@ impl BytecodeArrayWriter {
         self.bytecodes.push(bytecode.to_byte());
 
         for (index, value) in node.operands().iter().enumerate() {
-            // Little-endian, truncated to the operand's width. A signed
-            // operand is written as its two's complement, which the reader
-            // sign-extends back.
             match bytecode.operand_size(index, scale) {
                 OperandSize::None => unreachable!("an operand with no size"),
                 OperandSize::Byte => self.bytecodes.push(*value as u8),
@@ -231,15 +171,11 @@ impl BytecodeArrayWriter {
         self.unbound_jumps += 1;
         label.set_referrer(current_offset);
 
-        // Reserve a constant pool slot. Its slice's index width is the width
-        // the operand must be emitted at -- see the module docs.
         let reserved = self
             .constant_array_builder
             .create_reserved_entry(operand_size_for_scale(node.operand_scale()));
 
         let mut node = *node;
-        // The placeholder is as wide as the reservation demands, which is
-        // what forces the instruction to that scale.
         node.update_operand0(placeholder_for(reserved));
         debug_assert_eq!(
             operand_size_for_scale(node.operand_scale()),
@@ -257,10 +193,6 @@ impl BytecodeArrayWriter {
 
         let mut delta = (current_offset - header_offset) as i32;
 
-        // This JumpLoop may itself need a prefix, and if it does, the offset
-        // the interpreter jumps from moves forward by one byte. Both the
-        // scale already implied by the other operands and the scale the delta
-        // itself needs can force one.
         let mut node = *node;
         let emits_prefix = node.operand_scale() != OperandScale::Single
             || scale_for_unsigned(delta as u32) != OperandScale::Single;
@@ -279,10 +211,6 @@ impl BytecodeArrayWriter {
 
     // -- patching -----------------------------------------------------------
 
-    /// `BytecodeArrayWriter::PatchJump`
-    ///
-    /// `jump_location` is where the jump instruction starts, prefix included;
-    /// `jump_target` is where it should land.
     fn patch_jump(&mut self, jump_target: usize, jump_location: usize) {
         let first_byte = Bytecode::from_byte(self.bytecodes[jump_location])
             .expect("a jump instruction at the recorded location");
@@ -291,8 +219,6 @@ impl BytecodeArrayWriter {
         let mut operand_scale = OperandScale::Single;
 
         if first_byte.is_prefix_scaling_bytecode() {
-            // The interpreter resumes from the opcode, not from the prefix,
-            // so the offset it adds is one less.
             delta -= 1;
             prefix_offset = 1;
             operand_scale = first_byte
@@ -324,14 +250,11 @@ impl BytecodeArrayWriter {
         debug_assert_eq!(self.bytecodes[operand_location], K_JUMP_PLACEHOLDER_BYTE);
 
         if scale_for_unsigned(delta as u32) == OperandScale::Single {
-            // It fits: cancel the reservation and jump directly.
             self.constant_array_builder
                 .discard_reserved_entry(OperandSize::Byte);
             self.bytecodes[operand_location] = delta as u8;
             return;
         }
-        // It does not: put the offset in the constant pool and switch the
-        // jump to its `*Constant` form. The index is a byte by construction.
         let entry = self
             .constant_array_builder
             .commit_reserved_entry(OperandSize::Byte, delta);
@@ -369,8 +292,6 @@ impl BytecodeArrayWriter {
     fn patch_jump_with_32bit_operand(&mut self, jump_location: usize, delta: i32) {
         debug_assert!(delta > 0);
         let operand_location = jump_location + 1;
-        // A 32-bit operand can hold any offset a bytecode array can have, so
-        // the reservation is always discarded rather than committed.
         self.constant_array_builder
             .discard_reserved_entry(OperandSize::Quad);
         self.bytecodes[operand_location..operand_location + 4]
@@ -384,9 +305,6 @@ impl BytecodeArrayWriter {
         }
     }
 
-    /// Hands over the encoded bytes. Asserts that every jump found its
-    /// target, because a bytecode array with an unpatched jump would run
-    /// into a placeholder.
     pub fn finish(self) -> (Vec<u8>, ConstantArrayBuilder, Vec<(usize, usize)>) {
         assert_eq!(
             self.unbound_jumps, 0,
@@ -406,9 +324,6 @@ impl BytecodeArrayWriter {
     }
 }
 
-/// V8 writes `static_cast<OperandSize>(node->operand_scale())`: the two
-/// enumerations are numbered so that Single/Double/Quadruple line up with
-/// Byte/Short/Quad. Spelled out here rather than cast.
 fn operand_size_for_scale(scale: OperandScale) -> OperandSize {
     match scale {
         OperandScale::Single => OperandSize::Byte,
@@ -417,8 +332,6 @@ fn operand_size_for_scale(scale: OperandScale) -> OperandSize {
     }
 }
 
-/// A placeholder wide enough to force `size`, built from the placeholder byte
-/// repeated -- which is what V8's `k16BitJumpPlaceholder` is.
 fn placeholder_for(size: OperandSize) -> i32 {
     match size {
         OperandSize::None => unreachable!(),
@@ -471,7 +384,6 @@ mod tests {
         let bytes = writer.bytecodes();
         assert_eq!(bytes[0], Bytecode::LdaSmi.to_byte());
         assert_eq!(bytes[1], 0x12);
-        // The second needs two bytes, so it is prefixed.
         assert_eq!(bytes[2], Bytecode::Wide.to_byte());
         assert_eq!(bytes[3], Bytecode::LdaSmi.to_byte());
         assert_eq!(bytes[4], 0x34, "low byte first");
@@ -481,7 +393,6 @@ mod tests {
     #[test]
     fn negative_operands_are_written_as_twos_complement() {
         let mut writer = BytecodeArrayWriter::new();
-        // Register r1 encodes as operand -1.
         writer.write(&node(Bytecode::Ldar, &[Register::new(1).to_operand()]));
         assert_eq!(writer.bytecodes()[1], 0xff);
     }
@@ -490,8 +401,6 @@ mod tests {
     fn a_short_forward_jump_is_patched_in_place() {
         let mut writer = BytecodeArrayWriter::new();
         let mut label = BytecodeLabel::new();
-        // A conditional jump, so the code it skips over is still reachable by
-        // falling through -- an unconditional one would make it dead.
         writer.write_jump(&node(Bytecode::JumpIfFalse, &[0]), &mut label);
         assert_eq!(writer.unbound_jumps(), 1);
         let jump_offset = label.jump_offset();
@@ -507,17 +416,12 @@ mod tests {
             Bytecode::JumpIfFalse.to_byte(),
             "the offset fitted, so the bytecode is unchanged"
         );
-        // JumpIfFalse(2 bytes) + LdaZero(1) = the target is 3 bytes on.
         assert_eq!(bytes[jump_offset + 1], 3);
-        // Nothing went into the constant pool.
         assert_eq!(writer.constant_array_builder().size(), 0);
     }
 
     #[test]
     fn an_unconditional_jump_makes_what_it_skips_unreachable() {
-        // Which is why the test above uses a conditional one: after `Jump`
-        // there is no fall-through path, so the writer drops what follows
-        // until something branches back in.
         let mut writer = BytecodeArrayWriter::new();
         let mut label = BytecodeLabel::new();
         writer.write_jump(&node(Bytecode::Jump, &[0]), &mut label);
@@ -538,7 +442,6 @@ mod tests {
         writer.write_jump(&node(Bytecode::JumpIfFalse, &[0]), &mut label);
         let jump_offset = label.jump_offset();
 
-        // Put more than 255 bytes between the jump and its target.
         for _ in 0..300 {
             writer.write(&node(Bytecode::LdaZero, &[]));
         }
@@ -576,7 +479,6 @@ mod tests {
         let bytes = writer.bytecodes();
         assert_eq!(bytes[0], Bytecode::LdaZero.to_byte());
         assert_eq!(bytes[1], Bytecode::JumpLoop.to_byte());
-        // The JumpLoop starts one byte in, so the distance back is 1.
         assert_eq!(bytes[2], 1);
         assert_eq!(writer.unbound_jumps(), 0, "nothing was left unbound");
     }
@@ -600,7 +502,6 @@ mod tests {
         assert!(labels.is_bound());
         assert_eq!(writer.unbound_jumps(), 0);
         let bytes = writer.bytecodes();
-        // Both land on the same offset, from different distances.
         assert_eq!(bytes[1], 5, "first jump: 2 + 2 + 1 bytes away");
         assert_eq!(bytes[3], 3, "second jump: 2 + 1 bytes away");
     }
@@ -612,12 +513,10 @@ mod tests {
         writer.write(&node(Bytecode::Return, &[]));
         assert!(writer.exit_seen_in_block());
 
-        // Unreachable, so it never reaches the array.
         writer.write(&node(Bytecode::LdaSmi, &[1]));
         writer.write(&node(Bytecode::Return, &[]));
         assert_eq!(writer.bytecodes().len(), 2);
 
-        // Until something can branch here again.
         writer.start_basic_block();
         writer.write(&node(Bytecode::LdaSmi, &[1]));
         assert_eq!(writer.bytecodes().len(), 4);
@@ -631,7 +530,6 @@ mod tests {
         writer.write(&node(Bytecode::Return, &[]));
         assert!(writer.exit_seen_in_block());
 
-        // The label is a branch target, so what follows it is reachable.
         writer.bind_label(&mut label);
         assert!(!writer.exit_seen_in_block());
         writer.write(&node(Bytecode::LdaZero, &[]));
@@ -661,13 +559,9 @@ mod tests {
 
     #[test]
     fn a_jump_over_a_wide_instruction_measures_from_the_opcode() {
-        // The `delta -= 1` case: the jump itself needs a prefix, so the
-        // offset the interpreter adds is relative to the opcode byte.
         let mut writer = BytecodeArrayWriter::new();
         let mut label = BytecodeLabel::new();
 
-        // Fill the byte slice of the constant pool so the reservation has to
-        // come from the 16-bit slice, forcing a Wide jump.
         for i in 0..K_8BIT_CAPACITY {
             writer.constant_array_builder_mut().insert_smi(i as i32);
         }
@@ -684,9 +578,6 @@ mod tests {
         writer.bind_label(&mut label);
 
         let bytes = writer.bytecodes();
-        // The instruction is Wide(1) + JumpIfFalse(1) + operand(2) = 4 bytes,
-        // then LdaZero(1). The target is 5 bytes from the prefix -- but the
-        // interpreter resumes from the opcode, so the stored offset is 4.
         let operand = u16::from_le_bytes([bytes[jump_offset + 2], bytes[jump_offset + 3]]);
         assert_eq!(operand, 4, "the offset is measured from the opcode byte");
     }

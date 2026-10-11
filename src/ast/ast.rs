@@ -1,37 +1,11 @@
-//! Ported from `src/ast/ast.h`.
-//!
-//! V8's AST is a class hierarchy of zone-allocated nodes with a packed bit
-//! field in the base class. `vx` uses Rust enums: the node *kinds* and their
-//! fields follow V8's `AST_NODE_LIST`, but a sum type replaces the hierarchy
-//! and `Box` replaces the zone. That is the one place where following V8's
-//! shape would cost more than it buys -- a visitor over a sealed enum is
-//! exhaustively checked, which a virtual `Visit` is not.
-//!
-//! Deviations, tracked in `PORTING.md`:
-//!
-//! * **Variables are not resolved here.** V8's parser builds a `Scope` tree
-//!   and resolves every `VariableProxy` to a `Variable` as it goes. `vx`
-//!   leaves a name in the proxy and resolves in the bytecode generator,
-//!   which can do it because there are no closures yet. When contexts
-//!   arrive, resolution has to move back into the parser.
-//! * No classes, generators, async functions, destructuring, template
-//!   literals, `try`/`catch`, `switch`, `with`, labels, or regular
-//!   expressions.
-
 use crate::parsing::token::Token;
 
-/// Source position, as V8's `kNoSourcePosition`-bearing `int position`.
 pub type Position = usize;
 pub const NO_SOURCE_POSITION: Position = usize::MAX;
 
-/// `Literal::Type`. Which kind of constant this is, so the bytecode
-/// generator can pick between `LdaSmi`, `LdaConstant` and the oddball loads
-/// without inspecting a value.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
-    /// An integer that fits in a Smi: compiles to `LdaSmi`, no allocation.
     Smi(i32),
-    /// Any other number: lives in the constant pool as a `HeapNumber`.
     Number(f64),
     String(String),
     Boolean(bool),
@@ -40,8 +14,6 @@ pub enum Literal {
 }
 
 impl Literal {
-    /// `Literal::ToBooleanIsTrue`: whether the constant is truthy, known at
-    /// compile time. Lets the generator fold `if (0)` away.
     pub fn to_boolean_is_true(&self) -> bool {
         match self {
             Literal::Smi(value) => *value != 0,
@@ -53,18 +25,13 @@ impl Literal {
     }
 }
 
-/// `VariableMode`: how a binding behaves.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum VariableMode {
-    /// `var`: function scoped, hoisted, redeclarable.
     Var,
-    /// `let`: block scoped.
     Let,
-    /// `const`: block scoped, assign once.
     Const,
 }
 
-/// One binding in a declaration statement.
 #[derive(Clone, Debug)]
 pub struct VariableDeclaration {
     pub name: String,
@@ -75,33 +42,23 @@ pub struct VariableDeclaration {
 /// `ObjectLiteralProperty`
 #[derive(Clone, Debug)]
 pub struct ObjectLiteralProperty {
-    /// Already a string: `{1: x}` and `{"1": x}` are the same property.
     pub key: PropertyKey,
     pub value: Expression,
 }
 
 #[derive(Clone, Debug)]
 pub enum PropertyKey {
-    /// A name known at parse time, which can be internalized once into the
-    /// constant pool.
     Name(String),
-    /// A computed key: `{[expr]: value}`.
     Computed(Expression),
 }
 
 /// `FunctionLiteral`
 #[derive(Clone, Debug)]
 pub struct FunctionLiteral {
-    /// `None` for an anonymous function expression.
     pub name: Option<String>,
     pub parameters: Vec<String>,
     pub body: Vec<Statement>,
-    /// `FunctionLiteral::scope`: where each of this function's variables
-    /// lives, decided by [`crate::ast::scopes`] while parsing. A register if
-    /// nothing captured it, a context slot if something did.
     pub scope: crate::ast::scopes::Scope,
-    /// Function declarations in the body, which are hoisted with their
-    /// definitions.
     pub hoisted_functions: Vec<FunctionLiteral>,
     pub position: Position,
 }
@@ -114,7 +71,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `VariableProxy`: a reference to a name, not yet resolved to a slot.
     VariableProxy {
         name: String,
         position: Position,
@@ -125,10 +81,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `Assignment`. `op` is [`Token::Assign`] for a plain assignment, or the
-    /// compound token (`+=`, `<<=`, ...) otherwise -- V8 keeps the operator
-    /// on the node rather than desugaring, because the compound form has to
-    /// evaluate its target exactly once.
     Assignment {
         op: Token,
         target: Box<Expression>,
@@ -144,8 +96,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `CompareOperation`. Separate from `Binary` as in V8: comparisons
-    /// produce a boolean and take different feedback.
     Compare {
         op: Token,
         left: Box<Expression>,
@@ -153,8 +103,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `BinaryOperation` with `&&`, `||` or `??`. Separate because these
-    /// short-circuit, so they compile to a branch and not to a call.
     Logical {
         op: Token,
         left: Box<Expression>,
@@ -169,7 +117,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `CountOperation`: `++x`, `x--`.
     Count {
         op: Token,
         is_prefix: bool,
@@ -177,7 +124,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `Conditional`: `test ? then : otherwise`.
     Conditional {
         condition: Box<Expression>,
         then_expression: Box<Expression>,
@@ -185,7 +131,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `Property`: `obj.name` or `obj[key]`.
     Property {
         object: Box<Expression>,
         key: Box<PropertyAccess>,
@@ -211,23 +156,17 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `FunctionLiteral` used as an expression.
     FunctionLiteral {
         function: Box<FunctionLiteral>,
         position: Position,
     },
 
-    /// The comma operator: evaluate both, yield the right.
     Sequence {
         expressions: Vec<Expression>,
         position: Position,
     },
 }
 
-/// How a property is named at the access site. Kept apart from
-/// [`PropertyKey`] because a *named* access compiles to
-/// `GetNamedProperty` with an inline cache, while a keyed one compiles to
-/// `GetKeyedProperty` -- different bytecodes and different feedback.
 #[derive(Clone, Debug)]
 pub enum PropertyAccess {
     Named(String),
@@ -256,9 +195,6 @@ impl Expression {
         }
     }
 
-    /// `Expression::IsValidReferenceExpression`: whether this can be
-    /// assigned to. The parser checks it when it turns an expression into an
-    /// assignment target, which is how `1 = 2` is rejected.
     pub fn is_valid_reference_expression(&self) -> bool {
         matches!(
             self,
@@ -266,8 +202,6 @@ impl Expression {
         )
     }
 
-    /// `Expression::ToBooleanIsTrue`, for the constant-folding the bytecode
-    /// generator does on `if` and loop conditions.
     pub fn to_boolean_is_true(&self) -> Option<bool> {
         match self {
             Expression::Literal { value, .. } => Some(value.to_boolean_is_true()),
@@ -291,10 +225,10 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `EmptyStatement`: a bare `;`.
-    Empty { position: Position },
+    Empty {
+        position: Position,
+    },
 
-    /// A `var` / `let` / `const` statement, which may declare several names.
     Declaration {
         mode: VariableMode,
         declarations: Vec<VariableDeclaration>,
@@ -339,10 +273,14 @@ pub enum Statement {
     },
 
     /// `BreakStatement`
-    Break { position: Position },
+    Break {
+        position: Position,
+    },
 
     /// `ContinueStatement`
-    Continue { position: Position },
+    Continue {
+        position: Position,
+    },
 }
 
 impl Statement {
@@ -363,21 +301,9 @@ impl Statement {
     }
 }
 
-/// The result of parsing a whole script: V8's top-level `FunctionLiteral`,
-/// whose body is the program.
-///
-/// `hoisted_functions` stands in for V8's scope declaration list. A function
-/// declaration is *not* a statement: `Parser::DeclareFunction` records it on
-/// the scope and leaves an `EmptyStatement` behind in the body, because the
-/// binding is created and initialized when the scope is entered, not when
-/// control reaches the line it was written on. That is what makes calling a
-/// function above its own definition work.
 #[derive(Clone, Debug)]
 pub struct Program {
     pub body: Vec<Statement>,
-    /// The script's own scope. A top-level `var` is a property of the global
-    /// object unless a function captured it, in which case it is a context
-    /// slot like any other captured variable.
     pub scope: crate::ast::scopes::Scope,
     pub hoisted_functions: Vec<FunctionLiteral>,
 }

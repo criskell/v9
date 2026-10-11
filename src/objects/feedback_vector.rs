@@ -1,30 +1,3 @@
-//! Ported from `src/objects/feedback-vector.h` / `feedback-vector.cc`.
-//!
-//! Where the engine writes down what it has actually seen at each operation
-//! site, so that the next execution of that site can take a shortcut.
-//!
-//! One vector per function, one or two *slots* per site. What a slot holds
-//! encodes the site's [`InlineCacheState`] structurally, with no separate
-//! state field -- which is the trick worth copying:
-//!
-//! ```text
-//!   slot[n]                       slot[n+1]      state
-//!   ─────────────────────────────────────────────────────────
-//!   uninitialized sentinel        -              UNINITIALIZED
-//!   weak reference to a Map       the handler    MONOMORPHIC
-//!   a WeakFixedArray of pairs     -              POLYMORPHIC
-//!   megamorphic sentinel          -              MEGAMORPHIC
-//! ```
-//!
-//! The map references are **weak**: a shape that nothing else uses any more
-//! must not be kept alive by the fact that some function once saw it.
-//!
-//! Deviations, tracked in `PORTING.md`: V8's sentinels are `Symbol`s and
-//! `vx` has no symbols, so it uses oddballs. V8 packs the slot kinds into
-//! five bits each in `FeedbackMetadata`; `vx` uses a byte apiece. No
-//! `invocation_count_before_stable`, no OSR state, no closure feedback cell
-//! array (those serve the tiering machinery `vx` does not have).
-
 use crate::common::globals::{InlineCacheState, K_TAGGED_SIZE};
 use crate::heap::heap::Heap;
 use crate::objects::fixed_array::WeakFixedArray;
@@ -32,10 +5,6 @@ use crate::objects::map::Map;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
-/// `FeedbackSlotKind`: what kind of site a slot belongs to.
-///
-/// The kind decides how wide the slot is and how its contents are read, so a
-/// vector cannot be interpreted without its metadata.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum FeedbackSlotKind {
@@ -80,11 +49,6 @@ impl FeedbackSlotKind {
         }
     }
 
-    /// `FeedbackMetadata::GetSlotSize`.
-    ///
-    /// Two slots for anything that caches a *shape*: one for the map (or the
-    /// array of maps), one for the handler. One slot for the sites that only
-    /// record a type hint.
     pub fn slot_size(self) -> i32 {
         use FeedbackSlotKind::*;
         match self {
@@ -107,7 +71,6 @@ impl FeedbackSlotKind {
         matches!(self, FeedbackSlotKind::LoadProperty)
     }
 
-    /// `IsSetNamedICKind` / `IsDefineNamedOwnICKind`
     pub fn is_store_ic(self) -> bool {
         matches!(
             self,
@@ -125,8 +88,6 @@ impl FeedbackSlotKind {
         )
     }
 
-    /// Whether this kind caches a map and a handler, and so can climb the
-    /// monomorphic/polymorphic/megamorphic lattice.
     pub fn caches_maps(self) -> bool {
         self.is_load_ic() || self.is_store_ic() || matches!(self, FeedbackSlotKind::LoadKeyed)
     }
@@ -154,12 +115,6 @@ impl FeedbackSlotKind {
     }
 }
 
-/// `FeedbackVectorSpec`: what the bytecode generator records as it allocates
-/// slots, and what [`FeedbackMetadata`] is built from.
-///
-/// The generator has to declare a slot's *kind* when it allocates it, because
-/// the kind decides the slot's width -- so the vector's layout is fixed by
-/// the time the bytecode exists.
 #[derive(Clone, Debug, Default)]
 pub struct FeedbackVectorSpec {
     kinds: Vec<FeedbackSlotKind>,
@@ -171,7 +126,6 @@ impl FeedbackVectorSpec {
         FeedbackVectorSpec::default()
     }
 
-    /// `FeedbackVectorSpec::AddSlot`: returns the slot index to encode.
     pub fn add_slot(&mut self, kind: FeedbackSlotKind) -> i32 {
         let slot = self.slot_count;
         self.slot_count += kind.slot_size();
@@ -231,22 +185,14 @@ impl FeedbackVectorSpec {
         self.add_slot(FeedbackSlotKind::JumpLoop)
     }
 
-    /// `FeedbackVectorSpec::slot_count`: the length the vector will have,
-    /// counting the second slot of every two-slot site.
     pub fn slot_count(&self) -> i32 {
         self.slot_count
     }
 
-    /// The kind of each site, in allocation order. Not indexed by slot --
-    /// `FeedbackMetadata` expands this into a per-slot table.
     pub fn kinds(&self) -> &[FeedbackSlotKind] {
         &self.kinds
     }
 
-    /// Expands the spec into one kind per slot, so a slot index can be
-    /// interpreted on its own. The second slot of a two-slot site is marked
-    /// `Invalid`, exactly as V8's metadata does -- "no such slot should be
-    /// addressed".
     pub fn to_slot_kinds(&self) -> Vec<FeedbackSlotKind> {
         let mut kinds = Vec::with_capacity(self.slot_count as usize);
         for kind in &self.kinds {
@@ -259,11 +205,7 @@ impl FeedbackVectorSpec {
     }
 }
 
-object_type!(
-    /// `FeedbackMetadata`: the slot kinds, shared by every vector for a
-    /// given function.
-    FeedbackMetadata
-);
+object_type!(FeedbackMetadata);
 
 impl FeedbackMetadata {
     pub const K_SLOT_COUNT_OFFSET: i32 = K_TAGGED_SIZE;
@@ -324,9 +266,6 @@ impl FeedbackVector {
         heap.write_u32(self.field(Self::K_LENGTH_OFFSET), value as u32);
     }
 
-    /// `FeedbackVector::invocation_count`: how many times the function has
-    /// run. V8 tiers up on this; `vx` records it because it is the cheapest
-    /// half of the decision and it makes `--trace-ic` legible.
     #[inline]
     pub fn invocation_count(self, heap: &Heap) -> i32 {
         heap.read_u32(self.field(Self::K_INVOCATION_COUNT_OFFSET)) as i32
@@ -401,11 +340,6 @@ impl FeedbackVector {
     }
 }
 
-/// `FeedbackNexus`: a view of one site's slots, which knows how to read and
-/// write them according to the slot's kind.
-///
-/// V8's holds handles and a no-GC scope. `vx`'s is a plain pair, with the
-/// heap passed to each method.
 #[derive(Copy, Clone, Debug)]
 pub struct FeedbackNexus {
     vector: FeedbackVector,
@@ -413,7 +347,6 @@ pub struct FeedbackNexus {
     kind: FeedbackSlotKind,
 }
 
-/// One entry of a polymorphic cache.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MapAndHandler {
     pub map: Map,
@@ -465,11 +398,6 @@ impl FeedbackNexus {
         self.vector.set(heap, self.slot + 1, value);
     }
 
-    /// `FeedbackNexus::ic_state`.
-    ///
-    /// Derived from the slot's *shape*, not from a stored tag -- a weak
-    /// reference means one map, a strong array means several, a sentinel
-    /// means none or too many.
     pub fn ic_state(
         self,
         heap: &Heap,
@@ -477,7 +405,6 @@ impl FeedbackNexus {
         megamorphic_sentinel: Tagged,
     ) -> InlineCacheState {
         if !self.kind.caches_maps() {
-            // A hint-only slot: a Smi means nothing has been recorded.
             let feedback = self.feedback(heap);
             return if feedback == uninitialized_sentinel {
                 InlineCacheState::Uninitialized
@@ -494,9 +421,6 @@ impl FeedbackNexus {
             return InlineCacheState::Megamorphic;
         }
         if feedback.is_weak_or_cleared() {
-            // A weak map reference: one shape. Cleared counts too -- the
-            // state is read from the structure, not from whether the target
-            // is still alive.
             return InlineCacheState::Monomorphic;
         }
         InlineCacheState::Polymorphic
@@ -508,17 +432,11 @@ impl FeedbackNexus {
         self.set_feedback_extra(heap, handler);
     }
 
-    /// `FeedbackNexus::ConfigureMegamorphic`: give up on this site.
     pub fn configure_megamorphic(self, heap: &mut Heap, megamorphic_sentinel: Tagged) {
         self.set_feedback(heap, megamorphic_sentinel);
         self.set_feedback_extra(heap, megamorphic_sentinel);
     }
 
-    /// `FeedbackNexus::ExtractMapsAndHandlers`: every (map, handler) pair the
-    /// site has recorded.
-    ///
-    /// Pairs whose map has been collected are skipped, which is the point of
-    /// holding them weakly.
     pub fn extract_maps_and_handlers(
         self,
         heap: &Heap,
@@ -533,7 +451,6 @@ impl FeedbackNexus {
                         map: Map::unchecked_cast(object),
                         handler: self.feedback_extra(heap),
                     }],
-                    // The map was collected; the site has no usable feedback.
                     None => Vec::new(),
                 }
             }
@@ -562,8 +479,6 @@ impl FeedbackNexus {
         }
     }
 
-    /// The handler cached for `map`, if this site has one. The hot path: one
-    /// comparison in the monomorphic case.
     pub fn find_handler_for_map(
         self,
         heap: &Heap,
@@ -601,12 +516,10 @@ impl FeedbackNexus {
     }
 }
 
-/// The slot index a `WeakFixedArray` of pairs needs for `count` entries.
 pub fn polymorphic_array_length(count: usize) -> i32 {
     (count * 2) as i32
 }
 
-/// Casts a tagged value to a `FeedbackVector` if it is one.
 pub fn try_cast_feedback_vector(heap: &Heap, value: Tagged) -> Option<FeedbackVector> {
     let object: HeapObject = value.to_strong_heap_object()?;
     if heap.instance_type(object) == crate::objects::instance_type::FEEDBACK_VECTOR_TYPE {
@@ -616,7 +529,6 @@ pub fn try_cast_feedback_vector(heap: &Heap, value: Tagged) -> Option<FeedbackVe
     }
 }
 
-/// `FeedbackVector::Get` for a hint slot, as a Smi.
 pub fn hint_value(heap: &Heap, nexus: FeedbackNexus) -> i32 {
     let feedback = nexus.feedback(heap);
     if feedback.is_smi() {
@@ -632,7 +544,6 @@ mod tests {
 
     #[test]
     fn slot_widths_follow_what_the_site_caches() {
-        // A site that caches a shape needs room for the map and the handler.
         for kind in [
             FeedbackSlotKind::LoadProperty,
             FeedbackSlotKind::SetNamedStrict,
@@ -642,7 +553,6 @@ mod tests {
         ] {
             assert_eq!(kind.slot_size(), 2, "{}", kind.name());
         }
-        // A site that only records a hint needs one.
         for kind in [
             FeedbackSlotKind::BinaryOp,
             FeedbackSlotKind::CompareOp,
@@ -668,7 +578,6 @@ mod tests {
 
     #[test]
     fn the_second_slot_of_a_pair_is_marked_invalid() {
-        // So that addressing it is caught rather than silently misread.
         let mut spec = FeedbackVectorSpec::new();
         spec.add_load_ic_slot();
         spec.add_type_of_slot();

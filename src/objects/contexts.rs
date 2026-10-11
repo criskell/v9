@@ -1,33 +1,3 @@
-//! Ported from `src/objects/contexts.h` and `contexts.tq`.
-//!
-//! The heap storage for captured variables. A context is a small array with
-//! a fixed header and then one slot per captured variable:
-//!
-//! ```text
-//!   0  map
-//!   8  length    Smi
-//!  16  elements[length]
-//!        [0] SCOPE_INFO_INDEX   the ScopeInfo describing these slots
-//!        [1] PREVIOUS_INDEX     the enclosing context
-//!        [2] ...                the variables
-//! ```
-//!
-//! `PREVIOUS_INDEX` makes it a cons list, and that list *is* the scope chain
-//! at run time. A variable reference compiles to a pair -- how many links to
-//! walk, and which slot -- so reaching a captured variable is a few pointer
-//! loads and no search. See [`crate::ast::scopes`] for how the pair is
-//! computed.
-//!
-//! A closure holds the context it was created in, which is why two closures
-//! made in the same call share the variable and two made in different calls
-//! do not.
-//!
-//! Deviations, tracked in `PORTING.md`: only function contexts. V8 also has
-//! block, catch, with, eval, module and native contexts -- the last of which
-//! holds the realm's intrinsics, which in `vx` hang off the global object
-//! instead. No `ContextCell`, V8's newer indirection for context slots that
-//! an optimizing tier can treat as constant.
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::smi::Smi;
@@ -40,15 +10,11 @@ object_type!(
 
 impl Context {
     pub const K_LENGTH_OFFSET: i32 = K_TAGGED_SIZE;
-    /// Where `elements[0]` starts.
     pub const K_HEADER_SIZE: i32 = Self::K_LENGTH_OFFSET + K_TAGGED_SIZE;
 
     /// `Context::SCOPE_INFO_INDEX`
     pub const SCOPE_INFO_INDEX: i32 = 0;
-    /// `Context::PREVIOUS_INDEX`: the enclosing context, or `undefined` at
-    /// the root.
     pub const PREVIOUS_INDEX: i32 = 1;
-    /// `Context::MIN_CONTEXT_SLOTS`: variables start here.
     pub const MIN_CONTEXT_SLOTS: i32 = 2;
 
     pub fn size_for(length: i32) -> i32 {
@@ -108,10 +74,6 @@ impl Context {
         self.set(heap, Self::PREVIOUS_INDEX, value);
     }
 
-    /// Walks out `depth` links. Depth 0 is this context.
-    ///
-    /// This is what `LdaContextSlot`'s depth operand means, and the reason a
-    /// captured variable costs a few loads rather than a lookup.
     pub fn at_depth(self, heap: &Heap, depth: i32) -> Context {
         let mut context = self;
         for _ in 0..depth {

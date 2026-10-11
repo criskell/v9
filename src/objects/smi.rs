@@ -1,37 +1,32 @@
-//! Ported from `src/objects/smi.h`.
-//!
-//! A Smi is a small integer stored immediately in a tagged word -- never
-//! allocated. In this configuration (64-bit, no pointer compression) a Smi
-//! carries a full `i32` in the upper half of the word:
-//!
-//! ```text
-//!   [ 32 bit signed int ][ 31 bits zero padding ][ 0 ]
-//! ```
-
 use crate::common::globals::*;
 use crate::objects::tagged::Tagged;
 
-/// V8's `Smi` is an `AllStatic` class -- a namespace of conversions, not a
-/// value. Keeping it that way makes the call sites read like the originals.
+// Smi represents integer Numbers that can be stored in 31 bits.
+// Smis are immediate which means they are NOT allocated in the heap.
+// The ptr_ value has the following format: [31 bit signed int] 0
+// For long smis it has the following format:
+//     [32 bit signed int] [31 bits zero padding] 0
+// Smi stands for small integer.
 pub struct Smi;
 
 impl Smi {
     pub const MIN_VALUE: i32 = K_SMI_MIN_VALUE as i32;
     pub const MAX_VALUE: i32 = K_SMI_MAX_VALUE as i32;
 
-    /// `Smi::zero()`
+    /// `Smi::zero`
     #[inline]
     pub const fn zero() -> Tagged {
         Smi::from_int(0)
     }
 
     /// `Smi::FromInt`
+    // Convert a value to a Smi object.
     #[inline]
     pub const fn from_int(value: i32) -> Tagged {
         Tagged(((value as i64) << K_SMI_SHIFT_BITS) as u64 | K_SMI_TAG)
     }
 
-    /// `Smi::FromIntptr`, for the cases where the value may not fit.
+    /// `Smi::FromIntptr`
     #[inline]
     pub const fn try_from_i64(value: i64) -> Option<Tagged> {
         if Smi::is_valid(value) {
@@ -42,20 +37,21 @@ impl Smi {
     }
 
     /// `Smi::IsValid`
+    // Returns whether value can be represented in a Smi.
     #[inline]
     pub const fn is_valid(value: i64) -> bool {
         value >= K_SMI_MIN_VALUE && value <= K_SMI_MAX_VALUE
     }
 
-    /// `Smi::ToInt`. Reading a non-Smi this way is a bug; debug builds catch
-    /// it, release builds return the sign-extended payload like V8 does.
+    /// `Smi::ToInt`
+    // Convert a Smi object to an int.
     #[inline]
     pub const fn to_int(object: Tagged) -> i32 {
         debug_assert!(object.is_smi());
         (object.ptr() as i64 >> K_SMI_SHIFT_BITS) as i32
     }
 
-    /// The checked form: `None` unless this really is a Smi.
+    /// `Object::ToSmi`
     #[inline]
     pub const fn try_to_int(object: Tagged) -> Option<i32> {
         if object.is_smi() {
@@ -65,9 +61,9 @@ impl Smi {
         }
     }
 
-    /// A double that fits exactly in a Smi, or `None` if it has to be boxed
-    /// as a `HeapNumber`. `-0.0` is deliberately rejected: JavaScript must be
-    /// able to tell it from `0`, and a Smi cannot carry the sign.
+    /// `DoubleToSmiInteger`
+    // Returns true if value can be converted to a SMI, and returns the
+    // resulting integer value of the SMI in |smi_int_value|.
     #[inline]
     pub fn try_from_f64(value: f64) -> Option<Tagged> {
         if value == 0.0 && value.is_sign_negative() {
@@ -98,7 +94,6 @@ mod tests {
 
     #[test]
     fn payload_sits_in_the_upper_half() {
-        // The documented layout: value in the top 32 bits, zeroes below.
         assert_eq!(Smi::from_int(1).ptr(), 1u64 << 32);
         assert_eq!(Smi::from_int(0).ptr(), 0);
         assert_eq!(Smi::from_int(-1).ptr(), u64::MAX << 32);

@@ -1,17 +1,3 @@
-//! Ported from `src/heap/read-only-spaces.h` / `read-only-spaces.cc`.
-//!
-//! Immortal, immovable objects: the maps, the oddballs, the shared empty
-//! arrays, and (in `vx`) the internalized strings.
-//!
-//! Immovability is not a convenience here, it is what several other
-//! simplifications rest on. A map that never moves means an inline cache can
-//! hold one without the collector having to find and update it, and means a
-//! `DescriptorArray`'s keys never need rewriting. See `PORTING.md`.
-//!
-//! Deviation: V8 can serialise this space into a snapshot and map it
-//! read-only at startup, which is most of why it exists as a separate space.
-//! `vx` builds it at startup every time.
-
 use crate::heap::spaces::{AllocationSpace, Space};
 use crate::objects::tagged::Address;
 

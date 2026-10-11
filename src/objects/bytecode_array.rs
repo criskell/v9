@@ -1,30 +1,3 @@
-//! Ported from `src/objects/bytecode-array.h` and `bytecode-array.tq`.
-//!
-//! A function's compiled bytecode, as a heap object: the instruction bytes
-//! inline, plus the constant pool they index into and the frame size they
-//! need.
-//!
-//! ```text
-//!   0  map
-//!   8  length                 Smi   -- bytes of instructions
-//!  16  source_position_table  tagged
-//!  24  constant_pool          tagged (FixedArray)
-//!  32  frame_size             i32   -- in bytes
-//!  36  parameter_count        u16   -- including the receiver
-//!  38  max_arguments          u16
-//!  40  bytes[length]
-//! ```
-//!
-//! The constant pool has to be a heap object and not a side table, because
-//! its entries *are* heap values -- the strings, the boxed numbers, the
-//! nested function infos. Keeping it here is what makes them reachable from
-//! the function and therefore traceable by the collector.
-//!
-//! Deviations, tracked in `PORTING.md`: no handler table (no `try`/`catch`),
-//! no `incoming_new_target_or_generator_register` (no generators), and no
-//! sandbox wrapper. V8 also puts this in trusted space so that corrupting it
-//! cannot forge bytecode; `vx` has one heap.
-
 use crate::common::globals::{object_pointer_align, K_TAGGED_SIZE};
 use crate::heap::heap::Heap;
 use crate::objects::fixed_array::FixedArray;
@@ -98,9 +71,6 @@ impl BytecodeArray {
         self.field(Self::K_CONSTANT_POOL_OFFSET)
     }
 
-    /// `BytecodeArray::frame_size`, in bytes. The register count is derived
-    /// from it, as in V8 -- the frame size is what the interpreter actually
-    /// needs to reserve.
     #[inline]
     pub fn frame_size(self, heap: &Heap) -> i32 {
         heap.read_u32(self.field(Self::K_FRAME_SIZE_OFFSET)) as i32
@@ -121,7 +91,6 @@ impl BytecodeArray {
         self.set_frame_size(heap, register_count * K_TAGGED_SIZE);
     }
 
-    /// `BytecodeArray::parameter_count`, including the receiver.
     #[inline]
     pub fn parameter_count(self, heap: &Heap) -> i32 {
         heap.read_u16(self.field(Self::K_PARAMETER_COUNT_OFFSET)) as i32
@@ -138,8 +107,6 @@ impl BytecodeArray {
         self.parameter_count(heap) - 1
     }
 
-    /// `BytecodeArray::max_arguments`: the largest argument count any call in
-    /// this function passes, which the frame has to have room for.
     #[inline]
     pub fn max_arguments(self, heap: &Heap) -> i32 {
         heap.read_u16(self.field(Self::K_MAX_ARGUMENTS_OFFSET)) as i32
@@ -168,7 +135,6 @@ impl BytecodeArray {
         heap.write_u8(self.field(Self::K_HEADER_SIZE + offset), value);
     }
 
-    /// The instruction bytes, for the iterator and the disassembler.
     pub fn bytes(self, heap: &Heap) -> &[u8] {
         heap.read_bytes(self.first_bytecode_address(), self.length(heap) as usize)
     }
@@ -187,7 +153,6 @@ mod tests {
         assert_eq!(BytecodeArray::K_PARAMETER_COUNT_OFFSET, 36);
         assert_eq!(BytecodeArray::K_MAX_ARGUMENTS_OFFSET, 38);
         assert_eq!(BytecodeArray::K_HEADER_SIZE, 40);
-        // Sizes are word aligned, so the instructions round up.
         assert_eq!(BytecodeArray::size_for(0), 40);
         assert_eq!(BytecodeArray::size_for(1), 48);
         assert_eq!(BytecodeArray::size_for(8), 48);
@@ -196,8 +161,6 @@ mod tests {
 
     #[test]
     fn the_register_count_is_derived_from_the_frame_size() {
-        // Which is why V8 stores only the frame size: the two cannot
-        // disagree.
         let mut heap = Heap::new();
         let object = heap.allocate_raw_or_fail(
             BytecodeArray::size_for(0) as usize,

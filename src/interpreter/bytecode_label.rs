@@ -1,22 +1,6 @@
-//! Ported from `src/interpreter/bytecode-label.h`.
-//!
-//! A branch target. Two kinds, and the asymmetry is deliberate:
-//!
-//! * [`BytecodeLabel`] is a *forward* target. It is created unbound, one jump
-//!   records itself against it, and binding it patches that jump. At most one
-//!   jump per label -- several jumps to the same place use
-//!   [`BytecodeLabels`], a list of labels bound together. Keeping it to one
-//!   referrer is what lets a label be a pair of words instead of a vector.
-//!
-//! * [`BytecodeLoopHeader`] is a *backward* target. It is bound first, at the
-//!   top of the loop, and the `JumpLoop` at the bottom reads its offset
-//!   directly -- no patching, because by then the distance is known.
-
 /// `BytecodeLabel::kInvalidOffset`
 const K_INVALID_OFFSET: usize = usize::MAX;
 
-/// `BytecodeLoopHeader`: a backward branch target, bound before it is jumped
-/// to.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct BytecodeLoopHeader {
     offset: Option<usize>,
@@ -43,11 +27,9 @@ impl BytecodeLoopHeader {
     }
 }
 
-/// `BytecodeLabel`: a forward branch target with at most one referrer.
 #[derive(Copy, Clone, Debug)]
 pub struct BytecodeLabel {
     bound: bool,
-    /// Where the jump that targets this label starts, counting its prefix.
     jump_offset: usize,
 }
 
@@ -101,11 +83,6 @@ impl BytecodeLabel {
     }
 }
 
-/// `BytecodeLabels`: one branch target for several jumps.
-///
-/// Every `break` in a loop, or every arm of a chain of conditions that falls
-/// through to the same place, gets its own [`BytecodeLabel`] here, and
-/// binding the set binds all of them.
 #[derive(Default, Debug)]
 pub struct BytecodeLabels {
     labels: Vec<BytecodeLabel>,
@@ -117,11 +94,6 @@ impl BytecodeLabels {
         BytecodeLabels::default()
     }
 
-    /// `BytecodeLabels::New`: returns the index of a fresh label.
-    ///
-    /// An index rather than a reference, because binding mutates the whole
-    /// set and Rust will not hand out a reference into a vector that is
-    /// about to be walked.
     pub fn new_label(&mut self) -> usize {
         debug_assert!(!self.is_bound, "cannot add a jump to a bound label set");
         self.labels.push(BytecodeLabel::new());
@@ -154,7 +126,6 @@ impl BytecodeLabels {
         self.is_bound = true;
     }
 
-    /// The labels that actually have a jump waiting to be patched.
     pub fn pending(&self) -> Vec<usize> {
         (0..self.labels.len())
             .filter(|index| {

@@ -1,15 +1,3 @@
-//! Ported from `src/heap/factory.h` / `factory.cc`.
-//!
-//! The only place objects are created. A factory method's job is to allocate
-//! the right number of bytes, stamp the right map on them, and leave every
-//! field holding something the garbage collector can walk -- in that order,
-//! with no window in between where a half-built object is reachable.
-//!
-//! In V8 `Factory` is a separate class that borrows the isolate. In `vx` the
-//! methods hang off [`Isolate`] directly: they need the heap, the roots and
-//! the string table at once, and splitting them across structs would mean
-//! fighting the borrow checker for nothing.
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::execution::isolate::Isolate;
 use crate::heap::heap::AllocationType;
@@ -23,9 +11,6 @@ use crate::objects::smi::Smi;
 use crate::objects::string::String as VxString;
 use crate::objects::tagged::Tagged;
 
-/// Spare descriptor slots to leave when growing a descriptor array, so that
-/// the next few properties added along this shape can share it.
-/// `kDescriptorArraySlack` in V8.
 pub const K_DESCRIPTOR_ARRAY_SLACK: i32 = 4;
 
 impl Isolate {
@@ -43,9 +28,6 @@ impl Isolate {
         number
     }
 
-    /// `Factory::NewNumber`: a Smi when the value fits in one, a boxed double
-    /// otherwise. Every arithmetic result goes through here, which is why the
-    /// Smi check comes first.
     pub fn new_number(&mut self, value: f64) -> Tagged {
         match Smi::try_from_f64(value) {
             Some(smi) => smi,
@@ -62,10 +44,6 @@ impl Isolate {
 
     // -- strings ------------------------------------------------------------
 
-    /// `Factory::NewStringFromUtf8`: a fresh, *not* internalized string, in
-    /// new space. String literals and concatenation results come from here;
-    /// property names go through
-    /// [`Isolate::internalize_string`](Isolate::internalize_string) instead.
     pub fn new_string(&mut self, s: &str) -> VxString {
         let one_byte = VxString::is_one_byte_content(s);
         let map = if one_byte {
@@ -78,7 +56,6 @@ impl Isolate {
 
     // -- arrays -------------------------------------------------------------
 
-    /// `Factory::NewFixedArray`: every slot initialised to `undefined`.
     pub fn new_fixed_array(&mut self, length: i32) -> FixedArray {
         if length == 0 {
             return self.empty_fixed_array();
@@ -121,13 +98,6 @@ impl Isolate {
         array
     }
 
-    /// `Factory::NewDescriptorArray`.
-    ///
-    /// Allocated tenured. A descriptor array is reachable from a `Map`, which
-    /// lives in read-only space; `vx`'s young collector does not trace
-    /// read-only space into the nursery, so a descriptor array in new space
-    /// would be a dangling reference waiting to happen. V8 avoids the same
-    /// hazard with a write barrier and a remembered set.
     pub fn new_descriptor_array(&mut self, capacity: i32) -> DescriptorArray {
         if capacity == 0 {
             return self.empty_descriptor_array();
@@ -146,15 +116,11 @@ impl Isolate {
         array.set_number_of_all_descriptors(&mut self.heap, capacity);
         array.set_number_of_descriptors(&mut self.heap, 0);
         array.set_enum_cache(&mut self.heap, Tagged::ZERO);
-        // The entries are zeroed, which reads back as Smi zero -- safe for
-        // the collector to walk even before anything is appended.
         array
     }
 
     // -- maps ---------------------------------------------------------------
 
-    /// `Factory::NewMap`. Read-only space: a map that moved would invalidate
-    /// every inline cache holding it.
     pub fn new_map(
         &mut self,
         instance_type: InstanceType,
@@ -183,9 +149,6 @@ impl Isolate {
         map
     }
 
-    /// `Map::CopyDropDescriptors`: a map with the same shape parameters but
-    /// no properties and no transitions of its own. The caller fills in the
-    /// descriptors and the back pointer.
     pub fn copy_map_shell(&mut self, source: Map) -> Map {
         let instance_type = source.instance_type(&self.heap);
         let instance_size = source.instance_size(&self.heap);
@@ -204,11 +167,6 @@ impl Isolate {
 
     // -- objects ------------------------------------------------------------
 
-    /// `Factory::NewJSObjectFromMap`.
-    ///
-    /// The inline property slots start as `undefined`, not as the hole: a
-    /// slot the map has not assigned to a property must still be a value the
-    /// collector can trace.
     pub fn new_js_object_from_map(&mut self, map: Map) -> JSObject {
         let instance_size = map.instance_size(&self.heap);
         let object = self
@@ -227,14 +185,11 @@ impl Isolate {
         js_object
     }
 
-    /// `Factory::NewJSObject`: a fresh `{}`.
     pub fn new_js_object(&mut self) -> JSObject {
         let map = self.roots.js_object_map();
         self.new_js_object_from_map(map)
     }
 
-    /// Grows an object's out-of-object property store to at least `length`
-    /// slots, copying what is there. `Factory::CopyPropertyArrayAndGrow`.
     pub fn grow_property_array(&mut self, object: JSObject, length: i32) {
         let existing = object.property_array(&self.heap);
         let existing_length = existing.length(&self.heap);
@@ -251,20 +206,12 @@ impl Isolate {
 
     // -- code ---------------------------------------------------------------
 
-    /// `Factory::NewBytecodeArray`: materialises what the bytecode generator
-    /// produced into the heap.
-    ///
-    /// Tenured, along with its constant pool: a function's code outlives the
-    /// nursery by construction, and the pool is reachable from a
-    /// `SharedFunctionInfo` that nothing collects yet.
     pub fn new_bytecode_array(
         &mut self,
         data: &crate::interpreter::bytecode_array_builder::BytecodeArrayData,
     ) -> crate::objects::bytecode_array::BytecodeArray {
         use crate::objects::bytecode_array::BytecodeArray;
 
-        // The constant pool first: its entries are heap objects, and the
-        // BytecodeArray has to be able to point at a finished one.
         let constant_pool = self.new_constant_pool(&data.constants);
 
         let length = data.bytecodes.len() as i32;
@@ -291,11 +238,6 @@ impl Isolate {
         array
     }
 
-    /// Materialises the deferred constant pool entries.
-    ///
-    /// A `Name` entry becomes an *internalized* string and a `String` entry
-    /// does not: that distinction is why they are separate entry kinds, and
-    /// it is what lets a property load compare its name by address.
     fn new_constant_pool(
         &mut self,
         entries: &[crate::interpreter::constant_array_builder::ConstantEntry],
@@ -346,11 +288,6 @@ impl Isolate {
         info
     }
 
-    /// `Factory::NewFunctionContext`.
-    ///
-    /// `slots` counts only the variables; the fixed header is added here.
-    /// Young: a context dies with its closures, and most closures are
-    /// short-lived -- which is exactly what the nursery is for.
     pub fn new_function_context(
         &mut self,
         slots: i32,
@@ -377,10 +314,6 @@ impl Isolate {
         context
     }
 
-    /// `Factory::NewPropertyCell`.
-    ///
-    /// Tenured: a cell is reachable from the global object for the life of
-    /// the program, and an inline cache holds a weak reference to it.
     pub fn new_property_cell(
         &mut self,
         name: Tagged,
@@ -410,8 +343,6 @@ impl Isolate {
         cell
     }
 
-    /// `Factory::NewFeedbackMetadata`: the slot kinds, shared by every
-    /// closure over one function literal.
     pub fn new_feedback_metadata(
         &mut self,
         kinds: &[crate::objects::feedback_vector::FeedbackSlotKind],
@@ -436,10 +367,6 @@ impl Isolate {
         metadata
     }
 
-    /// `Factory::NewFeedbackVector`: one per closure.
-    ///
-    /// Every slot starts as the uninitialized sentinel, which is what makes
-    /// a fresh site report `UNINITIALIZED` without a separate state field.
     pub fn new_feedback_vector(
         &mut self,
         shared: crate::objects::shared_function_info::SharedFunctionInfo,
@@ -505,7 +432,6 @@ impl Isolate {
         info
     }
 
-    /// A native function: no bytecode, a builtin id in `function_data`.
     pub fn new_native_shared_function_info(
         &mut self,
         name: &str,
@@ -535,12 +461,7 @@ impl Isolate {
         let object = self.new_js_object_from_map(map);
         let function = JSFunction::unchecked_cast(object.object());
         function.set_shared_function_info(&mut self.heap, shared.tagged());
-        // The caller installs the real context; a function created outside
-        // any JavaScript frame has none.
         function.set_context(&mut self.heap, self.roots.undefined_value);
-        // Each closure gets its own feedback vector: two closures over the
-        // same literal can be called with different shapes, and sharing one
-        // vector would make each pollute the other's caches.
         if is_native {
             function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
         } else {
@@ -549,8 +470,6 @@ impl Isolate {
         }
         function
     }
-
-    // -- tenured variants, for things reachable from code -------------------
 
     fn new_fixed_array_tenured(&mut self, length: i32) -> FixedArray {
         if length == 0 {
@@ -591,12 +510,6 @@ impl Isolate {
         self.allocate_string_raw(s, map, one_byte, AllocationType::Old)
     }
 
-    /// Size in bytes of `object`, which the heap walker and the collector
-    /// need in order to step over it.
-    ///
-    /// `HeapObject::Size`: fixed-size objects read it from their map, and
-    /// variable-size ones compute it from their length field. A map with
-    /// `instance_size == 0` is V8's `kVariableSizeSentinel`.
     pub fn object_size(&self, object: crate::objects::tagged::HeapObject) -> i32 {
         use crate::objects::instance_type as it;
         let map = self.heap.map_of(object);
@@ -663,7 +576,6 @@ impl Isolate {
     }
 }
 
-/// Words in a `JSObject` header, for sizing maps.
 pub const JS_OBJECT_HEADER_WORDS: i32 = JSObject::K_HEADER_SIZE / K_TAGGED_SIZE;
 
 #[cfg(test)]
@@ -727,7 +639,6 @@ mod tests {
         for i in 0..3 {
             assert_eq!(array.get(&isolate.heap, i), undefined);
         }
-        // A zero-length array is the shared empty one, not a new allocation.
         assert_eq!(isolate.new_fixed_array(0), isolate.empty_fixed_array());
     }
 
@@ -871,7 +782,6 @@ mod tests {
             "new slots start as undefined"
         );
 
-        // Shrinking is a no-op, never a truncation.
         isolate.grow_property_array(object, 1);
         assert_eq!(
             object.property_array(&isolate.heap).length(&isolate.heap),

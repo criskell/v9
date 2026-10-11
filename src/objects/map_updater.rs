@@ -1,20 +1,3 @@
-//! Ported from `src/objects/map-updater.h` / `map-updater.cc`.
-//!
-//! When a field turns out to hold a wider kind of value than its map says --
-//! a slot that held a Smi is assigned an object -- the recorded
-//! representation is no longer true, and anything that specialised on it is
-//! now wrong. `MapUpdater` is V8's machinery for fixing that: it builds a new
-//! map with the generalised field, deprecates the old one, and migrates
-//! objects to the new one as they are touched.
-//!
-//! Deviation, tracked in `PORTING.md`: `vx` widens the descriptor **in
-//! place** and marks the map unstable, rather than building a replacement.
-//! That is sound only because nothing specialises on representation yet --
-//! there is no optimizing tier to invalidate and no deoptimisation to
-//! trigger. The moment one exists, this has to become the real thing: an
-//! in-place widening would silently leave optimized code trusting a
-//! representation that no longer holds.
-
 use crate::execution::isolate::Isolate;
 use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
 use crate::objects::map::Map;
@@ -22,16 +5,6 @@ use crate::objects::property_details::Representation;
 use crate::objects::tagged::Tagged;
 
 impl Isolate {
-    /// `MapUpdater::ReconfigureToDataField`, in the narrow sense `vx` needs:
-    /// a field that has held a Smi and is now assigned an object has to be
-    /// recorded as tagged, or a future optimisation would trust a stale
-    /// representation.
-    ///
-    /// Deviation: V8 generalises by building a *new* map and deprecating the
-    /// old one, so that code which already specialised on the narrow
-    /// representation gets invalidated. `vx` widens the descriptor in place,
-    /// which is sound only because nothing specialises on representation yet.
-    /// The map is marked unstable to record that it happened.
     pub(crate) fn widen_field_representation(&mut self, map: Map, name: Tagged, value: Tagged) {
         let index = map.find_descriptor(&self.heap, name);
         if index == K_NOT_FOUND {
@@ -68,7 +41,6 @@ mod tests {
                 .representation(),
             Representation::Smi
         );
-        // Another Smi keeps the narrow representation, and the map stable.
         isolate.set_property_by_str(object, "x", Smi::from_int(2));
         assert_eq!(
             map.find_property_details(&isolate.heap, x)
@@ -102,7 +74,6 @@ mod tests {
         assert_eq!(after.attributes(), before.attributes());
         assert_eq!(after.kind(), before.kind());
 
-        // The sibling descriptor is untouched.
         let a = isolate.internalize_string("a").tagged();
         assert_eq!(
             map.find_property_details(&isolate.heap, a)

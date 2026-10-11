@@ -1,9 +1,3 @@
-//! Ported from `src/ast/prettyprinter.h` / `prettyprinter.cc`.
-//!
-//! V8's `--print-ast` output: the tree, indented. Cheap to write and worth
-//! far more than it costs, because the alternative when the parser and the
-//! bytecode generator disagree is guessing which one is wrong.
-
 use crate::ast::ast::*;
 
 /// `AstPrinter`
@@ -39,8 +33,6 @@ impl AstPrinter {
     }
 }
 
-/// The scope's variables and where each one ended up, which is the output
-/// worth having: it says at a glance which variables were captured.
 fn print_scope(out: &mut String, scope: &crate::ast::scopes::Scope, depth: usize) {
     use crate::common::globals::VariableLocation;
     if scope.variables().is_empty() {

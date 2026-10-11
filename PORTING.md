@@ -17,8 +17,24 @@ Reference checkout: `~/devel/v8` at `a74948bb81a5` (2026-10-10).
    address an offset into a heap arena, reachable only through the `Heap` that
    owns it. Every field access is bounds and alignment checked. A stale
    address is a panic with a message, never undefined behaviour.
-4. **A deviation is documented where it lives,** in the module's docs, and
-   listed here.
+4. **Comments in `src/` are V8's comments.** Nothing in the Rust source is
+   commentary written for `vx`: a comment is kept only where V8 has one, and
+   kept verbatim. The two exceptions are mechanical, not prose — a doc line
+   naming the V8 symbol a Rust item was ported from (`/// \`Map::AsElementsKind\``),
+   and nothing else.
+5. **A deviation is documented here,** in this file, not in the source. Rule
+   4 leaves nowhere else for it to go, and the list below is the whole
+   record.
+
+`tools/check-comments.py <v8-checkout>` enforces rule 4: it reports every
+comment line in `src/` that does not appear in V8's source, matching on word
+shingles so that a comment reflowed to different line breaks still counts as
+V8's. It currently reports zero.
+
+`tools/strip-comments.py <file>...` is its other half, for when a sweep is
+needed: it deletes what the checker reports and never writes a comment. It
+decides per contiguous comment block rather than per line, because a layout
+diagram judged line by line keeps its frame and loses its content.
 
 ## Configuration
 
@@ -291,6 +307,44 @@ survive the arena being reallocated — which is why growing old space is a
   needs neither tracing nor clearing. The assertion in
   `update_megamorphic_cache` states that, where V8 asserts only the weaker
   "not in the young generation".
+
+### Per-file deviations
+
+Rule 4 leaves no room for these in the source, so they live here. Each entry
+is what the Rust file leaves out of, or does differently from, the V8 file it
+maps to.
+
+| File | Deviation |
+| --- | --- |
+| `ast/ast.rs` | No classes, generators, async functions, destructuring, template literals, `try`/`catch`, `switch`, `with`, labels or regular expressions. |
+| `ast/scopes.rs` | Function scopes only. V8 also has block, eval, with, catch, class and module scopes, which is what makes `let` block-scoped and gives it a temporal dead zone; `vx` gives `let`/`const` function scope, so neither is enforced. No `eval`, so no `VariableLocation::LOOKUP`. |
+| `heap/paged_spaces.rs` | V8 grows a paged space by committing another `MemoryChunk`. `vx` has no pages, so growth raises the space's limit and the arena extends — sound only because an address is an offset, so extending cannot invalidate one. |
+| `heap/read_only_spaces.rs` | V8 serialises this space into a snapshot and maps it read-only at startup, which is most of why it is a separate space. `vx` builds it every time. |
+| `heap/scavenger.rs` | No remembered set: V8's write barrier records old-to-young references so a scavenge touches only those, while `vx` walks old and read-only space linearly — correct, but O(old space) per collection. Single threaded. Weak references are treated as strong, so they survive one cycle longer. No old-generation collection. |
+| `heap/setup_heap_internal.rs` | V8 skips almost all of this by deserialising a snapshot. |
+| `heap/spaces.rs` | No pages: a space is one run of bytes, not a list of `MemoryChunk`s. Pages buy incremental sweeping, per-page remembered sets and growth without reservation games, none of which is needed before mark-compact. |
+| `ic/handler_configuration.rs` | Only the Smi handler form. V8 also has `DataHandler` objects for what a Smi cannot describe — accessors, proxies, a load from a prototype needing the holder and a validity cell — so a property found on a prototype is not cached. |
+| `ic/ic.rs` | No `RECOMPUTE_HANDLER` (it exists for prototype-chain invalidation via validity cells) and no MEGADOM. A property found on a prototype is not cached, because that needs the object-form handler. |
+| `init/bootstrapper.rs` | V8 installs the standard library through a `NativeContext` holding the realm's prototypes, constructors and intrinsics. `vx` has a global object with a handful of builtins, so realms and per-realm prototypes do not exist. |
+| `interpreter/bytecode_register.rs` | V8 derives the fixed slot indices from `InterpreterFrameConstants`, because a `Register` is an offset into a machine frame that generated code also reads. `vx` interprets in a `Vec<Tagged>` and defines the layout here, keeping V8's ordering, which is what the encoding depends on. |
+| `interpreter/bytecodes.rs` | 103 of V8's 196 bytecodes. No debug-break bytecodes, no `*Constant` jump variants, no generators, no `for...in`, no class or template literals, no runtime calls or intrinsics. |
+| `interpreter/control_flow_builders.rs` | V8's builders hold a pointer to the `BytecodeArrayBuilder` and bind their targets in a destructor. `vx`'s hold only labels and take the builder as a parameter: two mutable borrows cannot coexist, and an explicit `finish` is clearer than a `Drop` that needs an argument it cannot have. |
+| `interpreter/interpreter.rs` | A call recurses into `execute` rather than pushing a machine frame, so JavaScript recursion is bounded by Rust's stack and is checked explicitly. Keyed property access converts its key to a string name, so an array is an object with `"0"`, `"1"` … properties and has no `length`. |
+| `objects/bytecode_array.rs` | No handler table (no `try`/`catch`), no `incoming_new_target_or_generator_register`, no sandbox wrapper. V8 also puts this in trusted space so corrupting it cannot forge bytecode; `vx` has one heap. |
+| `objects/contexts.rs` | Function contexts only. V8 also has block, catch, with, eval, module and native contexts — the last holding the realm's intrinsics, which in `vx` hang off the global object. No `ContextCell`. |
+| `objects/feedback_vector.rs` | V8's sentinels are `Symbol`s; `vx` has no symbols and uses oddballs. V8 packs slot kinds into five bits each in `FeedbackMetadata`; `vx` uses a byte apiece. No `invocation_count_before_stable`, no OSR state, no closure feedback cell array. |
+| `objects/lookup.rs` | The data-property path only: no accessors, proxies, interceptors or indexed elements. Each is a branch in V8's state machine. |
+| `objects/map.rs` | No `dependent_code`, no `prototype_validity_cell`. Both exist to invalidate optimized code when a shape assumption breaks; omitted rather than stubbed, so adding a JIT has to confront them. |
+| `objects/map_updater.rs` | `vx` widens a descriptor **in place** and marks the map unstable, rather than building a replacement and deprecating the old one. Sound only because nothing specialises on representation yet; with an optimizing tier this becomes a correctness bug, since in-place widening leaves optimized code trusting a representation that no longer holds. |
+| `objects/objects.rs` | `ToPrimitive` does not call `valueOf` or `toString`, so an object converts to `NaN` and to `"[object Object]"`. No `Symbol`, no `BigInt`. |
+| `objects/property_cell.rs` | `dependent_code` is present for layout fidelity but always empty. V8 keeps the cells in a `GlobalDictionary` on `JSGlobalObject`, so declaring a global does not reshape it; `vx` stores each cell as an ordinary fast property, which does reshape the global object — and costs nothing precisely because the caches hold cells rather than maps. |
+| `objects/scope_info.rs` | V8's `ScopeInfo` carries the scope type, language mode, function kind, parameter count, flags for every special binding and a positions table. `vx` keeps the context-slot names and the count. |
+| `objects/shared_function_info.rs` | V8 splits `function_data` into trusted and untrusted halves for the sandbox and overloads it to hold a `Code` object, a lazy-compilation stub or a builtin id. `vx` compiles eagerly and has one tier, so it holds a `BytecodeArray` or `undefined`. No `Script`. |
+| `objects/string.rs` | Sequential representations only. V8 also has `ConsString`, `SlicedString`, `ThinString` and external strings; their instance-type bits are present and the read paths check `IsIndirectString`, so adding them is implementing representations rather than reshaping the object model. |
+| `objects/string_table.rs` | V8's table is an open-addressed hash table in the heap, keyed by `StringTableKey` so a lookup needs no allocation. `vx` uses a Rust `HashMap` beside the heap: one object per name is preserved, but the table is not a heap object and is not collected. Internalized strings go in read-only space and are copied, where V8 uses old space with a write barrier and `ThinString` forwarding. |
+| `parsing/parser.rs` | No preparser: V8 scans function bodies once with a `PreParser` that records only scope information and parses them fully on first call, while `vx` parses everything eagerly. `let`/`const` get function scope, so block scoping and the temporal dead zone are not enforced. No classes, generators, async functions, destructuring, spread, template literals, `for...in`/`for...of`, `switch`, `try`, `with`, labels, `new`, getters or setters. |
+| `parsing/scanner.rs` | Scans Rust `char`, not UTF-16 code units; the two differ only for lone surrogates, which cannot appear in a `&str`. String literals are still converted to UTF-16 when they become heap strings, so `length` stays correct. No template literals, no regular expression literals, no `\u` escapes in identifiers, no numeric separators, no BigInt. Identifier start/continue use Rust's Unicode alphabetic classes rather than the exact `ID_Start`/`ID_Continue` tables. |
+| `objects/elements_kind.rs` | The six fast kinds keep V8's numbering, since the predicates are range checks on it. No nonextensible, sealed, frozen, typed-array, arguments, string-wrapper, shared-array or wasm kinds, so `DICTIONARY_ELEMENTS` and `NO_ELEMENTS` are renumbered to 6 and 7. `DICTIONARY_ELEMENTS` is declared but not produced. |
 
 ### What an inline cache buys, measured
 

@@ -1,23 +1,3 @@
-//! Ported from `src/objects/oddball.h` and `oddball.tq`.
-//!
-//! `undefined`, `null`, `true`, `false` and the internal hole are heap
-//! objects in V8, not immediate values. Each one carries the results of
-//! converting it, so `ToNumber(undefined)` and `typeof null` are field reads
-//! rather than branches:
-//!
-//! ```text
-//!   0  map
-//!   8  to_number_raw   float64
-//!  16  to_string       String
-//!  24  to_number       Number
-//!  32  type_of         String
-//!  40  kind            Smi
-//!  48  == Oddball::kSize
-//! ```
-//!
-//! They live in read-only space, so a comparison against `undefined` is an
-//! address comparison that can never be invalidated by a collection.
-
 use crate::heap::heap::Heap;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
@@ -27,7 +7,6 @@ object_type!(
     Oddball
 );
 
-/// `Oddball::kKind` values, from `src/objects/oddball.h`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum OddballKind {
     /// `Oddball::kFalse`
@@ -38,11 +17,7 @@ pub enum OddballKind {
     Null = 3,
     /// `Oddball::kUndefined`
     Undefined = 4,
-    /// `Oddball::kTheHole` -- never visible to JavaScript. Marks an
-    /// uninitialized `let` binding and an absent array element.
     TheHole = 5,
-    /// `Oddball::kUninitialized` -- an inline cache slot nothing has reached
-    /// yet.
     Uninitialized = 6,
 }
 
@@ -150,7 +125,6 @@ mod tests {
 
     #[test]
     fn kinds_match_v8s_numbering() {
-        // false/true are 0/1 so that a boolean's kind doubles as its value.
         assert_eq!(OddballKind::False as i32, 0);
         assert_eq!(OddballKind::True as i32, 1);
         assert_eq!(OddballKind::Null as i32, 3);

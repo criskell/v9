@@ -1,37 +1,14 @@
-//! Ported from `src/objects/js-function.h` and `js-function.tq`.
-//!
-//! A callable object. `JSFunction` extends `JSObject`, so it carries the same
-//! properties/elements header and then its own fields, which is why a
-//! function can have properties like any other object.
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::js_objects::JSObject;
 use crate::objects::tagged::Tagged;
 
-object_type!(
-    /// `JSFunction`: a closure.
-    ///
-    /// Points at the [`SharedFunctionInfo`] holding the code, which is what
-    /// every closure over the same function literal shares.
-    ///
-    /// Deviation: V8 also stores the captured `Context` here. `vx` has no
-    /// contexts yet, so a function can only reach its own locals and the
-    /// globals. See `PORTING.md`.
-    ///
-    /// [`SharedFunctionInfo`]: crate::objects::shared_function_info::SharedFunctionInfo
-    JSFunction
-);
+object_type!(JSFunction);
 
 impl JSFunction {
     pub const K_PROPERTIES_OR_HASH_OFFSET: i32 = JSObject::K_PROPERTIES_OR_HASH_OFFSET;
     pub const K_ELEMENTS_OFFSET: i32 = JSObject::K_ELEMENTS_OFFSET;
     pub const K_SHARED_FUNCTION_INFO_OFFSET: i32 = JSObject::K_HEADER_SIZE;
-    /// `JSFunction::context`: the context this closure was created in.
-    ///
-    /// This single field is what makes a closure a closure. Two closures
-    /// made in the same call hold the same context and therefore share the
-    /// captured variable; two made in different calls hold different ones.
     pub const K_CONTEXT_OFFSET: i32 = Self::K_SHARED_FUNCTION_INFO_OFFSET + K_TAGGED_SIZE;
     pub const K_FEEDBACK_VECTOR_OFFSET: i32 = Self::K_CONTEXT_OFFSET + K_TAGGED_SIZE;
     pub const K_SIZE: i32 = Self::K_FEEDBACK_VECTOR_OFFSET + K_TAGGED_SIZE;
@@ -97,8 +74,6 @@ mod tests {
         assert_eq!(JSFunction::K_CONTEXT_OFFSET, 32);
         assert_eq!(JSFunction::K_FEEDBACK_VECTOR_OFFSET, 40);
         assert_eq!(JSFunction::K_SIZE, 48);
-        // It shares the JSObject header, so a function has properties and
-        // elements like any other object.
         assert_eq!(
             JSFunction::K_PROPERTIES_OR_HASH_OFFSET,
             JSObject::K_PROPERTIES_OR_HASH_OFFSET

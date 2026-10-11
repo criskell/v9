@@ -1,13 +1,3 @@
-//! Ported from `src/interpreter/bytecode-array-iterator.h` /
-//! `bytecode-array-iterator.cc`.
-//!
-//! Walks a bytecode array one instruction at a time, resolving the prefix
-//! into an [`OperandScale`] and decoding operands at the right width.
-//!
-//! The interpreter and the disassembler need exactly the same decoding, so
-//! they share this -- which also means a disagreement between what runs and
-//! what is printed is impossible.
-
 use crate::interpreter::bytecode_operands::{OperandScale, OperandSize, OperandType};
 use crate::interpreter::bytecode_register::Register;
 use crate::interpreter::bytecodes::Bytecode;
@@ -15,12 +5,9 @@ use crate::interpreter::bytecodes::Bytecode;
 /// `BytecodeArrayIterator`
 pub struct BytecodeArrayIterator<'a> {
     bytecodes: &'a [u8],
-    /// Offset of the instruction being looked at, counting its prefix.
     offset: usize,
     bytecode: Bytecode,
     operand_scale: OperandScale,
-    /// Offset of the opcode byte, which is one past `offset` when there is a
-    /// prefix. Jump offsets are relative to *this*.
     opcode_offset: usize,
 }
 
@@ -57,8 +44,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         self.offset
     }
 
-    /// Offset of the opcode byte. A jump's target is this plus its offset
-    /// operand, not `current_offset` plus it.
     #[inline]
     pub fn opcode_offset(&self) -> usize {
         self.opcode_offset
@@ -70,7 +55,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         self.operand_scale
     }
 
-    /// `BytecodeArrayIterator::current_bytecode_size`, prefix included.
     pub fn current_bytecode_size(&self) -> usize {
         (self.opcode_offset - self.offset) + self.bytecode.size(self.operand_scale)
     }
@@ -83,7 +67,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         }
     }
 
-    /// Restarts at `offset`, which is how a jump is taken.
     pub fn set_offset(&mut self, offset: usize) {
         self.offset = offset;
         if !self.done() {
@@ -106,7 +89,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         }
     }
 
-    /// The raw value of operand `index`, sign-extended if its type is signed.
     pub fn operand(&self, index: usize) -> i32 {
         let offset = self.opcode_offset + self.bytecode.operand_offset(index, self.operand_scale);
         let operand_type = self.bytecode.operand_type(index);
@@ -127,8 +109,6 @@ impl<'a> BytecodeArrayIterator<'a> {
     }
 
     /// `BytecodeArrayIterator::GetJumpTargetOffset`.
-    ///
-    /// The offset is measured from the opcode byte; a `JumpLoop` goes
     /// backwards.
     pub fn jump_target_offset(&self) -> usize {
         debug_assert!(self.bytecode.is_jump());
@@ -141,7 +121,6 @@ impl<'a> BytecodeArrayIterator<'a> {
     }
 }
 
-/// Reads one operand out of the byte stream.
 pub fn read_operand(bytes: &[u8], offset: usize, size: OperandSize, unsigned: bool) -> i32 {
     match size {
         OperandSize::None => 0,
@@ -170,9 +149,6 @@ pub fn read_operand(bytes: &[u8], offset: usize, size: OperandSize, unsigned: bo
     }
 }
 
-/// `BytecodeDecoder::Decode` -- `--print-bytecode` output.
-///
-/// Ported from `src/interpreter/bytecode-decoder.cc`.
 pub fn disassemble(bytecodes: &[u8], constants: &[String]) -> String {
     let mut out = String::new();
     let mut iterator = BytecodeArrayIterator::new(bytecodes);
@@ -180,7 +156,6 @@ pub fn disassemble(bytecodes: &[u8], constants: &[String]) -> String {
         let bytecode = iterator.current_bytecode();
         out.push_str(&format!("{:>5} : ", iterator.current_offset()));
 
-        // The raw bytes, as V8 prints them.
         let size = iterator.current_bytecode_size();
         let raw: Vec<String> = bytecodes
             [iterator.current_offset()..iterator.current_offset() + size]
@@ -307,7 +282,6 @@ mod tests {
         let mut iterator = BytecodeArrayIterator::new(&data.bytecodes);
         iterator.advance(); // past LdaTrue
         assert_eq!(iterator.current_bytecode(), Bytecode::JumpIfFalse);
-        // LdaTrue(1) JumpIfFalse(1..3) LdaSmi(3..5) Return(5)
         assert_eq!(iterator.jump_target_offset(), 5);
     }
 
@@ -357,7 +331,6 @@ mod tests {
         assert!(listing.contains("Star r0"), "{listing}");
         assert!(listing.contains("Add r0"), "{listing}");
         assert!(listing.contains("Return"), "{listing}");
-        // Every instruction gets its offset.
         assert!(listing.starts_with("    0 : "), "{listing}");
     }
 
@@ -373,8 +346,6 @@ mod tests {
 
         let listing = disassemble(&data.bytecodes, &["\"hi\"".to_string()]);
         assert!(listing.contains("LdaConstant [0] (\"hi\")"), "{listing}");
-        // LdaConstant(0..2) JumpIfToBooleanFalse(2..4) LdaSmi(4..6), so the
-        // branch lands at 6.
         assert!(listing.contains("-> 6"), "{listing}");
     }
 }

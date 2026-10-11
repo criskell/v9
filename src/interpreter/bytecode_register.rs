@@ -1,39 +1,5 @@
-//! Ported from `src/interpreter/bytecode-register.h`.
-//!
-//! A `Register` names a slot in the interpreter frame. The encoding is the
-//! interesting part, and it is V8's:
-//!
-//! ```text
-//!   index >= 0    a local, in the register file
-//!   index <  0    a parameter, or one of the fixed frame slots
-//! ```
-//!
-//! Parameters are *negative* because the interpreter frame has them on the
-//! far side of the frame pointer -- the caller pushed them before the call,
-//! so they sit above fp, while the register file grows below it. One signed
-//! index addresses both, which is why `Reg` is a signed operand.
-//!
-//! Deviation: V8 derives the fixed slot indices from
-//! `InterpreterFrameConstants`, because a `Register` really is an offset into
-//! a machine stack frame that generated code also reads. `vx` interprets in
-//! a `Vec<Tagged>` and has no machine frame, so it defines the layout here
-//! instead -- keeping V8's *ordering*, which is what the encoding depends on.
-
 use crate::interpreter::bytecode_operands::{OperandScale, OperandSize};
 
-/// The frame layout, in register indices. Mirrors
-/// `InterpreterFrameConstants`: the register file starts at index 0 and the
-/// fixed slots and parameters run downwards from there.
-///
-/// ```text
-///   index  0, 1, 2 ...   the register file (locals, temporaries)
-///   index -1            feedback vector
-///   index -2            bytecode array
-///   index -3            current context
-///   index -4            the closure being executed
-///   index -5            argument count
-///   index -6, -7 ...    parameters: receiver, then the declared ones
-/// ```
 const K_REGISTER_FILE_START_INDEX: i32 = 0;
 const K_FEEDBACK_VECTOR_REGISTER_INDEX: i32 = -1;
 const K_BYTECODE_ARRAY_REGISTER_INDEX: i32 = -2;
@@ -78,8 +44,6 @@ impl Register {
         Register(K_INVALID_INDEX)
     }
 
-    /// `Register::FromParameterIndex`. Parameter 0 is the receiver (`this`),
-    /// so the declared parameters start at 1.
     #[inline]
     pub const fn from_parameter_index(index: i32) -> Register {
         debug_assert!(index >= 0);
@@ -93,7 +57,6 @@ impl Register {
         K_FIRST_PARAM_REGISTER_INDEX - self.0
     }
 
-    /// `Register::receiver`: parameter 0, the `this` value.
     #[inline]
     pub const fn receiver() -> Register {
         Register::from_parameter_index(0)
@@ -134,11 +97,6 @@ impl Register {
         Register(K_ARGUMENT_COUNT_REGISTER_INDEX)
     }
 
-    /// `Register::ToOperand`: the value actually encoded in the bytecode.
-    ///
-    /// Inverting the index is what makes the encoding compact: it maps the
-    /// frame's slots onto small signed numbers around zero, so the common
-    /// registers fit in one byte.
     #[inline]
     pub const fn to_operand(self) -> i32 {
         K_REGISTER_FILE_START_INDEX - self.0
@@ -150,9 +108,6 @@ impl Register {
         Register(K_REGISTER_FILE_START_INDEX - operand)
     }
 
-    /// `Register::SizeOfOperand`: the narrowest operand size this register
-    /// can be encoded in, which is what decides whether the bytecode needs a
-    /// `Wide` prefix.
     pub fn size_of_operand(self) -> OperandSize {
         let operand = self.to_operand();
         if operand >= i8::MIN as i32 && operand <= i8::MAX as i32 {
@@ -164,7 +119,6 @@ impl Register {
         }
     }
 
-    /// The scale a bytecode needs in order to encode this register.
     pub fn operand_scale(self) -> OperandScale {
         match self.size_of_operand() {
             OperandSize::Byte | OperandSize::None => OperandScale::Single,
@@ -204,12 +158,6 @@ impl std::fmt::Display for Register {
     }
 }
 
-/// `RegisterList`: a run of consecutive registers.
-///
-/// Consecutive is the point. A call passes its arguments as one `RegList`
-/// operand plus a count, so the interpreter can take a slice instead of
-/// decoding one operand per argument -- which is also why the bytecode
-/// generator has to allocate argument registers contiguously.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct RegisterList {
     first_reg_index: i32,
@@ -231,7 +179,6 @@ impl RegisterList {
         }
     }
 
-    /// A list holding exactly one register.
     pub const fn one(register: Register) -> RegisterList {
         RegisterList::new(register, 1)
     }
@@ -246,12 +193,6 @@ impl RegisterList {
         self.register_count == 0
     }
 
-    /// `RegisterList::first_register`.
-    ///
-    /// Valid whenever the list has a base, which a *growable* list does even
-    /// while its count is still zero -- that base is where its first
-    /// register will land. Only the sentinel from [`RegisterList::empty`] has
-    /// no base.
     #[inline]
     pub const fn first_register(self) -> Register {
         Register::new(self.first_reg_index)
@@ -264,7 +205,6 @@ impl RegisterList {
         Register::new(self.first_reg_index + self.register_count - 1)
     }
 
-    /// `RegisterList::operator[]`
     #[inline]
     pub fn get(self, index: i32) -> Register {
         debug_assert!(index >= 0 && index < self.register_count);
@@ -280,8 +220,6 @@ impl RegisterList {
         }
     }
 
-    /// `RegisterList::PopLeft`: drop the first register. A call uses this to
-    /// separate the receiver from the arguments.
     pub fn pop_left(self) -> RegisterList {
         debug_assert!(self.register_count > 0);
         RegisterList {
@@ -366,7 +304,6 @@ mod tests {
                 assert_ne!(a, b, "two frame slots collide");
             }
         }
-        // ...and none of them collides with a parameter.
         for index in 0..64 {
             let parameter = Register::from_parameter_index(index);
             for slot in slots {
@@ -377,8 +314,6 @@ mod tests {
 
     #[test]
     fn a_register_needs_a_wider_operand_only_when_it_does_not_fit() {
-        // The operand is the negated index, so the byte boundary falls where
-        // `-index` leaves `i8` -- at 128, not 127.
         assert_eq!(Register::new(0).size_of_operand(), OperandSize::Byte);
         assert_eq!(Register::new(128).size_of_operand(), OperandSize::Byte);
         assert_eq!(Register::new(129).size_of_operand(), OperandSize::Short);
@@ -392,8 +327,6 @@ mod tests {
             OperandScale::Quadruple
         );
 
-        // A parameter encodes as a positive operand, so it leaves a byte one
-        // step earlier.
         assert_eq!(Register::receiver().size_of_operand(), OperandSize::Byte);
         assert_eq!(
             Register::from_parameter_index(121).size_of_operand(),
@@ -425,7 +358,6 @@ mod tests {
 
     #[test]
     fn popping_the_receiver_leaves_the_arguments() {
-        // How a call separates the receiver from what follows it.
         let list = RegisterList::new(Register::new(2), 3);
         let arguments = list.pop_left();
         assert_eq!(arguments.register_count(), 2);
@@ -446,8 +378,6 @@ mod tests {
             "the sentinel names no registers at all"
         );
 
-        // A growable list is also empty, but it knows where its first
-        // register will go -- which is what makes appending to it work.
         let growable = RegisterList::new(Register::new(4), 0);
         assert!(growable.is_empty());
         assert_eq!(growable.first_register(), Register::new(4));

@@ -1,18 +1,3 @@
-//! Ported from `src/init/bootstrapper.cc`.
-//!
-//! Builds the world a script runs in: the global object, and the functions
-//! and objects reachable from it.
-//!
-//! V8 does this once and serialises the result into a snapshot, so a real
-//! isolate starts by deserialising rather than by running this. `vx` builds
-//! it every time.
-//!
-//! Deviation: V8 installs the whole of the standard library here, through a
-//! `NativeContext` that also holds the prototypes, the constructors and the
-//! realm's intrinsics. `vx` has a global object with a handful of builtins
-//! and no context, so `globalThis`, realms and prototypes-per-realm do not
-//! exist. See `PORTING.md`.
-
 use crate::builtins::builtins::Builtin;
 use crate::execution::isolate::Isolate;
 use crate::interpreter::bytecode_generator::{BytecodeGenerator, CompiledProgram};
@@ -23,7 +8,6 @@ use crate::objects::tagged::Tagged;
 use crate::parsing::parser::Parser;
 
 impl Isolate {
-    /// `Genesis::CreateRoots` plus `Genesis::InstallGlobalThisBinding`.
     pub fn setup_global_object(&mut self) {
         if self.roots.global_object.is_strong() {
             return;
@@ -37,9 +21,6 @@ impl Isolate {
         let global = self.new_js_object_from_map(map);
         self.roots.global_object = global.tagged();
 
-        // `undefined`, `NaN` and `Infinity` are *properties of the global
-        // object*, not keywords -- which is why `typeof undefined` is a
-        // global load and why `undefined` was shadowable before ES5.
         let undefined = self.undefined_value();
         self.set_property_by_str(global, "undefined", undefined);
         let nan = self.new_heap_number(f64::NAN).tagged();
@@ -62,7 +43,6 @@ impl Isolate {
         self.install_builtin(math, "pow", Builtin::MathPow, 2);
         self.set_property_by_str(global, "Math", math.tagged());
 
-        // `globalThis`, which is just the global object under a name.
         self.set_property_by_str(global, "globalThis", global.tagged());
     }
 
@@ -89,13 +69,11 @@ impl Isolate {
         )
     }
 
-    /// A closure over the compiled function at `index`.
     pub(crate) fn closure_for(&mut self, index: usize) -> Tagged {
         let undefined = self.undefined_value();
         self.closure_for_with_context(index, undefined)
     }
 
-    /// A closure over the compiled function at `index`, holding `context`.
     pub(crate) fn closure_for_with_context(&mut self, index: usize, context: Tagged) -> Tagged {
         let shared = self.shared_function_infos[index];
         let shared = crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
@@ -106,7 +84,6 @@ impl Isolate {
         function.tagged()
     }
 
-    /// The feedback vector of the script last run, for `--trace-ic`.
     pub fn script_feedback_vector(
         &self,
     ) -> Option<crate::objects::feedback_vector::FeedbackVector> {
@@ -118,7 +95,6 @@ impl Isolate {
         )
     }
 
-    /// `--trace-ic`: every feedback site of the script and its state.
     pub fn trace_ic(&self) -> Vec<String> {
         let Some(vector) = self.script_feedback_vector() else {
             return Vec::new();
@@ -128,9 +104,6 @@ impl Isolate {
         let length = vector.length(&self.heap);
         while slot < length {
             let kind = vector.get_kind(&self.heap, slot);
-            // Skip the sites that never ran: in a script most of them are
-            // global accesses, which `vx` does not cache, and listing them
-            // buries the ones that did learn something.
             if kind != crate::objects::feedback_vector::FeedbackSlotKind::Invalid {
                 let nexus =
                     crate::objects::feedback_vector::FeedbackNexus::new(&self.heap, vector, slot);
@@ -147,7 +120,6 @@ impl Isolate {
         self.output.push(line.to_string());
     }
 
-    /// Everything `console.log` has printed.
     pub fn output(&self) -> &[String] {
         &self.output
     }
@@ -156,10 +128,6 @@ impl Isolate {
         std::mem::take(&mut self.output)
     }
 
-    /// `Compiler::Compile` followed by `Execution::Call`: the whole pipeline.
-    ///
-    /// Returns the script's completion value -- the value of its last
-    /// expression statement, which is what `eval` yields.
     pub fn run_script(&mut self, source: &str) -> Result<Tagged, String> {
         self.setup_global_object();
         let program = Parser::parse_program(source).map_err(|error| error.display(source))?;
@@ -168,12 +136,9 @@ impl Isolate {
         self.run_compiled(&compiled)
     }
 
-    /// Materialises a compiled program and runs its top level.
     pub fn run_compiled(&mut self, compiled: &CompiledProgram) -> Result<Tagged, String> {
         self.setup_global_object();
 
-        // Materialise every function, so that `CreateClosure` can name one
-        // by index -- including a function that has not been reached yet.
         let base = self.shared_function_infos.len();
         assert_eq!(base, 0, "one script per isolate for now");
         for function in &compiled.functions {
@@ -189,8 +154,6 @@ impl Isolate {
             self.shared_function_infos.push(shared.tagged());
         }
 
-        // Hoisted top-level `var`s exist, holding undefined, before the
-        // first statement runs.
         let global = self.global_object();
         let undefined = self.undefined_value();
         for name in &compiled.global_declarations {
@@ -232,7 +195,6 @@ mod tests {
                 .instance_type(sqrt.to_strong_heap_object().unwrap())
         ));
 
-        // `globalThis` is the global object itself.
         let global_this = isolate.get_property_by_str(global, "globalThis");
         assert_eq!(global_this, global.tagged());
     }

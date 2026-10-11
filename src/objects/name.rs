@@ -1,26 +1,9 @@
-//! Ported from `src/objects/name.h` and `name.tq`.
-//!
-//! `Name` is the base of everything that can be a property key: strings and
-//! symbols. Its one field is `raw_hash_field`, and that field is overloaded
-//! -- its low two bits say what the rest of it holds, so the same word can
-//! carry a hash, an array index, a forwarding index, or nothing yet.
-//!
-//! ```text
-//!   0  map
-//!   8  raw_hash_field   u32
-//! ```
-
 use crate::heap::heap::Heap;
 use crate::objects::string::String as VxString;
 use crate::objects::tagged::HeapObject;
 
-object_type!(
-    /// `Name`: a string or a symbol -- the things that can be property keys.
-    Name
-);
+object_type!(Name);
 
-/// `Name::HashFieldType`. The low bit says whether the field can be used as a
-/// hash at all, which is why `kEmpty` and `kForwardingIndex` both have it set.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum HashFieldType {
     Hash = 0b10,
@@ -36,7 +19,6 @@ const HASH_SHIFT: u32 = HASH_FIELD_TYPE_BITS;
 /// `Name::kHashNotComputedMask`
 pub const K_HASH_NOT_COMPUTED_MASK: u32 = 1;
 
-/// `Name::kEmptyHashField`: the hash has not been computed yet.
 pub const K_EMPTY_HASH_FIELD: u32 = HashFieldType::Empty as u32;
 
 /// `String::HashBits::kMax`
@@ -61,7 +43,6 @@ impl Name {
         raw_hash_field & K_HASH_NOT_COMPUTED_MASK == 0
     }
 
-    /// `Name::HashFieldTypeBits::decode`: what the hash field currently holds.
     #[inline]
     pub fn hash_field_type(raw_hash_field: u32) -> HashFieldType {
         match raw_hash_field & HASH_FIELD_TYPE_MASK {
@@ -72,7 +53,6 @@ impl Name {
         }
     }
 
-    /// `Name::hash`: the cached hash, computing it on first use.
     pub fn hash(self, heap: &mut Heap) -> u32 {
         let raw = self.raw_hash_field(heap);
         if Name::is_hash_field_computed(raw) {
@@ -100,7 +80,6 @@ mod tests {
     use crate::objects::map::Map;
     use crate::objects::string::String as VxString;
 
-    /// The minimum world a `Name` needs: a meta map and a string map.
     struct World {
         heap: Heap,
         one_byte_map: Map,
@@ -119,7 +98,6 @@ mod tests {
             heap.set_map(object, meta);
             let one_byte_map = Map::unchecked_cast(object);
             one_byte_map.set_instance_type(&mut heap, SEQ_ONE_BYTE_STRING_TYPE);
-            // Variable sized, like V8's kVariableSizeSentinel.
             one_byte_map.set_instance_size(&mut heap, 0);
 
             World { heap, one_byte_map }
@@ -174,8 +152,6 @@ mod tests {
         assert_eq!(Name::hash_field_type(0b00), HashFieldType::IntegerIndex);
         assert_eq!(Name::hash_field_type(0b01), HashFieldType::ForwardingIndex);
 
-        // Only a real hash counts as computed: the other three states all
-        // have the low bit set so that one test rejects them together.
         assert!(Name::is_hash_field_computed(0b10));
         assert!(!Name::is_hash_field_computed(K_EMPTY_HASH_FIELD));
         assert!(!Name::is_hash_field_computed(0b01));
@@ -186,7 +162,6 @@ mod tests {
         assert_eq!(K_MAX_HASH, u32::MAX >> 2);
         let hash = crate::strings::string_hasher::StringHasher::hash_sequential_string("length");
         assert!(hash <= K_MAX_HASH);
-        // Encoding it must not disturb the type bits.
         let field = (hash << HASH_SHIFT) | (HashFieldType::Hash as u32);
         assert_eq!(Name::hash_field_type(field), HashFieldType::Hash);
         assert_eq!(field >> HASH_SHIFT, hash);

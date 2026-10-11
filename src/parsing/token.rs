@@ -1,52 +1,25 @@
-//! Ported from `src/parsing/token.h`.
-//!
-//! The token set, and the predicates the parser asks about a token.
-//!
-//! The *order* of this enum is load-bearing and is V8's order exactly. V8
-//! groups the tokens so that every question the parser asks -- is this a
-//! binary operator, an assignment, a unary operator, a comparison -- is a
-//! single range check rather than a switch. For instance the compound
-//! assignments (`+=`, `<<=`, ...) are laid out in the same order as the
-//! binary operators they correspond to, which turns "what operator does `+=`
-//! apply?" into one subtraction ([`Token::binary_op_for_assignment`]).
-//!
-//! Adding a token in the wrong place silently breaks those predicates, so the
-//! ranges are asserted in the tests at the bottom.
-
 /// `Token::Value`
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum Token {
-    // BEGIN PropertyOrCall / Member / Template
     TemplateSpan,
     TemplateTail,
-    // END Template
-    // BEGIN Property
     Period,
     LeftBracket,
-    // END Property / END Member
     QuestionPeriod,
     LeftParen,
-    // END PropertyOrCall
     RightParen,
     RightBracket,
     LeftBrace,
     Colon,
     Ellipsis,
     Conditional,
-    // BEGIN AutoSemicolon
     Semicolon,
     RightBrace,
     /// End of source.
     Eos,
-    // END AutoSemicolon
 
-    // BEGIN ArrowOrAssignmentOp
     Arrow,
-    // BEGIN AssignmentOp -- contiguous and in the same order as the binary
-    // operators below, which is what makes `binary_op_for_assignment` work.
-    /// `=init`, AST-use only: the initialiser of a declaration, which is an
-    /// assignment that cannot be an assignment to a getter.
     Init,
     Assign,
     AssignNullish,
@@ -64,9 +37,7 @@ pub enum Token {
     AssignExp,
     AssignAdd,
     AssignSub,
-    // END AssignmentOp / END ArrowOrAssignmentOp
 
-    // BEGIN BinaryOp, sorted by precedence.
     Comma,
     Nullish,
     Or,
@@ -75,7 +46,6 @@ pub enum Token {
     BitXor,
     BitAnd,
     Shl,
-    /// `>>`, arithmetic (sign-propagating) shift right.
     Sar,
     /// `>>>`, logical shift right.
     Shr,
@@ -83,8 +53,6 @@ pub enum Token {
     Div,
     Mod,
     Exp,
-    // BEGIN UnaryOp: `+` and `-` are at the end of the binary operators so
-    // that the unary range can start here.
     Add,
     Sub,
     // END BinaryOp
@@ -93,12 +61,9 @@ pub enum Token {
     Delete,
     TypeOf,
     Void,
-    // BEGIN CountOp
     Inc,
     Dec,
-    // END CountOp / END UnaryOrCountOp
 
-    // BEGIN CompareOp, sorted by precedence.
     Eq,
     EqStrict,
     NotEq,
@@ -109,7 +74,6 @@ pub enum Token {
     GreaterThanEq,
     InstanceOf,
     In,
-    // END CompareOp
 
     // Keywords.
     Break,
@@ -134,21 +98,15 @@ pub enum Token {
     With,
     This,
 
-    // BEGIN Literal
     NullLiteral,
     TrueLiteral,
     FalseLiteral,
     Number,
-    /// A numeric literal that fits in a Smi -- scanned separately so the
-    /// bytecode generator can emit `LdaSmi` without boxing.
     Smi,
     BigInt,
     String,
     // END Literal
-
-    // BEGIN Callable
     Super,
-    // BEGIN AnyIdentifier
     Identifier,
     Get,
     Set,
@@ -157,13 +115,11 @@ pub enum Token {
     Accessor,
     Async,
     Await,
-    // BEGIN StrictReservedWord
     Yield,
     Let,
     Static,
     FutureStrictReservedWord,
     EscapedStrictReservedWord,
-    // END StrictReservedWord / END AnyIdentifier / END Callable
     Enum,
     Class,
     Const,
@@ -172,11 +128,9 @@ pub enum Token {
     Import,
     PrivateName,
 
-    /// Not able to scan.
     Illegal,
     EscapedKeyword,
 
-    // Scanner-internal.
     Whitespace,
     Uninitialized,
     RegExpLiteral,
@@ -184,29 +138,17 @@ pub enum Token {
 
 use Token::*;
 
-/// The table that gives each token its spelling, its precedence and whether
-/// it is a keyword. Generated from one list so the three cannot drift apart,
-/// which is what V8's `TOKEN_LIST` macro buys.
 macro_rules! token_table {
     ($($token:ident, $string:expr, $precedence:expr, $keyword:expr;)*) => {
         impl Token {
-            /// `Token::Name`: the enum name, for diagnostics.
             pub fn name(self) -> &'static str {
                 match self { $($token => stringify!($token),)* }
             }
 
-            /// `Token::String`: the source spelling, or `None` for tokens
-            /// that have no fixed one (identifiers, literals).
             pub fn string(self) -> Option<&'static str> {
                 match self { $($token => $string,)* }
             }
 
-            /// `Token::Precedence`.
-            ///
-            /// `accept_in` is the `[In]` grammar parameter: inside the header
-            /// of a `for` statement, `in` is not a relational operator, so
-            /// its precedence drops to zero and precedence climbing stops
-            /// before it. V8 keeps two tables; one branch is the same thing.
             pub fn precedence(self, accept_in: bool) -> i32 {
                 if self == In && !accept_in {
                     return 0;
@@ -219,7 +161,6 @@ macro_rules! token_table {
                 match self { $($token => $keyword,)* }
             }
 
-            /// Every token, for exhaustiveness checks in the tests.
             pub const ALL: &'static [Token] = &[$($token,)*];
         }
     };
@@ -349,45 +290,36 @@ token_table! {
 }
 
 impl Token {
-    /// `base::IsInRange`, the shape every predicate below takes.
     #[inline]
     const fn in_range(self, low: Token, high: Token) -> bool {
         (self as u8) >= (low as u8) && (self as u8) <= (high as u8)
     }
 
-    /// `Token::IsAutoSemicolon`: a token that ends a statement without a
-    /// `;` actually being written -- `}` and end of input.
     #[inline]
     pub const fn is_auto_semicolon(self) -> bool {
         self.in_range(Semicolon, Eos)
     }
 
-    /// `Token::IsMember`: can follow an expression to form a member access.
     #[inline]
     pub const fn is_member(self) -> bool {
         self.in_range(TemplateSpan, LeftBracket)
     }
 
-    /// `Token::IsProperty`: `.` or `[`.
     #[inline]
     pub const fn is_property(self) -> bool {
         self.in_range(Period, LeftBracket)
     }
 
-    /// `Token::IsPropertyOrCall`: everything that continues a left-hand side.
     #[inline]
     pub const fn is_property_or_call(self) -> bool {
         self.in_range(TemplateSpan, LeftParen)
     }
 
-    /// `Token::IsAssignmentOp`, including the compound forms.
     #[inline]
     pub const fn is_assignment_op(self) -> bool {
         self.in_range(Init, AssignSub)
     }
 
-    /// `Token::IsLogicalAssignmentOp`: `??=`, `||=`, `&&=`. These
-    /// short-circuit, so they cannot be desugared to `a = a op b`.
     #[inline]
     pub const fn is_logical_assignment_op(self) -> bool {
         self.in_range(AssignNullish, AssignAnd)
@@ -420,14 +352,11 @@ impl Token {
         self.in_range(LessThan, GreaterThanEq)
     }
 
-    /// `Token::IsUnaryOp`. Starts at `Add` because `+x` and `-x` reuse the
-    /// binary tokens.
     #[inline]
     pub const fn is_unary_op(self) -> bool {
         self.in_range(Add, Void)
     }
 
-    /// `Token::IsCountOp`: `++` and `--`.
     #[inline]
     pub const fn is_count_op(self) -> bool {
         self.in_range(Inc, Dec)
@@ -454,14 +383,11 @@ impl Token {
         self.in_range(NullLiteral, String)
     }
 
-    /// `Token::IsAnyIdentifier`: an identifier, or one of the contextual
-    /// keywords that is allowed to be used as one.
     #[inline]
     pub const fn is_any_identifier(self) -> bool {
         self.in_range(Identifier, EscapedStrictReservedWord)
     }
 
-    /// `Token::IsStrictReservedWord`: reserved in strict mode only.
     #[inline]
     pub const fn is_strict_reserved_word(self) -> bool {
         self.in_range(Yield, EscapedStrictReservedWord)
@@ -472,11 +398,6 @@ impl Token {
         self.in_range(Super, EscapedStrictReservedWord)
     }
 
-    /// `Token::IsValidIdentifier`.
-    ///
-    /// The contextual keywords (`get`, `of`, `async`, ...) are identifiers
-    /// wherever the grammar does not give them a special role; `yield` and
-    /// `await` depend on what kind of function is being parsed.
     pub fn is_valid_identifier(self, strict: bool, is_generator: bool, is_async: bool) -> bool {
         if self.in_range(Identifier, Async) {
             return true;
@@ -490,16 +411,11 @@ impl Token {
         self.is_strict_reserved_word() && !strict
     }
 
-    /// `Token::IsPropertyName`: usable after a `.` or as an object literal
-    /// key, where even reserved words are allowed (`o.class` is legal).
     #[inline]
     pub fn is_property_name(self) -> bool {
         self.is_any_identifier() || self.is_keyword()
     }
 
-    /// `Token::BinaryOpForAssignment`: the operator a compound assignment
-    /// applies. `a += b` means `a = a + b`, and the two token blocks are laid
-    /// out in the same order, so this is one subtraction.
     pub fn binary_op_for_assignment(self) -> Token {
         debug_assert!(
             self.in_range(AssignNullish, AssignSub),
@@ -507,13 +423,9 @@ impl Token {
             self.name()
         );
         let offset = self as u8 - AssignNullish as u8;
-        // Safe by construction: the two blocks have the same length and the
-        // test `the_two_assignment_blocks_are_parallel` proves it.
         Token::ALL[Nullish as usize + offset as usize]
     }
 
-    /// Highest precedence any binary operator has, where precedence climbing
-    /// starts.
     pub const MAX_PRECEDENCE: i32 = 14;
 }
 
@@ -545,7 +457,6 @@ mod tests {
 
     #[test]
     fn the_two_assignment_blocks_are_parallel() {
-        // The invariant `binary_op_for_assignment` relies on.
         assert_eq!(
             AssignSub as u8 - AssignNullish as u8,
             Sub as u8 - Nullish as u8,
@@ -616,7 +527,6 @@ mod tests {
                 token.name()
             );
         }
-        // `+` and `-` are both, which is why they sit at the boundary.
         assert!(Add.is_binary_op() && Add.is_unary_op());
         assert!(Sub.is_binary_op() && Sub.is_unary_op());
         assert!(Mul.is_binary_op() && !Mul.is_unary_op());
@@ -669,8 +579,6 @@ mod tests {
 
     #[test]
     fn precedence_matches_javascript() {
-        // Multiplicative binds tighter than additive, which binds tighter
-        // than relational, and so on down to the comma operator.
         assert!(Exp.precedence(true) > Mul.precedence(true));
         assert!(Mul.precedence(true) > Add.precedence(true));
         assert!(Add.precedence(true) > Shl.precedence(true) - 1);
@@ -691,10 +599,8 @@ mod tests {
 
     #[test]
     fn in_loses_its_precedence_inside_a_for_header() {
-        // `for (a in b)` must not parse `a in b` as a relational expression.
         assert_eq!(In.precedence(true), 10);
         assert_eq!(In.precedence(false), 0);
-        // Nothing else is affected by the grammar parameter.
         for token in Token::ALL {
             if *token == In {
                 continue;
@@ -749,7 +655,6 @@ mod tests {
 
     #[test]
     fn contextual_keywords_are_usable_as_identifiers() {
-        // `var of = 1` is legal; `var class = 1` is not.
         for token in [Identifier, Get, Set, Of, Async, Accessor, Using] {
             assert!(
                 token.is_valid_identifier(false, false, false),
@@ -760,7 +665,6 @@ mod tests {
         assert!(!Class.is_valid_identifier(false, false, false));
         assert!(!Function.is_valid_identifier(false, false, false));
 
-        // `yield` is an identifier in sloppy non-generator code only.
         assert!(Yield.is_valid_identifier(false, false, false));
         assert!(
             !Yield.is_valid_identifier(true, false, false),
@@ -771,14 +675,12 @@ mod tests {
             "in a generator"
         );
 
-        // `await` is an identifier outside async functions.
         assert!(Await.is_valid_identifier(false, false, false));
         assert!(!Await.is_valid_identifier(false, false, true));
     }
 
     #[test]
     fn reserved_words_are_still_property_names() {
-        // `o.class`, `{if: 1}` -- legal since ES5.
         assert!(Class.is_property_name());
         assert!(If.is_property_name());
         assert!(Identifier.is_property_name());

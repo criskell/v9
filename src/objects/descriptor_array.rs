@@ -1,20 +1,3 @@
-//! Ported from `src/objects/descriptor-array.h` and `descriptor-array.tq`.
-//!
-//! A map's property table. Each entry is three tagged slots -- the property's
-//! name, its [`PropertyDetails`] as a Smi, and its value (used only for
-//! constants; a normal data property's value lives in the object):
-//!
-//! ```text
-//!   [ map | all_descs:u16 | n_descs:u16 | flags:u32 | enum_cache
-//!     | key0 | details0 | value0 | key1 | details1 | value1 | ... ]
-//! ```
-//!
-//! `number_of_all_descriptors` is the capacity and `number_of_descriptors`
-//! the occupancy: the difference is slack, which is what lets a chain of maps
-//! append descriptors while sharing one array. That sharing is the reason
-//! `o.x = 1; o.y = 2` on a thousand objects costs one descriptor array rather
-//! than a thousand.
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::property_details::PropertyDetails;
@@ -36,7 +19,6 @@ impl DescriptorArray {
     /// `DescriptorArray::kHeaderSize`
     pub const K_HEADER_SIZE: i32 = Self::K_ENUM_CACHE_OFFSET + K_TAGGED_SIZE;
 
-    /// Slots per entry: key, details, value.
     pub const K_ENTRY_SIZE: i32 = 3;
     pub const K_ENTRY_KEY_INDEX: i32 = 0;
     pub const K_ENTRY_DETAILS_INDEX: i32 = 1;
@@ -53,8 +35,6 @@ impl DescriptorArray {
         Self::K_HEADER_SIZE + (descriptor * Self::K_ENTRY_SIZE + slot) * K_TAGGED_SIZE
     }
 
-    /// Capacity. `const` in V8: an array is never grown in place, only
-    /// replaced by a bigger copy.
     #[inline]
     pub fn number_of_all_descriptors(self, heap: &Heap) -> i32 {
         heap.read_u16(self.field(Self::K_NUMBER_OF_ALL_DESCRIPTORS_OFFSET)) as i32
@@ -68,7 +48,6 @@ impl DescriptorArray {
         );
     }
 
-    /// Occupancy: how many entries are actually in use.
     #[inline]
     pub fn number_of_descriptors(self, heap: &Heap) -> i32 {
         heap.read_u16(self.field(Self::K_NUMBER_OF_DESCRIPTORS_OFFSET)) as i32
@@ -149,9 +128,6 @@ impl DescriptorArray {
         );
     }
 
-    /// `DescriptorArray::Set`: writes an entry at a known index. The index
-    /// must already be within the occupancy -- [`DescriptorArray::append`] is
-    /// what extends it.
     pub fn set(
         self,
         heap: &mut Heap,
@@ -172,11 +148,6 @@ impl DescriptorArray {
         heap.write_tagged(self.value_address(descriptor), value);
     }
 
-    /// `DescriptorArray::Append`: claims the next slack slot.
-    ///
-    /// Returns the index of the new descriptor. Panics if there is no slack,
-    /// because growing means allocating a replacement array and that is the
-    /// caller's decision to make (and the caller's roots to worry about).
     pub fn append(
         self,
         heap: &mut Heap,
@@ -194,28 +165,10 @@ impl DescriptorArray {
         index
     }
 
-    /// `DescriptorArray::Search`, linear form.
-    ///
-    /// V8 binary-searches by the name's hash once an array is large and keeps
-    /// the entries sorted to make that possible. `vx` searches linearly and
-    /// leaves the entries in insertion order. That is O(n) per miss, but a
-    /// *miss* is what it costs: a hit on a hot property never reaches here,
-    /// because the inline cache answers from the cached field index. Sorting
-    /// plus binary search is tracked in `PORTING.md`.
-    ///
-    /// Keys are compared by address, which is sound because property names
-    /// are internalized -- one string object per distinct name.
     pub fn search(self, heap: &Heap, name: Tagged) -> i32 {
         self.search_within(heap, name, self.number_of_descriptors(heap))
     }
 
-    /// `DescriptorArray::Search(name, map)`: searches only the first `limit`
-    /// entries.
-    ///
-    /// The bound is not an optimisation, it is a correctness requirement. A
-    /// map shares its descriptor array with the maps it transitions to, and
-    /// sees only the prefix it owns: a map with two properties must not find
-    /// the third descriptor that a sibling transition appended.
     pub fn search_within(self, heap: &Heap, name: Tagged, limit: i32) -> i32 {
         debug_assert!(limit <= self.number_of_descriptors(heap));
         for i in 0..limit {
@@ -245,7 +198,6 @@ mod tests {
         array
     }
 
-    /// Stands in for an internalized name; the search only compares addresses.
     fn fake_name(heap: &mut Heap, id: i32) -> Tagged {
         let object = heap.allocate_raw_or_fail(16, AllocationType::ReadOnly);
         heap.write_tagged(object.field_address(8), Smi::from_int(id));
@@ -338,7 +290,6 @@ mod tests {
         let mut heap = Heap::new();
         let array = raw_descriptor_array(&mut heap, 4);
         let x = fake_name(&mut heap, 1);
-        // Write into a slack slot directly, without bumping the occupancy.
         array.set(
             &mut heap,
             2,

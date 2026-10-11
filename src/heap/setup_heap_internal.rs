@@ -1,18 +1,3 @@
-//! Ported from `src/heap/setup-heap-internal.cc`.
-//!
-//! The bootstrap: building the read-only heap from nothing.
-//!
-//! The ordering here is forced, and it is the one genuinely circular part of
-//! starting an engine. A `Map` is a heap object, so it needs a map, so the
-//! first map has to be its own. V8 does exactly this -- allocate the meta
-//! map, then point it at itself -- and everything else follows in dependency
-//! order from there: the maps for the structures the bootstrap needs, then
-//! the shared empty collections, then the strings, then the oddballs, then
-//! the maps for ordinary JavaScript objects.
-//!
-//! Deviation: V8 can skip almost all of this by deserialising a snapshot.
-//! `vx` builds it every time.
-
 use crate::execution::isolate::Isolate;
 use crate::heap::heap::AllocationType;
 use crate::objects::descriptor_array::DescriptorArray;
@@ -25,7 +10,6 @@ use crate::objects::tagged::Tagged;
 impl Isolate {
     /// `Heap::CreateReadOnlyHeapObjects`
     pub(crate) fn setup_read_only_roots(&mut self) {
-        // 1. The meta map, which describes itself.
         let meta = self
             .heap
             .allocate_raw_or_fail(Map::K_SIZE as usize, AllocationType::Map);
@@ -39,15 +23,11 @@ impl Isolate {
         );
         self.roots.meta_map = meta.tagged();
 
-        // 2. The maps for the structures the rest of the bootstrap needs.
-        //    Their descriptor arrays are filled in once an empty one exists.
         self.roots.descriptor_array_map = self.new_bare_map(DESCRIPTOR_ARRAY_TYPE, 0).tagged();
         self.roots.fixed_array_map = self.new_bare_map(FIXED_ARRAY_TYPE, 0).tagged();
         self.roots.property_array_map = self.new_bare_map(PROPERTY_ARRAY_TYPE, 0).tagged();
         self.roots.transition_array_map = self.new_bare_map(TRANSITION_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_vector_map = self.new_bare_map(FEEDBACK_VECTOR_TYPE, 0).tagged();
-        // Variable sized: its instructions are inline, so the size comes
-        // from the length field (V8's kVariableSizeSentinel).
         self.roots.bytecode_array_map = self.new_bare_map(BYTECODE_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_metadata_map = self.new_bare_map(FEEDBACK_METADATA_TYPE, 0).tagged();
         self.roots.property_cell_map = self
@@ -56,7 +36,6 @@ impl Isolate {
                 crate::objects::property_cell::PropertyCell::K_SIZE,
             )
             .tagged();
-        // Both variable sized: their lengths live in a field.
         self.roots.scope_info_map = self.new_bare_map(SCOPE_INFO_TYPE, 0).tagged();
         self.roots.function_context_map = self.new_bare_map(CONTEXT_TYPE, 0).tagged();
         self.roots.shared_function_info_map = self
@@ -67,8 +46,6 @@ impl Isolate {
             .tagged();
         self.roots.filler_map = self.new_bare_map(FILLER_TYPE, 0).tagged();
 
-        // 3. The shared empty collections. `empty_descriptor_array` has to
-        //    come first: every map points at it until it owns properties.
         let empty_descriptors = self.allocate_descriptor_array_raw(0);
         self.roots.empty_descriptor_array = empty_descriptors.tagged();
         let empty_fixed_array = self.allocate_fixed_array_raw(0);
@@ -76,8 +53,6 @@ impl Isolate {
         let empty_property_array = self.allocate_property_array_raw(0);
         self.roots.empty_property_array = empty_property_array.tagged();
 
-        // Retrofit the maps built in step 2, which were created before an
-        // empty descriptor array existed.
         let built_so_far = [
             self.roots.meta_map,
             self.roots.descriptor_array_map,
@@ -98,7 +73,6 @@ impl Isolate {
             map.set_instance_descriptors(&mut self.heap, empty_descriptors.tagged());
         }
 
-        // 4. String maps, then the empty string.
         self.roots.seq_one_byte_string_map =
             self.new_bare_map(SEQ_ONE_BYTE_STRING_TYPE, 0).tagged();
         self.roots.seq_two_byte_string_map =
@@ -111,7 +85,6 @@ impl Isolate {
             .tagged();
         self.roots.empty_string = self.internalize_string("").tagged();
 
-        // 5. Numbers and the oddballs.
         self.roots.heap_number_map = self
             .new_bare_map(
                 HEAP_NUMBER_TYPE,
@@ -152,8 +125,6 @@ impl Isolate {
             )
             .tagged();
 
-        // 6. The JS object maps. A fresh object literal gets a few spare
-        //    inline slots so the first properties need no backing store.
         self.roots.js_object_map = self
             .new_js_object_map(JS_OBJECT_TYPE, Map::K_INITIAL_INOBJECT_SLACK)
             .tagged();
@@ -161,15 +132,10 @@ impl Isolate {
         self.roots.js_global_object_map = self
             .new_js_object_map(JS_GLOBAL_OBJECT_TYPE, Map::K_INITIAL_INOBJECT_SLACK)
             .tagged();
-        // A JSFunction carries its own fields after the JSObject header, so
-        // its instance size is JSFunction::kSize and its inline property
-        // slots start after that. Sizing it as a plain JSObject would put
-        // the first inline property on top of `shared_function_info`.
         self.roots.js_function_map = self.new_js_function_map(JS_FUNCTION_TYPE).tagged();
         self.roots.js_native_function_map =
             self.new_js_function_map(JS_NATIVE_FUNCTION_TYPE).tagged();
 
-        // Functions are callable; the map bit is what `typeof` reads.
         for map in [
             self.roots.js_function_map,
             self.roots.js_native_function_map,
@@ -180,8 +146,6 @@ impl Isolate {
         }
     }
 
-    /// A map with no descriptors, used during the bootstrap before an empty
-    /// descriptor array exists.
     fn new_bare_map(&mut self, instance_type: InstanceType, instance_size: i32) -> Map {
         let meta = self.roots.meta_map;
         let object = self
@@ -197,7 +161,6 @@ impl Isolate {
         map.set_owns_descriptors(&mut self.heap, true);
         map.set_is_extensible(&mut self.heap, true);
         map.set_prototype(&mut self.heap, self.roots.null_value);
-        // Smi zero == no transitions, the `Uninitialized` encoding.
         map.set_raw_transitions(&mut self.heap, Tagged::ZERO);
         map
     }
@@ -221,13 +184,9 @@ impl Isolate {
         oddball.set_to_string(&mut self.heap, to_string);
         let type_of = self.internalize_string(type_of).tagged();
         oddball.set_type_of(&mut self.heap, type_of);
-        // `to_number` would need a HeapNumber for NaN, which does not exist
-        // this early; the raw double above is what conversions actually read.
         oddball.set_to_number(&mut self.heap, Tagged::ZERO);
         oddball
     }
-
-    // -- roots, as typed accessors -----------------------------------------
 
     #[inline]
 
@@ -281,8 +240,6 @@ impl Isolate {
         array
     }
 
-    /// A map for a callable: large enough for `JSFunction`'s own fields,
-    /// with the inline property slots starting after them.
     fn new_js_function_map(&mut self, instance_type: InstanceType) -> Map {
         use crate::objects::js_function::JSFunction;
         let header_words = JSFunction::K_SIZE / crate::common::globals::K_TAGGED_SIZE;
@@ -294,8 +251,6 @@ impl Isolate {
         map
     }
 
-    /// A map for ordinary JavaScript objects, with `inobject_properties`
-    /// spare inline slots after the `JSObject` header.
     fn new_js_object_map(&mut self, instance_type: InstanceType, inobject_properties: i32) -> Map {
         use crate::objects::js_objects::JSObject;
         let header_words = JSObject::K_HEADER_SIZE / crate::common::globals::K_TAGGED_SIZE;
@@ -330,8 +285,6 @@ mod tests {
     fn every_root_is_populated_after_bootstrap() {
         let isolate = Isolate::new();
         for (name, value) in isolate.roots.named() {
-            // `global_object` and the prototypes are set up by the context,
-            // not the read-only bootstrap.
             if matches!(
                 name,
                 "global_object" | "object_prototype" | "function_prototype" | "array_prototype"

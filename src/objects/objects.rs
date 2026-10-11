@@ -1,19 +1,3 @@
-//! Ported from `src/objects/objects.h` / `objects.cc`.
-//!
-//! The abstract operations of the specification: `ToBoolean`, `ToNumber`,
-//! `ToString`, `Add`, the comparisons. Everything the interpreter needs that
-//! is about *values* rather than about bytecode.
-//!
-//! These hang off [`Isolate`] because most of them can allocate -- `1.5 + 1`
-//! produces a `HeapNumber` -- which is why V8's are static methods taking
-//! the isolate too.
-//!
-//! Deviations, tracked in `PORTING.md`: `ToPrimitive` does not call
-//! `valueOf` or `toString`, because calling user code from a conversion needs
-//! the call stack to be re-entrant in a way `vx` has not had to face yet. An
-//! object therefore converts to `NaN` and to `"[object Object]"`. No
-//! `Symbol`, no `BigInt`.
-
 use crate::execution::isolate::Isolate;
 use crate::numbers::conversions::number_to_string;
 use crate::objects::heap_number::number_value;
@@ -24,7 +8,6 @@ use crate::objects::smi::Smi;
 use crate::objects::string::String as VxString;
 use crate::objects::tagged::Tagged;
 
-/// What a value is, for `typeof` and for the conversions to switch on.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ValueKind {
     Smi,
@@ -35,13 +18,10 @@ pub enum ValueKind {
     Undefined,
     Object,
     Function,
-    /// The internal hole; never visible to JavaScript.
     Hole,
 }
 
 impl Isolate {
-    /// Classifies a value. One place to switch on, so that adding a type
-    /// means adding one arm here rather than hunting through the operations.
     pub fn value_kind(&self, value: Tagged) -> ValueKind {
         if value.is_smi() {
             return ValueKind::Smi;
@@ -71,8 +51,6 @@ impl Isolate {
     }
 
     /// `Object::BooleanValue`.
-    ///
-    /// The falsy values, and nothing else: `false`, `undefined`, `null`, `0`,
     /// `-0`, `NaN`, `""`.
     pub fn to_boolean(&self, value: Tagged) -> bool {
         match self.value_kind(value) {
@@ -87,13 +65,10 @@ impl Isolate {
             }
             ValueKind::Boolean => value == self.true_value(),
             ValueKind::Null | ValueKind::Undefined | ValueKind::Hole => false,
-            // Every object is truthy, including `new Boolean(false)` -- the
-            // classic trap.
             ValueKind::Object | ValueKind::Function => true,
         }
     }
 
-    /// `Object::ToNumber`, as a raw double.
     pub fn to_number(&self, value: Tagged) -> f64 {
         match self.value_kind(value) {
             ValueKind::Smi => Smi::to_int(value) as f64,
@@ -110,8 +85,6 @@ impl Isolate {
                     0.0
                 }
             }
-            // `Number(null)` is 0 but `Number(undefined)` is NaN, which the
-            // oddballs carry as a field so this is a read, not a branch.
             ValueKind::Null | ValueKind::Undefined => {
                 Oddball::unchecked_cast(value.to_strong_heap_object().unwrap())
                     .to_number_raw(&self.heap)
@@ -146,8 +119,6 @@ impl Isolate {
             ValueKind::String => "string",
             ValueKind::Boolean => "boolean",
             ValueKind::Undefined | ValueKind::Hole => "undefined",
-            // `typeof null === "object"`, the oldest bug in the language,
-            // and it is a field read: the oddball carries its own answer.
             ValueKind::Null => "object",
             ValueKind::Function => "function",
             ValueKind::Object => "object",
@@ -155,10 +126,6 @@ impl Isolate {
         self.internalize_string(name).tagged()
     }
 
-    /// `Object::Add`: the one operator that is not purely numeric.
-    ///
-    /// If either side is a string after conversion, it concatenates;
-    /// otherwise it adds. `1 + "1"` being `"11"` falls out of this order.
     pub fn add(&mut self, left: Tagged, right: Tagged) -> Tagged {
         let left_is_string = self.value_kind(left) == ValueKind::String;
         let right_is_string = self.value_kind(right) == ValueKind::String;
@@ -166,7 +133,6 @@ impl Isolate {
             let text = format!("{}{}", self.to_string(left), self.to_string(right));
             return self.new_string(&text).tagged();
         }
-        // The Smi fast path, which is what the inline caches will key on.
         if left.is_smi() && right.is_smi() {
             let sum = Smi::to_int(left) as i64 + Smi::to_int(right) as i64;
             return self.new_number_from_i64(sum);
@@ -175,7 +141,6 @@ impl Isolate {
         self.new_number(sum)
     }
 
-    /// The numeric binary operators. `Object::Subtract` and friends.
     pub fn subtract(&mut self, left: Tagged, right: Tagged) -> Tagged {
         if left.is_smi() && right.is_smi() {
             let result = Smi::to_int(left) as i64 - Smi::to_int(right) as i64;
@@ -195,13 +160,10 @@ impl Isolate {
     }
 
     pub fn divide(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        // No integer fast path: `1 / 2` is 0.5, and `1 / 0` is Infinity.
         let result = self.to_number(left) / self.to_number(right);
         self.new_number(result)
     }
 
-    /// `Object::Modulus`: JavaScript's `%` keeps the sign of the dividend and
-    /// is defined on doubles, so it is `f64::rem_euclid`'s opposite.
     pub fn modulus(&mut self, left: Tagged, right: Tagged) -> Tagged {
         let result = self.to_number(left) % self.to_number(right);
         self.new_number(result)
@@ -212,7 +174,6 @@ impl Isolate {
         self.new_number(result)
     }
 
-    /// The bitwise operators, which coerce through `ToInt32`.
     pub fn bitwise_and(&mut self, left: Tagged, right: Tagged) -> Tagged {
         let result = self.to_int32(left) & self.to_int32(right);
         Smi::from_int(result)
@@ -232,27 +193,22 @@ impl Isolate {
         Smi::from_int(!self.to_int32(value))
     }
 
-    /// `<<`: the shift count is taken modulo 32, which is why `1 << 32` is 1.
     pub fn shift_left(&mut self, left: Tagged, right: Tagged) -> Tagged {
         let count = (self.to_uint32(right) & 31) as u32;
         Smi::from_int(self.to_int32(left) << count)
     }
 
-    /// `>>`: arithmetic, so the sign is propagated.
     pub fn shift_right(&mut self, left: Tagged, right: Tagged) -> Tagged {
         let count = (self.to_uint32(right) & 31) as u32;
         Smi::from_int(self.to_int32(left) >> count)
     }
 
-    /// `>>>`: logical, so the result is unsigned -- and can exceed Smi range.
     pub fn shift_right_logical(&mut self, left: Tagged, right: Tagged) -> Tagged {
         let count = (self.to_uint32(right) & 31) as u32;
         let result = self.to_uint32(left) >> count;
         self.new_number(result as f64)
     }
 
-    /// `Object::ToInt32` / `DoubleToInt32`: truncate towards zero, then wrap
-    /// modulo 2^32.
     pub fn to_int32(&self, value: Tagged) -> i32 {
         if value.is_smi() {
             return Smi::to_int(value);
@@ -264,13 +220,10 @@ impl Isolate {
         self.to_int32(value) as u32
     }
 
-    /// `Object::StrictEquals`: `===`. No conversions, and `NaN !== NaN`.
     pub fn strict_equals(&self, left: Tagged, right: Tagged) -> bool {
         let left_kind = self.value_kind(left);
         let right_kind = self.value_kind(right);
 
-        // Numbers compare by value across the Smi/HeapNumber split, because
-        // which representation a number happens to have is not observable.
         let numeric = |kind| matches!(kind, ValueKind::Smi | ValueKind::HeapNumber);
         if numeric(left_kind) && numeric(right_kind) {
             let a = self.to_number(left);
@@ -286,18 +239,14 @@ impl Isolate {
                 let b = VxString::unchecked_cast(right.to_strong_heap_object().unwrap());
                 a.equals(&self.heap, b)
             }
-            // Everything else is identity, which for the oddballs is an
-            // address comparison because they live in read-only space.
             _ => left == right,
         }
     }
 
-    /// `Object::Equals`: `==`, with the coercions.
     pub fn loose_equals(&mut self, left: Tagged, right: Tagged) -> bool {
         let left_kind = self.value_kind(left);
         let right_kind = self.value_kind(right);
 
-        // `null == undefined` is true, and neither equals anything else.
         let nullish = |kind| matches!(kind, ValueKind::Null | ValueKind::Undefined);
         if nullish(left_kind) || nullish(right_kind) {
             return nullish(left_kind) && nullish(right_kind);
@@ -310,17 +259,11 @@ impl Isolate {
             return self.strict_equals(left, right);
         }
 
-        // Mixed types: both sides become numbers, which is where
-        // `"" == 0` being true comes from.
         let a = self.to_number(left);
         let b = self.to_number(right);
         a == b
     }
 
-    /// `Object::LessThan` and friends.
-    ///
-    /// Two strings compare lexicographically; anything else numerically. That
-    /// is why `"10" < "9"` is true but `10 < 9` is not.
     pub fn less_than(&mut self, left: Tagged, right: Tagged) -> bool {
         match self.compare(left, right) {
             Some(std::cmp::Ordering::Less) => true,
@@ -346,8 +289,6 @@ impl Isolate {
         )
     }
 
-    /// `None` when either side is `NaN`, which is why all four relational
-    /// operators are false for it.
     fn compare(&mut self, left: Tagged, right: Tagged) -> Option<std::cmp::Ordering> {
         if self.value_kind(left) == ValueKind::String && self.value_kind(right) == ValueKind::String
         {
@@ -360,7 +301,6 @@ impl Isolate {
         a.partial_cmp(&b)
     }
 
-    /// `Object::HasProperty` for the `in` operator.
     pub fn has_property(&mut self, object: Tagged, key: Tagged) -> bool {
         let Some(receiver) = object.to_strong_heap_object() else {
             return false;
@@ -380,18 +320,14 @@ pub fn double_to_int32(value: f64) -> i32 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
-    // Truncate towards zero, then take the low 32 bits -- the spec's
-    // modulo-2^32 wrap, which `as i32` alone would saturate instead of wrap.
     let truncated = value.trunc();
     let wrapped = truncated.rem_euclid(4294967296.0);
     let bits = wrapped as u32;
     bits as i32
 }
 
-/// `StringToDouble`: the conversion `Number("  12  ")` performs.
 pub fn string_to_number(text: &str) -> f64 {
     let trimmed = text.trim();
-    // `Number("")` is 0, not NaN -- the one case that catches everybody.
     if trimmed.is_empty() {
         return 0.0;
     }
@@ -545,7 +481,6 @@ mod tests {
         let undefined = isolate.undefined_value();
         assert!(isolate.loose_equals(null, undefined));
         assert!(isolate.loose_equals(null, null));
-        // ...and as equal to nothing else, not even zero.
         assert!(!isolate.loose_equals(null, Smi::from_int(0)));
         assert!(!isolate.loose_equals(undefined, Smi::from_int(0)));
         assert!(!isolate.loose_equals(null, isolate.false_value()));
@@ -553,7 +488,6 @@ mod tests {
 
     #[test]
     fn the_empty_string_loosely_equals_zero() {
-        // Because both sides become numbers, and Number("") is 0.
         let mut isolate = Isolate::new();
         let empty = isolate.new_string("").tagged();
         assert!(isolate.loose_equals(empty, Smi::from_int(0)));
@@ -567,7 +501,6 @@ mod tests {
         let nine = isolate.new_string("9").tagged();
         assert!(isolate.less_than(ten, nine), "\"10\" < \"9\" as strings");
         assert!(!isolate.less_than(Smi::from_int(10), Smi::from_int(9)));
-        // One string and one number compares numerically.
         assert!(isolate.less_than(ten, Smi::from_int(11)));
     }
 

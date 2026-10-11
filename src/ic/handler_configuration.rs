@@ -1,33 +1,3 @@
-//! Ported from `src/ic/handler-configuration.h` /
-//! `handler-configuration.cc`.
-//!
-//! A *handler* is what an inline cache stores alongside the map: the recipe
-//! for completing the access once the shape has been confirmed.
-//!
-//! For the case that matters -- a data property in a known field -- the
-//! handler is **a Smi**, not an object. The whole recipe fits in bit fields:
-//!
-//! ```text
-//!   bits  0..4   Kind              field / normal / global / constant
-//!   bit      4   access check needed on the lookup start object
-//!   bit      5   look up on the start object before the prototype chain
-//!   bits  6..17  storage offset, in words
-//!   bit     17   is the storage inside the object
-//!   bit     18   is the field an unboxed double
-//!   bits 19..30  descriptor index
-//! ```
-//!
-//! So a monomorphic load is: compare one map, decode one Smi, read one word.
-//! That is the entire payoff of hidden classes, and it is why the field index
-//! had to be in [`PropertyDetails`] all along.
-//!
-//! Deviation, tracked in `PORTING.md`: V8 also has `DataHandler` objects for
-//! the cases a Smi cannot describe -- accessors, proxies, loads from a
-//! prototype that need the holder and a validity cell. `vx` has only the Smi
-//! form, so a property found on a prototype is not cached.
-//!
-//! [`PropertyDetails`]: crate::objects::property_details::PropertyDetails
-
 use crate::objects::property_details::K_DESCRIPTOR_INDEX_BIT_COUNT;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
@@ -36,13 +6,10 @@ use crate::objects::tagged::Tagged;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u32)]
 pub enum HandlerKind {
-    /// A property in a dictionary; `vx` has no dictionary-mode objects.
     Normal = 0,
     /// A property of the global object.
     Global = 1,
-    /// A data property in a field, inline or in the property array.
     Field = 2,
-    /// A constant found on the prototype chain. Not cached by `vx`.
     ConstantFromPrototype = 3,
 }
 
@@ -57,20 +24,17 @@ impl HandlerKind {
     }
 }
 
-// The bit layout, from the BitField chain in handler-configuration.h.
 const KIND_SHIFT: u32 = 0;
 const KIND_BITS: u32 = 4;
 const DO_ACCESS_CHECK_SHIFT: u32 = KIND_SHIFT + KIND_BITS;
 const LOOKUP_ON_START_OBJECT_SHIFT: u32 = DO_ACCESS_CHECK_SHIFT + 1;
 const STORAGE_OFFSET_SHIFT: u32 = LOOKUP_ON_START_OBJECT_SHIFT + 1;
-/// `+1` to cover every possible `JSObject` header size, as V8 notes.
 const STORAGE_OFFSET_BITS: u32 = K_DESCRIPTOR_INDEX_BIT_COUNT + 1;
 const IS_INOBJECT_SHIFT: u32 = STORAGE_OFFSET_SHIFT + STORAGE_OFFSET_BITS;
 const IS_DOUBLE_SHIFT: u32 = IS_INOBJECT_SHIFT + 1;
 const DESCRIPTOR_INDEX_SHIFT: u32 = IS_DOUBLE_SHIFT + 1;
 const DESCRIPTOR_INDEX_BITS: u32 = K_DESCRIPTOR_INDEX_BIT_COUNT + 1;
 
-/// The handler must fit in a Smi, which is what makes it free to store.
 const _: () = assert!(DESCRIPTOR_INDEX_SHIFT + DESCRIPTOR_INDEX_BITS <= 31);
 
 #[inline]
@@ -78,19 +42,10 @@ const fn mask(bits: u32) -> u32 {
     (1u32 << bits) - 1
 }
 
-/// `LoadHandler` / `StoreHandler`, in their Smi form.
-///
-/// One type for both: the field layout is the same, and so is the decoding.
-/// V8 separates them because their *object* forms differ.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Handler(u32);
 
 impl Handler {
-    /// `LoadHandler::LoadField` / `StoreHandler::StoreField`.
-    ///
-    /// `storage_offset_in_words` is a word offset from the start of the
-    /// object when `is_inobject`, and an index into the property array
-    /// otherwise.
     pub fn field(
         storage_offset_in_words: u32,
         is_inobject: bool,
@@ -142,14 +97,11 @@ impl Handler {
         (self.0 >> DESCRIPTOR_INDEX_SHIFT) & mask(DESCRIPTOR_INDEX_BITS)
     }
 
-    /// The handler as it is stored in the feedback vector.
     #[inline]
     pub fn as_smi(self) -> Tagged {
         Smi::from_int(self.0 as i32)
     }
 
-    /// Reads a handler back out of a feedback slot. `None` if the slot holds
-    /// something that is not a Smi handler.
     #[inline]
     pub fn from_tagged(value: Tagged) -> Option<Handler> {
         if value.is_smi() {
@@ -202,7 +154,6 @@ mod tests {
 
     #[test]
     fn the_bit_fields_do_not_overlap() {
-        // Each field at its maximum, all at once.
         let handler = Handler::field(
             mask(STORAGE_OFFSET_BITS),
             true,
@@ -223,7 +174,6 @@ mod tests {
         assert_ne!(inline, spilled);
         assert!(inline.is_inobject());
         assert!(!spilled.is_inobject());
-        // ...with the same offset, which is why the flag is needed at all.
         assert_eq!(
             inline.storage_offset_in_words(),
             spilled.storage_offset_in_words()

@@ -1,12 +1,3 @@
-//! Ported from `src/strings/string-hasher.h`, `string-hasher.cc` and
-//! `string-hasher-inl.h`.
-//!
-//! Jenkins one-at-a-time, with V8's exact mixing steps. The hash is over
-//! UTF-16 code units, not bytes, so a string hashes the same whether it is
-//! stored one byte or two per character -- which it has to, since the two
-//! representations are interchangeable for the same contents.
-
-/// `RunningStringHasher`: feed it code units, then finalize.
 #[derive(Default)]
 pub struct RunningStringHasher {
     running_hash: u32,
@@ -34,8 +25,6 @@ impl RunningStringHasher {
     }
 }
 
-/// `detail::ConvertRawHashToUsableHash`: mask to the bits the hash field has
-/// room for, and never return zero -- zero is reserved to mean "no hash".
 #[inline]
 fn convert_raw_hash_to_usable_hash(raw: u32) -> u32 {
     let hash = raw & crate::objects::name::K_MAX_HASH;
@@ -78,7 +67,6 @@ mod tests {
 
     #[test]
     fn the_hash_is_never_zero() {
-        // Zero means "not computed", so the hasher must not produce it.
         for s in ["", "a", "abc", "length", "\u{0}"] {
             assert_ne!(StringHasher::hash_sequential_string(s), 0, "{s:?}");
         }
@@ -96,7 +84,6 @@ mod tests {
 
     #[test]
     fn hashing_is_over_code_units_not_bytes() {
-        // The same text hashes the same however it would be stored.
         let hasher = |s: &str| {
             let mut h = RunningStringHasher::new();
             for c in s.encode_utf16() {

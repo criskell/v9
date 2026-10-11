@@ -1,27 +1,3 @@
-//! Ported from `src/objects/string.h` and `string.tq`.
-//!
-//! Layout, following V8's `Name` -> `String` -> `SeqString` chain:
-//!
-//! ```text
-//!   0  map
-//!   8  raw_hash_field   u32   (Name)
-//!  12  length           i32   (String)
-//!  16  chars...               (SeqOneByteString: u8, SeqTwoByteString: u16)
-//! ```
-//!
-//! Two encodings, as in V8: a string whose characters all fit in Latin-1 is
-//! stored one byte per character, anything else two. Which one is in use is
-//! read from the instance type, not from a field -- see
-//! [`crate::objects::instance_type`].
-//!
-//! Deviation: `vx` implements only the *sequential* representations. V8 also
-//! has `ConsString` (lazy concatenation), `SlicedString` (substring views),
-//! `ThinString` (a forwarding pointer to an internalized copy) and external
-//! strings. The instance-type bits for all of them are already here, and the
-//! read paths check `IsIndirectString` the way V8's do, so adding them is a
-//! matter of implementing the representations rather than reshaping the
-//! object model. Tracked in `PORTING.md`.
-
 use crate::common::globals::object_pointer_align;
 use crate::heap::heap::Heap;
 use crate::objects::instance_type::{self, InstanceType};
@@ -85,7 +61,6 @@ impl String {
         instance_type::is_internalized_string(self.instance_type(heap))
     }
 
-    /// `String::Get`: the code unit at `index`.
     pub fn get(self, heap: &Heap, index: i32) -> u16 {
         debug_assert!(index >= 0 && index < self.length(heap));
         let instance_type = self.instance_type(heap);
@@ -110,8 +85,6 @@ impl String {
         }
     }
 
-    /// Writes the characters of `s`, which must match the representation the
-    /// string was allocated with.
     pub fn write_chars(self, heap: &mut Heap, s: &str) {
         if self.is_one_byte(heap) {
             let bytes: Vec<u8> = s.chars().map(|c| c as u32 as u8).collect();
@@ -126,16 +99,10 @@ impl String {
         }
     }
 
-    /// The contents as a Rust `String`.
-    ///
-    /// Allocates outside the heap on purpose: anything that wants to inspect
-    /// a string usually wants to allocate inside the heap while doing so, and
-    /// holding a borrow across that is what this port makes impossible.
     pub fn to_rust_string(self, heap: &Heap) -> std::string::String {
         let length = self.length(heap);
         if self.is_one_byte(heap) {
             let bytes = heap.read_bytes(self.field(Self::K_HEADER_SIZE), length as usize);
-            // Latin-1, so each byte is its own code point.
             bytes.iter().map(|b| *b as char).collect()
         } else {
             let units: Vec<u16> = (0..length)
@@ -145,11 +112,6 @@ impl String {
         }
     }
 
-    /// `String::Equals`: content equality.
-    ///
-    /// Two *internalized* strings are equal iff they are the same object, so
-    /// the identity check short-circuits the common case -- which is also why
-    /// property lookup can compare names by address.
     pub fn equals(self, heap: &Heap, other: String) -> bool {
         if self == other {
             return true;
@@ -164,13 +126,10 @@ impl String {
         (0..length).all(|i| self.get(heap, i) == other.get(heap, i))
     }
 
-    /// Whether `s` can be stored one byte per character.
     pub fn is_one_byte_content(s: &str) -> bool {
         s.chars().all(|c| (c as u32) <= 0xff)
     }
 
-    /// The number of UTF-16 code units `s` needs -- JavaScript string length,
-    /// which is not the same as the number of Rust `char`s.
     pub fn utf16_length(s: &str) -> i32 {
         s.encode_utf16().count() as i32
     }
@@ -222,7 +181,6 @@ mod tests {
                 heap.set_map(object, meta);
                 let map = Map::unchecked_cast(object);
                 map.set_instance_type(&mut heap, instance_type);
-                // Variable sized, like V8's kVariableSizeSentinel.
                 map.set_instance_size(&mut heap, 0);
                 map
             };
@@ -265,7 +223,6 @@ mod tests {
         assert_eq!(String::K_RAW_HASH_FIELD_OFFSET, 8);
         assert_eq!(String::K_LENGTH_OFFSET, 12);
         assert_eq!(String::K_HEADER_SIZE, 16);
-        // Sizes are word-aligned, so short strings round up.
         assert_eq!(String::size_for_one_byte(0), 16);
         assert_eq!(String::size_for_one_byte(1), 24);
         assert_eq!(String::size_for_one_byte(8), 24);
@@ -309,7 +266,6 @@ mod tests {
 
     #[test]
     fn javascript_length_counts_utf16_code_units() {
-        // Not Rust chars: an astral character is two code units in JS.
         assert_eq!(String::utf16_length("abc"), 3);
         assert_eq!(String::utf16_length("á"), 1);
         assert_eq!(String::utf16_length("☃"), 1);
@@ -357,10 +313,6 @@ mod tests {
         let b = w.new_string("key", map);
         assert!(a.is_internalized(&w.heap));
         assert!(b.is_internalized(&w.heap));
-        // Having two internalized copies of one name is itself the bug the
-        // string table exists to prevent; given two, `equals` is allowed to
-        // answer by identity, which is what makes name comparison a pointer
-        // compare everywhere else in the engine.
         assert!(!a.equals(&w.heap, b));
         assert!(a.equals(&w.heap, a));
     }

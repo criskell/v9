@@ -1,16 +1,3 @@
-//! Ported from `src/objects/fixed-array.h` and `fixed-array.tq`.
-//!
-//! The engine's workhorse array: a length followed by that many tagged
-//! slots. `PropertyArray` has the same shape and is the out-of-object
-//! property backing store -- where a property goes once an object has run
-//! out of inline slots.
-//!
-//! ```text
-//!   FixedArray      [ map | length (Smi) | e0 | e1 | ... ]
-//!   PropertyArray   [ map | length_and_hash (Smi) | p0 | p1 | ... ]
-//!   WeakFixedArray  [ map | length (Smi) | w0 | w1 | ... ]   (weak slots)
-//! ```
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::smi::Smi;
@@ -48,7 +35,6 @@ impl FixedArray {
         heap.write_tagged(self.field(Self::K_LENGTH_OFFSET), Smi::from_int(length));
     }
 
-    /// The address of element `index`, for the GC to visit.
     #[inline]
     pub fn element_address(self, index: i32) -> Address {
         self.field(Self::offset_of_element_at(index))
@@ -76,24 +62,12 @@ impl FixedArray {
         heap.write_tagged(self.element_address(index), value);
     }
 
-    /// Iterates the elements. Returns an owned `Vec` rather than a borrowing
-    /// iterator on purpose: anything that walks an array usually wants to
-    /// allocate while doing so, and holding a borrow of the heap across an
-    /// allocation is precisely what this port is trying to make impossible.
     pub fn to_vec(self, heap: &Heap) -> Vec<Tagged> {
         (0..self.length(heap)).map(|i| self.get(heap, i)).collect()
     }
 }
 
-object_type!(
-    /// `PropertyArray`: the out-of-object property backing store.
-    ///
-    /// V8 packs a hash into the length field (`length_and_hash`); `vx` stores
-    /// only the length, since nothing here needs the receiver's identity hash
-    /// yet. The accessors are named after the V8 field so the resemblance is
-    /// not accidental.
-    PropertyArray
-);
+object_type!(PropertyArray);
 
 impl PropertyArray {
     pub const K_LENGTH_AND_HASH_OFFSET: i32 = K_TAGGED_SIZE;
@@ -145,12 +119,7 @@ impl PropertyArray {
     }
 }
 
-object_type!(
-    /// `WeakFixedArray`: slots hold weak references, so the GC may clear them.
-    /// `TransitionArray` is built on this -- a map transition must not keep
-    /// its target map alive on its own.
-    WeakFixedArray
-);
+object_type!(WeakFixedArray);
 
 impl WeakFixedArray {
     pub const K_LENGTH_OFFSET: i32 = K_TAGGED_SIZE;
@@ -199,8 +168,6 @@ mod tests {
     use super::*;
     use crate::heap::heap::AllocationType;
 
-    /// Allocates a bare FixedArray-shaped object. Real allocation goes
-    /// through `Factory`; these tests only need the layout.
     fn raw_fixed_array(heap: &mut Heap, length: i32) -> FixedArray {
         let object =
             heap.allocate_raw_or_fail(FixedArray::size_for(length) as usize, AllocationType::Old);

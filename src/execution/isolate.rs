@@ -1,17 +1,3 @@
-//! Ported from `src/execution/isolate.h` (the parts `vx` has reached).
-//!
-//! An `Isolate` is one independent JavaScript world: its own heap, its own
-//! roots, its own string table. V8's is enormous because it also owns the
-//! compiler tiers, the debugger, the stack and the embedder plumbing; `vx`'s
-//! grows as those arrive.
-//!
-//! It exists mostly to solve a borrow problem honestly. Allocation can move
-//! objects, so anything live across an allocation has to be reachable from
-//! something the collector traces. Putting the heap, the roots and the string
-//! table in one struct means the collector can be a method on it and see all
-//! of them at once -- no juggling of `&mut` borrows, and no way to forget a
-//! root set.
-
 use crate::heap::heap::Heap;
 use crate::objects::descriptor_array::DescriptorArray;
 use crate::objects::fixed_array::{FixedArray, PropertyArray};
@@ -21,65 +7,32 @@ use crate::objects::tagged::Tagged;
 pub struct Isolate {
     pub heap: Heap,
     pub roots: RootsTable,
-    /// `Isolate::string_table_`: one canonical copy of each distinct name.
-    /// See [`crate::objects::string_table`].
     pub(crate) string_table: StringTable,
-    /// `HandleScope`, flattened. Values parked here are traced as roots, so
-    /// they survive an allocation that triggers a collection. Code that holds
-    /// more than one object across an allocation puts them here.
     pub handles: Vec<Tagged>,
 
-    /// Scavenger bookkeeping: how far the collector has scanned the objects
-    /// it promoted into old space during the collection in progress.
-    ///
-    /// Promotion appends to old space, and a promoted object's own references
-    /// still have to be traced, so the collector needs a scan pointer there
-    /// as well as in to-space. Parked on the isolate rather than passed
-    /// around because the two drain loops feed each other.
     pub(crate) promoted_scan: crate::objects::tagged::Address,
 
-    /// The interpreter's register file. Every frame's parameters and
-    /// registers live here, which is what makes them roots: a value held
-    /// only in a register survives a collection.
     pub stack: Vec<Tagged>,
 
-    /// How deep JavaScript calls are nested. Each one is a Rust frame, so
-    /// this stands in for V8's stack guard.
     pub(crate) call_depth: usize,
 
-    /// The `SharedFunctionInfo` of each compiled function, by the index the
-    /// bytecode's `CreateClosure` names. V8 reaches these through the
-    /// constant pool directly; `vx` keeps the table because a function
-    /// literal is compiled before the array that would hold it exists.
     pub(crate) shared_function_infos: Vec<Tagged>,
 
-    /// Where `console.log` writes. Captured so tests can read it.
     pub(crate) output: Vec<String>,
 
-    /// `--trace-ic` counters. The only way to tell a working inline cache
-    /// from a cache-shaped data structure nothing reads.
     pub(crate) ic_statistics: crate::ic::ic::ICStatistics,
 
-    /// `Isolate::stub_cache_`: the shared `(map, name) -> handler` table a
-    /// megamorphic site consults before giving up.
     pub(crate) stub_cache: crate::ic::stub_cache::StubCache,
 
-    /// `--trace-ic`. V8 logs each transition as it happens rather than
-    /// dumping the vectors at the end, which is the only way to see the
-    /// caches inside functions whose closures nothing retains.
     pub trace_ic_enabled: bool,
     pub(crate) ic_trace: Vec<String>,
 
-    /// The closure of the script last run, so its feedback vector can be
-    /// inspected. This is what `--trace-ic` reports on.
     pub(crate) script_function: Tagged,
 }
 
 pub use crate::roots::roots::RootsTable;
 
 impl Isolate {
-    /// `Isolate::New` followed by `Isolate::Init`: builds the heap and
-    /// bootstraps the root set.
     pub fn new() -> Isolate {
         let mut isolate = Isolate {
             heap: Heap::new(),
@@ -121,12 +74,6 @@ impl Isolate {
         isolate.setup_read_only_roots();
         isolate
     }
-
-    // The bootstrap lives in `heap::setup_heap_internal`, the string table in
-    // `objects::string_table`, and object creation in `heap::factory` -- the
-    // files V8 keeps them in.
-
-    // -- roots, as typed accessors -----------------------------------------
 
     #[inline]
     pub fn undefined_value(&self) -> Tagged {

@@ -1,6 +1,3 @@
-//! Mirrors `src/interpreter/` in V8: Ignition -- the bytecode, the generator
-//! that produces it, and the interpreter that runs it.
-
 pub mod bytecode_array_builder;
 pub mod bytecode_array_iterator;
 pub mod bytecode_array_writer;

@@ -1,10 +1,3 @@
-//! Ported from `src/interpreter/bytecode-node.h`.
-//!
-//! One bytecode and its operand values, before it is encoded. The operand
-//! *scale* is derived here, in the constructor, from the values themselves --
-//! so by the time the writer sees a node it already knows whether the
-//! instruction needs a `Wide` prefix.
-
 use crate::interpreter::bytecode_operands::OperandScale;
 use crate::interpreter::bytecodes::Bytecode;
 
@@ -18,8 +11,6 @@ pub struct BytecodeNode {
     operands: [i32; K_MAX_OPERANDS],
     operand_count: usize,
     operand_scale: OperandScale,
-    /// `BytecodeSourceInfo`, reduced to the position. Used for error
-    /// messages and, in V8, for the debugger and for stack traces.
     source_position: Option<usize>,
 }
 
@@ -80,25 +71,17 @@ impl BytecodeNode {
         self.source_position
     }
 
-    /// `BytecodeNode::update_operand0`.
-    ///
-    /// Jumps are built with a placeholder operand and rewritten once the
-    /// distance is known, so this exists for them -- and it has to recompute
-    /// the scale, because a larger offset can widen the instruction.
     pub fn update_operand0(&mut self, value: i32) {
         debug_assert!(self.operand_count > 0);
         self.operands[0] = value;
         self.operand_scale = self.bytecode.scale_for_operands(self.operands());
     }
 
-    /// Replaces the opcode without touching the operands, for a jump being
-    /// rewritten to its `*Constant` form.
     pub fn set_bytecode(&mut self, bytecode: Bytecode) {
         debug_assert_eq!(bytecode.number_of_operands(), self.operand_count);
         self.bytecode = bytecode;
     }
 
-    /// Total encoded length, prefix included.
     pub fn size(self) -> usize {
         let prefix = if self.operand_scale == OperandScale::Single {
             0
@@ -127,7 +110,6 @@ mod tests {
 
     #[test]
     fn updating_a_jump_offset_can_widen_the_instruction() {
-        // How a forward jump grows when its target turns out to be far away.
         let mut node = BytecodeNode::new(Bytecode::Jump, &[0]);
         assert_eq!(node.operand_scale(), OperandScale::Single);
         assert_eq!(node.size(), 2);

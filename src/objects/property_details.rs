@@ -1,18 +1,6 @@
-//! Ported from `src/objects/property-details.h`.
-//!
-//! `PropertyDetails` is the Smi stored alongside a property's name in a
-//! `DescriptorArray`. It packs everything the engine needs to know about a
-//! property *except* its name and value: whether it is data or an accessor,
-//! whether it lives in the object or in a dictionary, which field index it
-//! occupies, and what it is known to hold.
-//!
-//! The bit layout is V8's, reproduced exactly, because the field index that
-//! inline caches cache is read straight out of these bits.
-
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
-/// `PropertyAttributes`. A bitset, so these combine.
 pub type PropertyAttributes = u32;
 
 pub const NONE: PropertyAttributes = 0;
@@ -27,12 +15,9 @@ pub enum PropertyKind {
     Accessor = 1,
 }
 
-/// `PropertyLocation`: is the value in the object itself, or in a side table?
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PropertyLocation {
-    /// In a field of the object (or its property backing store).
     Field = 0,
-    /// Stored in the descriptor itself -- a constant.
     Descriptor = 1,
 }
 
@@ -43,33 +28,11 @@ pub enum PropertyConstness {
     Const = 1,
 }
 
-/// `PropertyCellType`: how much is known about what a global holds.
-///
-/// A one-way lattice, and the reason it exists is optimisation: a global
-/// assigned exactly once is `kConstant`, and an optimizing compiler may
-/// inline its value outright, recording itself in the cell's dependent code
-/// so a later assignment can invalidate it.
-///
-/// ```text
-///   kUndefined  --first assignment-->  kConstant
-///                                          |
-///                              a different value of the same type
-///                                          v
-///                                     kConstantType
-///                                          |
-///                                a value of another type
-///                                          v
-///                                      kMutable
-/// ```
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PropertyCellType {
-    /// No longer tracked as constant.
     Mutable = 0,
-    /// Never assigned -- the uninitialized state of a cell.
     Undefined = 1,
-    /// Assigned exactly one value.
     Constant = 2,
-    /// Assigned several values, all of one type.
     ConstantType = 3,
 }
 
@@ -84,14 +47,6 @@ impl PropertyCellType {
     }
 }
 
-/// `Representation` from `src/objects/property-details.h`: what a field is
-/// known to hold, which is what lets V8 store a double unboxed or skip a type
-/// check on a load.
-///
-/// `vx` tracks the representation but does not yet exploit it (every field is
-/// stored as a tagged word). It is carried because map transitions depend on
-/// it: generalising a field's representation is what forces a map to be
-/// deprecated and migrated.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Representation {
     None = 0,
@@ -113,9 +68,6 @@ impl Representation {
         }
     }
 
-    /// `Representation::generalize`: the least representation that can hold
-    /// values of both. Widening a field's representation is what triggers a
-    /// map transition when an object is assigned a value of a new shape.
     pub fn generalize(self, other: Representation) -> Representation {
         if self == other {
             return self;
@@ -129,7 +81,6 @@ impl Representation {
         Representation::Tagged
     }
 
-    /// The representation a freshly stored value implies.
     pub fn for_value(value: Tagged) -> Representation {
         if value.is_smi() {
             Representation::Smi
@@ -138,18 +89,6 @@ impl Representation {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Bit layout, from the BitField chain in property-details.h:
-//
-//   KindField           bits  0..1   (1 bit)
-//   ConstnessField      bits  1..2   (1 bit)
-//   AttributesField     bits  2..5   (3 bits)
-//   LocationField       bits  5..6   (1 bit)
-//   RepresentationField bits  6..9   (3 bits)
-//   DescriptorPointer   bits  9..19  (10 bits)
-//   FieldIndexField     bits 19..30  (11 bits)
-// ---------------------------------------------------------------------------
 
 const KIND_SHIFT: u32 = 0;
 const KIND_BITS: u32 = 1;
@@ -167,15 +106,6 @@ pub const K_DESCRIPTOR_INDEX_BIT_COUNT: u32 = 10;
 const FIELD_INDEX_SHIFT: u32 = DESCRIPTOR_POINTER_SHIFT + K_DESCRIPTOR_INDEX_BIT_COUNT;
 const FIELD_INDEX_BITS: u32 = K_DESCRIPTOR_INDEX_BIT_COUNT + 1;
 
-// The *dictionary* layout, which reuses the same bits. A `PropertyDetails`
-// describes either a fast property or a dictionary entry, never both, so V8
-// overlays two encodings on one word:
-//
-//   PropertyCellTypeField   = AttributesField::Next<PropertyCellType, 3>
-//   DictionaryStorageField  = PropertyCellTypeField::Next<uint32_t, 23>
-//
-// which occupy exactly the bits the fast layout uses for location,
-// representation and field index.
 const CELL_TYPE_SHIFT: u32 = ATTRIBUTES_SHIFT + ATTRIBUTES_BITS;
 const CELL_TYPE_BITS: u32 = 3;
 const DICTIONARY_STORAGE_SHIFT: u32 = CELL_TYPE_SHIFT + CELL_TYPE_BITS;
@@ -205,7 +135,6 @@ const fn decode(word: u32, shift: u32, bits: u32) -> u32 {
 pub struct PropertyDetails(u32);
 
 impl PropertyDetails {
-    /// A data field, which is what every plain `o.x = v` creates.
     pub fn new_field(
         kind: PropertyKind,
         attributes: PropertyAttributes,
@@ -248,7 +177,6 @@ impl PropertyDetails {
         Smi::from_int(self.0 as i32)
     }
 
-    /// Reads details back out of a descriptor array slot.
     #[inline]
     pub fn from_smi(value: Tagged) -> PropertyDetails {
         PropertyDetails(Smi::to_int(value) as u32)
@@ -294,9 +222,6 @@ impl PropertyDetails {
         }
     }
 
-    /// `PropertyDetails::field_index`: where in the object (or its property
-    /// backing store) the value lives. This is the number an inline cache
-    /// caches, so a load becomes "check the map, then read slot N".
     #[inline]
     pub fn field_index(self) -> u32 {
         decode(self.0, FIELD_INDEX_SHIFT, FIELD_INDEX_BITS)
@@ -330,11 +255,6 @@ impl PropertyDetails {
         )
     }
 
-    /// The dictionary-mode constructor: a `PropertyCell`'s details.
-    ///
-    /// Note what is *absent*: no location, no representation, no field index.
-    /// A cell is its own storage, so there is nothing to index -- and that is
-    /// why the same bits can carry the cell type instead.
     pub fn new_cell(
         kind: PropertyKind,
         attributes: PropertyAttributes,
@@ -347,7 +267,6 @@ impl PropertyDetails {
         )
     }
 
-    /// `PropertyDetails::cell_type`. Only meaningful for a dictionary entry.
     #[inline]
     pub fn cell_type(self) -> PropertyCellType {
         PropertyCellType::from_u32(decode(self.0, CELL_TYPE_SHIFT, CELL_TYPE_BITS))
@@ -387,8 +306,6 @@ impl std::fmt::Debug for PropertyDetails {
     }
 }
 
-/// The details every `o.x = v` on a fresh property produces: a mutable,
-/// enumerable, writable, configurable data field.
 pub fn default_data_field(field_index: u32, representation: Representation) -> PropertyDetails {
     PropertyDetails::new_field(
         PropertyKind::Data,
@@ -405,8 +322,6 @@ mod tests {
 
     #[test]
     fn bitfields_do_not_overlap() {
-        // Every field, set to all ones on its own, must round-trip without
-        // disturbing the others.
         let d = PropertyDetails::new_field(
             PropertyKind::Accessor,
             READ_ONLY | DONT_ENUM | DONT_DELETE,
@@ -474,7 +389,6 @@ mod tests {
         assert_eq!(Smi.generalize(Smi), Smi);
         assert_eq!(None.generalize(Smi), Smi);
         assert_eq!(Smi.generalize(None), Smi);
-        // A field that has held a Smi and then an object must widen to tagged.
         assert_eq!(Smi.generalize(HeapObject), Tagged);
         assert_eq!(Double.generalize(Smi), Tagged);
         assert!(Tagged.is_more_general_than(Smi));
@@ -484,15 +398,11 @@ mod tests {
 
     #[test]
     fn the_cell_layout_overlays_the_fast_layout() {
-        // The same word, read two ways. A `PropertyDetails` is one or the
-        // other, which is what lets V8 reuse the bits.
         let cell = PropertyDetails::new_cell(PropertyKind::Data, NONE, PropertyCellType::Constant);
         assert_eq!(cell.cell_type(), PropertyCellType::Constant);
         assert_eq!(cell.kind(), PropertyKind::Data);
         assert_eq!(cell.attributes(), NONE);
 
-        // The bits the cell type occupies are the ones the fast layout uses
-        // for location and representation.
         let fast = default_data_field(0, Representation::Smi);
         assert_ne!(
             fast.cell_type(),
@@ -513,7 +423,6 @@ mod tests {
             let details = PropertyDetails::new_cell(PropertyKind::Data, READ_ONLY, cell_type);
             assert_eq!(details.cell_type(), cell_type);
             assert!(details.is_read_only(), "the attributes are untouched");
-            // And updating it in place keeps everything else.
             let updated = details.with_cell_type(PropertyCellType::Mutable);
             assert_eq!(updated.cell_type(), PropertyCellType::Mutable);
             assert!(updated.is_read_only());

@@ -1,39 +1,13 @@
-//! Ported from `src/objects/tagged-impl.h`, `src/objects/tagged.h` and
-//! `src/objects/heap-object.h`.
-//!
-//! V8's `Tagged<T>` is a tagged machine pointer that code dereferences
-//! directly. `vx` keeps the tagging scheme bit for bit but makes the pointee
-//! unreachable without the heap that owns it: an [`Address`] is an offset into
-//! the heap arena rather than a raw machine address, so every field access
-//! goes through `&Heap`/`&mut Heap` and is bounds checked. The arithmetic,
-//! the layouts and the predicates are V8's; the dereference is safe.
-//!
-//! The type-level half of `Tagged<T>` is modelled with newtypes over
-//! [`HeapObject`] in the individual object modules (`Map`, `JSObject`, ...),
-//! which is where V8 puts the per-type accessors too.
-
 use crate::common::globals::*;
 
-/// An offset into the heap arena. Stands in for V8's `Address`.
-///
-/// Spaces occupy disjoint, aligned ranges of this address space, so an
-/// address on its own says which space holds it -- the same property V8 gets
-/// from reserving contiguous virtual memory per space.
 pub type Address = u64;
 
-/// `kNullAddress`. No object is ever allocated here; the first word of the
-/// arena is reserved so that a zero address is always invalid.
 pub const NULL_ADDRESS: Address = 0;
 
-/// A tagged word: `Tagged<Object>` in V8, plus the weak cases that V8 spells
-/// `Tagged<MaybeObject>`. Either a Smi or a reference to a heap object.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub struct Tagged(pub u64);
 
 impl Tagged {
-    /// The Smi zero, which is also what zeroed arena memory decodes to. That
-    /// makes freshly zeroed memory safe for the GC to walk: every slot reads
-    /// back as a Smi, never as a dangling reference.
     pub const ZERO: Tagged = Tagged(0);
 
     #[inline]
@@ -51,24 +25,16 @@ impl Tagged {
 
     // -- Strong / weak -------------------------------------------------------
 
-    /// `TaggedImpl::IsStrong`: a strong reference to a heap object.
-    ///
-    /// Note that this is *false* for a Smi, matching V8. The predicate that
-    /// also admits Smis is [`Tagged::is_object`].
     #[inline]
     pub const fn is_strong(self) -> bool {
         self.0 & K_HEAP_OBJECT_TAG_MASK == K_HEAP_OBJECT_TAG
     }
 
-    /// `TaggedImpl::IsHeapObject`, which V8 defines as `IsStrong`.
     #[inline]
     pub const fn is_heap_object(self) -> bool {
         self.is_strong()
     }
 
-    /// `TaggedImpl::IsObject`: a Smi or a strong reference -- the values that
-    /// JavaScript code can actually hold. The weak forms exist only inside
-    /// the engine's own data structures.
     #[inline]
     pub const fn is_object(self) -> bool {
         !self.is_weak_or_cleared()
@@ -80,13 +46,11 @@ impl Tagged {
         self.0 & K_HEAP_OBJECT_TAG_MASK != K_WEAK_HEAP_OBJECT_TAG
     }
 
-    /// `TaggedImpl::IsStrongOrWeak`: references a heap object, either way.
     #[inline]
     pub const fn is_strong_or_weak(self) -> bool {
         !self.is_smi() && !self.is_cleared()
     }
 
-    /// `TaggedImpl::IsWeak`: a weak reference that has not been cleared.
     #[inline]
     pub const fn is_weak(self) -> bool {
         self.0 & K_HEAP_OBJECT_TAG_MASK == K_WEAK_HEAP_OBJECT_TAG && !self.is_cleared()
@@ -112,11 +76,6 @@ impl Tagged {
 
     // -- Conversions --------------------------------------------------------
 
-    /// The heap object this references, strongly or weakly. `None` for a Smi
-    /// or a cleared weak reference.
-    ///
-    /// This is V8's `GetHeapObject` family collapsed into one fallible
-    /// accessor, which is what `Option` buys over an out-parameter.
     #[inline]
     pub const fn to_heap_object(self) -> Option<HeapObject> {
         if self.is_smi() || self.is_cleared() {
@@ -136,8 +95,6 @@ impl Tagged {
         }
     }
 
-    /// Strips the tag without checking it. Only call this once the tag is
-    /// known; [`Tagged::to_heap_object`] is the checked form.
     #[inline]
     pub const fn address_unchecked(self) -> Address {
         self.0 & !K_HEAP_OBJECT_TAG_MASK
@@ -158,9 +115,6 @@ impl std::fmt::Debug for Tagged {
     }
 }
 
-/// `HeapObject`: an *untagged* heap address known to point at an object.
-///
-/// Every heap object starts with a map word; see [`crate::objects::map_word`].
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HeapObject(Address);
 
@@ -178,19 +132,16 @@ impl HeapObject {
         self.0
     }
 
-    /// The strong tagged reference to this object.
     #[inline]
     pub const fn tagged(self) -> Tagged {
         Tagged(self.0 | K_HEAP_OBJECT_TAG)
     }
 
-    /// `MakeWeak`: the weak tagged reference to this object.
     #[inline]
     pub const fn tagged_weak(self) -> Tagged {
         Tagged(self.0 | K_WEAK_HEAP_OBJECT_TAG)
     }
 
-    /// The address of field `offset` bytes into this object.
     #[inline]
     pub const fn field_address(self, offset: i32) -> Address {
         self.0 + offset as u64
@@ -238,7 +189,6 @@ mod tests {
         );
         assert!(!t.is_smi());
         assert!(!t.is_cleared());
-        // Reachable weakly, but not as a strong reference.
         assert_eq!(t.to_heap_object(), Some(obj));
         assert_eq!(t.to_strong_heap_object(), None);
     }
@@ -257,7 +207,6 @@ mod tests {
         for v in [0i32, 1, -1, i32::MAX, i32::MIN] {
             let t = Smi::from_int(v);
             assert!(t.is_smi());
-            // A Smi is an Object but, per V8's naming, not "Strong".
             assert!(t.is_object());
             assert!(t.is_strong_or_smi());
             assert!(!t.is_strong());

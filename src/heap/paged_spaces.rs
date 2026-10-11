@@ -1,13 +1,3 @@
-//! Ported from `src/heap/paged-spaces.h` / `paged-spaces.cc`.
-//!
-//! Old space: where objects go once they have survived the nursery, and
-//! where anything allocated tenured goes directly.
-//!
-//! Deviation: V8 grows a paged space by committing another `MemoryChunk` and
-//! linking it in. `vx` has no pages, so growth raises the space's limit and
-//! the heap extends its arena to match -- which works only because an
-//! address here is an offset, so extending the arena cannot invalidate one.
-
 use crate::heap::spaces::{AllocationSpace, Space};
 use crate::objects::tagged::Address;
 
@@ -15,8 +5,6 @@ use crate::objects::tagged::Address;
 #[derive(Clone, Debug)]
 pub struct PagedSpace {
     space: Space,
-    /// `PagedSpace::max_capacity_`: growth stops here rather than consuming
-    /// the machine.
     max_capacity: usize,
 }
 
@@ -74,19 +62,11 @@ impl PagedSpace {
         self.space.contains_allocated(address)
     }
 
-    /// `PagedSpace::AllocateRaw`, without the growth step. `None` means the
-    /// current capacity is exhausted; [`PagedSpace::capacity_needed_to_grow`]
-    /// says how much more is wanted.
     #[inline]
     pub fn allocate_raw(&mut self, size_in_bytes: usize) -> Option<Address> {
         self.space.allocate_raw(size_in_bytes)
     }
 
-    /// How large the space would have to become to satisfy `size_in_bytes`,
-    /// or `None` if that is past the maximum.
-    ///
-    /// Doubling, rather than growing by exactly what was asked for, so that a
-    /// loop of allocations does not extend the arena on every iteration.
     pub fn capacity_needed_to_grow(&self, size_in_bytes: usize) -> Option<usize> {
         let needed = crate::common::globals::object_pointer_align(size_in_bytes as u64) as usize;
         let current = self.capacity();
@@ -99,8 +79,6 @@ impl PagedSpace {
         }
     }
 
-    /// `PagedSpace::Grow`: raise the limit. The heap is responsible for
-    /// having extended the arena first.
     pub fn grow_to(&mut self, new_capacity: usize) {
         debug_assert!(new_capacity >= self.capacity());
         debug_assert!(new_capacity <= self.max_capacity);

@@ -1,22 +1,3 @@
-//! Ported from `src/objects/string-table.h` / `string-table.cc`.
-//!
-//! One canonical copy of each distinct name. Internalizing is what lets every
-//! property lookup compare names by address instead of by content: a
-//! `DescriptorArray` key and a lookup key are the same object or they are
-//! different names, with no character comparison anywhere on the hot path.
-//!
-//! Deviations, tracked in `PORTING.md`:
-//!
-//! * V8's table is an open-addressed hash table *in the heap*, resized as it
-//!   fills, keyed by `StringTableKey` so a lookup can be done from raw
-//!   characters without allocating. `vx` uses a Rust `HashMap` beside the
-//!   heap -- the behaviour that matters (one object per name) is the same,
-//!   but the table itself is not a heap object and so is not collected.
-//! * Internalized strings go in read-only space, so they never move. V8 puts
-//!   them in old space and uses a write barrier, plus `ThinString`
-//!   forwarding to internalize a string that already exists elsewhere;
-//!   `vx` copies instead.
-
 use std::collections::HashMap;
 
 use crate::execution::isolate::Isolate;
@@ -28,8 +9,6 @@ use crate::objects::tagged::Tagged;
 /// `StringTable`
 #[derive(Default)]
 pub struct StringTable {
-    /// Keyed by the Rust string so a lookup never has to allocate in the heap
-    /// just to find out the name is already there.
     entries: HashMap<std::string::String, Tagged>,
 }
 
@@ -55,13 +34,6 @@ impl StringTable {
         self.entries.insert(s.to_owned(), string);
     }
 
-    /// Hands every entry to the visitor, so a moving collector can update
-    /// it.
-    ///
-    /// Internalized strings do not move today, but the table is traced
-    /// anyway: it is a root set, and treating it as one now is what keeps
-    /// moving them later a local change rather than a hunt for stale
-    /// pointers.
     pub fn iterate(&mut self, visit: &mut impl FnMut(&mut Tagged)) {
         for value in self.entries.values_mut() {
             visit(value);
@@ -70,10 +42,6 @@ impl StringTable {
 }
 
 impl Isolate {
-    ///
-    /// Deviation: V8 internalizes into old space and relies on a write
-    /// barrier plus string forwarding (`ThinString`) to internalize a string
-    /// that already exists. `vx` has neither yet, so it copies.
     pub fn internalize_string(&mut self, s: &str) -> VxString {
         if let Some(existing) = self.string_table.get(s) {
             return VxString::unchecked_cast(existing.to_strong_heap_object().unwrap());
@@ -85,15 +53,11 @@ impl Isolate {
             self.roots.internalized_two_byte_string_map
         };
         let string = self.allocate_string_raw(s, map, one_byte, AllocationType::ReadOnly);
-        // Compute the hash now rather than on first use. V8's string table is
-        // keyed by hash so it has one anyway; `vx` needs it because the stub
-        // cache hashes names, and that lookup has nowhere to mutate from.
         string.as_name().hash(&mut self.heap);
         self.string_table.insert(s, string.tagged());
         string
     }
 
-    /// Whether `s` has already been internalized. For tests and diagnostics.
     pub fn is_internalized(&self, s: &str) -> bool {
         self.string_table.contains(s)
     }
@@ -103,10 +67,6 @@ impl Isolate {
         self.string_table.number_of_elements()
     }
 
-    /// Hands every string-table entry to the visitor, so the collector can
-    /// update them. Internalized strings do not move today, but the table is
-    /// traced anyway: it is a root set, and treating it as one now is what
-    /// keeps moving them later a local change.
     pub fn iterate_string_table(&mut self, visit: &mut impl FnMut(&mut Tagged)) {
         self.string_table.iterate(visit);
     }

@@ -1,13 +1,3 @@
-//! Ported from `src/objects/heap-number.h` and `heap-number.tq`.
-//!
-//! A boxed double: every JavaScript number that is not a Smi.
-//!
-//! ```text
-//!   0  map
-//!   8  value   float64
-//!  16  == HeapNumber::kSize
-//! ```
-
 use crate::heap::heap::Heap;
 use crate::objects::instance_type;
 use crate::objects::smi::Smi;
@@ -34,11 +24,6 @@ impl HeapNumber {
     }
 }
 
-/// `Object::NumberValue`: the numeric value of a Smi or a HeapNumber.
-///
-/// `None` for anything else -- conversion of non-numbers is
-/// `Object::ToNumber`'s job, which can call user code and therefore cannot
-/// live here.
 pub fn number_value(heap: &Heap, value: Tagged) -> Option<f64> {
     if value.is_smi() {
         return Some(Smi::to_int(value) as f64);
@@ -146,14 +131,12 @@ mod tests {
         assert!(is_number(&heap, boxed.tagged()));
         assert!(is_number(&heap, Smi::zero()));
 
-        // A map is not a number.
         assert_eq!(number_value(&heap, map.tagged()), None);
         assert!(!is_number(&heap, map.tagged()));
     }
 
     #[test]
     fn a_double_outside_smi_range_must_be_boxed() {
-        // The division of labour between Smi and HeapNumber.
         assert!(Smi::try_from_f64(42.0).is_some());
         assert!(Smi::try_from_f64(4e9).is_none(), "beyond i32");
         assert!(Smi::try_from_f64(0.5).is_none(), "not integral");

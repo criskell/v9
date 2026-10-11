@@ -1,37 +1,3 @@
-//! Ported from `src/objects/map.h`, `map.tq`, `map-inl.h` and the transition
-//! logic in `map.cc`.
-//!
-//! The hidden class. A `Map` describes the *shape* of every object that
-//! points at it: how big the object is, which properties it has and at which
-//! slot, what its prototype is. Objects with the same history share a map,
-//! which is what makes a property load a map check plus a fixed-offset read
-//! instead of a hash lookup.
-//!
-//! Layout (after the map word that every heap object starts with):
-//!
-//! ```text
-//!   0  map word (every Map's own map is the meta map)
-//!   8  instance_size_in_words                        u8
-//!   9  inobject_properties_start_or_ctor_fn_index    u8
-//!  10  used_or_unused_instance_size_in_words         u8
-//!  11  visitor_id                                    u8
-//!  12  instance_type                                 u16
-//!  14  bit_field                                     u8
-//!  15  bit_field2                                    u8
-//!  16  bit_field3                                    u32
-//!  20  (padding)                                     u32
-//!  24  prototype                                     tagged
-//!  32  constructor_or_back_pointer                   tagged
-//!  40  instance_descriptors                          tagged
-//!  48  transitions_or_prototype_info                 tagged
-//!  56  == Map::kSize
-//! ```
-//!
-//! Deviation: V8 also carries `dependent_code` and `prototype_validity_cell`.
-//! Both exist to invalidate optimized code when a shape assumption breaks,
-//! and `vx` has no optimizing tier to invalidate yet. They are omitted rather
-//! than stubbed, so that adding a JIT has to confront them honestly.
-
 use crate::common::globals::{K_TAGGED_SIZE, K_TAGGED_SIZE_LOG2};
 use crate::execution::isolate::Isolate;
 use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
@@ -47,10 +13,6 @@ object_type!(
 );
 
 // ---------------------------------------------------------------------------
-// bit_field3, from `MapBits3` in map.tq:
-//
-//   enum_length                      bits  0..10
-//   number_of_own_descriptors        bits 10..20
 //   is_prototype_map                 bit  20
 //   is_dictionary_map                bit  21
 //   owns_descriptors                 bit  22
@@ -60,7 +22,6 @@ object_type!(
 //   is_migration_target              bit  26
 //   is_extensible                    bit  27
 //   may_have_interesting_properties  bit  28
-//   construction_counter             bits 29..32
 // ---------------------------------------------------------------------------
 
 const ENUM_LENGTH_SHIFT: u32 = 0;
@@ -74,10 +35,8 @@ const IS_DEPRECATED_BIT: u32 = 24;
 const IS_UNSTABLE_BIT: u32 = 25;
 const IS_EXTENSIBLE_BIT: u32 = 27;
 
-/// `kNoEnumLengthSentinel`-ish: V8 uses `kInvalidEnumCacheSentinel`.
 pub const K_INVALID_ENUM_CACHE_SENTINEL: u32 = (1 << ENUM_LENGTH_BITS) - 1;
 
-// bit_field (MapBits1)
 const IS_CALLABLE_BIT: u8 = 0;
 const IS_UNDETECTABLE_BIT: u8 = 1;
 const IS_CONSTRUCTOR_BIT: u8 = 5;
@@ -107,11 +66,6 @@ impl Map {
     /// `Map::kSize`
     pub const K_SIZE: i32 = Self::K_TRANSITIONS_OR_PROTOTYPE_INFO_OFFSET + K_TAGGED_SIZE;
 
-    /// `Map::kSlackTrackingSlack` in spirit: how many spare inline property
-    /// slots a fresh object literal map gets, so that the first few
-    /// `o.x = ...` assignments do not need a property backing store.
-    /// V8 derives this from slack tracking on the constructor; `vx` uses a
-    /// fixed number (V8's own default for object literals).
     pub const K_INITIAL_INOBJECT_SLACK: i32 = 4;
 
     // -- instance size ------------------------------------------------------
@@ -141,8 +95,6 @@ impl Map {
         );
     }
 
-    /// `Map::GetInObjectPropertiesStartInWords`: where the inline property
-    /// slots begin, in words from the start of the object.
     #[inline]
     pub fn inobject_properties_start_in_words(self, heap: &Heap) -> i32 {
         heap.read_u8(self.field(Self::K_INOBJECT_PROPERTIES_START_OFFSET)) as i32
@@ -157,8 +109,6 @@ impl Map {
         );
     }
 
-    /// `Map::GetInObjectProperties`: how many properties fit inside the
-    /// object itself. Anything beyond this spills into the `PropertyArray`.
     #[inline]
     pub fn inobject_properties(self, heap: &Heap) -> i32 {
         self.instance_size_in_words(heap) - self.inobject_properties_start_in_words(heap)
@@ -212,7 +162,6 @@ impl Map {
         self.set_bit_field_bit(heap, IS_CALLABLE_BIT, value);
     }
 
-    /// `Map::is_undetectable` -- `document.all` and nothing else.
     #[inline]
     pub fn is_undetectable(self, heap: &Heap) -> bool {
         self.bit_field(heap) & (1 << IS_UNDETECTABLE_BIT) != 0
@@ -252,12 +201,6 @@ impl Map {
         self.set_bit_field3(heap, updated);
     }
 
-    /// `Map::NumberOfOwnDescriptors`.
-    ///
-    /// This is the count *this* map can see, which may be fewer than the
-    /// descriptor array holds: a map shares its array with its transition
-    /// targets and reads only the prefix it owns. That prefix is the whole
-    /// trick behind sharing one array across a transition chain.
     #[inline]
     pub fn number_of_own_descriptors(self, heap: &Heap) -> i32 {
         ((self.bit_field3(heap) >> NUMBER_OF_OWN_DESCRIPTORS_SHIFT)
@@ -286,8 +229,6 @@ impl Map {
         self.set_bit_field3(heap, cleared | (length << ENUM_LENGTH_SHIFT));
     }
 
-    /// `Map::is_dictionary_map`: the object gave up on hidden classes and
-    /// went to a hash table. `vx` never sets this yet -- see `PORTING.md`.
     #[inline]
     pub fn is_dictionary_map(self, heap: &Heap) -> bool {
         self.bit_field3(heap) & (1 << IS_DICTIONARY_MAP_BIT) != 0
@@ -298,9 +239,6 @@ impl Map {
         self.update_bit_field3_bit(heap, IS_DICTIONARY_MAP_BIT, value);
     }
 
-    /// `Map::owns_descriptors`: whether this map may append to its descriptor
-    /// array in place. Only the map at the tip of a transition chain owns the
-    /// array; the others share it read-only.
     #[inline]
     pub fn owns_descriptors(self, heap: &Heap) -> bool {
         self.bit_field3(heap) & (1 << OWNS_DESCRIPTORS_BIT) != 0
@@ -331,8 +269,6 @@ impl Map {
         self.update_bit_field3_bit(heap, IS_PROTOTYPE_MAP_BIT, value);
     }
 
-    /// `Map::is_deprecated`: a newer map generalised one of this map's
-    /// fields, so objects still using it should migrate.
     #[inline]
     pub fn is_deprecated(self, heap: &Heap) -> bool {
         self.bit_field3(heap) & (1 << IS_DEPRECATED_BIT) != 0
@@ -370,12 +306,6 @@ impl Map {
         self.field(Self::K_PROTOTYPE_OFFSET)
     }
 
-    /// `Map::constructor_or_back_pointer`.
-    ///
-    /// One field, two meanings, as in V8: on a map reached by a transition it
-    /// is the *back pointer* to the map transitioned from, which is how the
-    /// engine walks a shape's history backwards. On a root map it is the
-    /// constructor.
     #[inline]
     pub fn constructor_or_back_pointer(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_CONSTRUCTOR_OR_BACK_POINTER_OFFSET))
@@ -438,10 +368,6 @@ impl Map {
         self.field(Self::K_TRANSITIONS_OR_PROTOTYPE_INFO_OFFSET)
     }
 
-    // -- derived queries ----------------------------------------------------
-
-    /// `Map::GetBackPointer`: the map this one was reached from, or `None` for
-    /// a root map.
     pub fn back_pointer(self, heap: &Heap) -> Option<Map> {
         let value = self.constructor_or_back_pointer(heap);
         let object = value.to_strong_heap_object()?;
@@ -453,26 +379,17 @@ impl Map {
         }
     }
 
-    /// `Map::LastAdded`: the index of the descriptor this map added relative
-    /// to its back pointer -- i.e. the property whose addition created it.
     pub fn last_added(self, heap: &Heap) -> i32 {
         let number = self.number_of_own_descriptors(heap);
         debug_assert!(number > 0, "a root map added nothing");
         number - 1
     }
 
-    /// The name of the property this map added, which is also the key of the
-    /// transition that leads to it. V8 relies on this to store a single
-    /// transition without allocating a `TransitionArray`:
-    /// `TransitionsAccessor::GetSimpleTransitionKey` reads the key back out
-    /// of the target map instead of storing it.
     pub fn last_added_key(self, heap: &Heap) -> Tagged {
         self.instance_descriptors(heap)
             .get_key(heap, self.last_added(heap))
     }
 
-    /// `Map::FindDescriptor`: the index of `name` among the descriptors this
-    /// map owns, or `DescriptorArray::kNotFound`.
     pub fn find_descriptor(self, heap: &Heap, name: Tagged) -> i32 {
         self.instance_descriptors(heap).search_within(
             heap,
@@ -481,7 +398,6 @@ impl Map {
         )
     }
 
-    /// The details of the property `name`, if this map has it.
     pub fn find_property_details(
         self,
         heap: &Heap,
@@ -495,8 +411,6 @@ impl Map {
         }
     }
 
-    /// Every property this map owns, in insertion order. For diagnostics and
-    /// for `for...in`'s eventual enumeration order.
     pub fn own_property_names(self, heap: &Heap) -> Vec<Tagged> {
         let descriptors = self.instance_descriptors(heap);
         (0..self.number_of_own_descriptors(heap))
@@ -510,53 +424,23 @@ impl Map {
 }
 
 impl Heap {
-    /// `HeapObject::map` followed by `Map::instance_type` -- the question
-    /// nearly every dispatch asks, so it gets to be one call.
     #[inline]
     pub fn instance_type(&self, object: HeapObject) -> InstanceType {
         Map::unchecked_cast(self.map(object)).instance_type(self)
     }
 
-    /// The map of `object`, as a [`Map`].
     #[inline]
     pub fn map_of(&self, object: HeapObject) -> Map {
         Map::unchecked_cast(self.map(object))
     }
 
-    /// The instance type of a tagged value, or `None` if it is a Smi.
     #[inline]
     pub fn instance_type_of(&self, value: Tagged) -> Option<InstanceType> {
         Some(self.instance_type(value.to_strong_heap_object()?))
     }
 }
 
-// ---------------------------------------------------------------------------
-// The transition half of `src/objects/map.cc`.
-//
-// Adding a property does not mutate a shape, it *moves the object to a
-// different shape*:
-//
-//   {}            o.x = 1          o.y = 2
-//   Map0  --x-->  Map1    --y-->   Map2
-//   0 props       1 prop           2 props
-//
-// The arrows are transitions, cached on the source map. The second object to
-// take the same path finds `Map1` already there and reuses it, so every
-// `{x, y}` in a program shares one `Map2` -- and therefore one field layout,
-// which is what makes `o.x` compile to "check the map, load slot 0".
-//
-// These hang off `Isolate` rather than `Map` because they allocate, and
-// allocation needs the heap, the roots and the factory at once. V8 passes the
-// isolate into the equivalent static methods for the same reason.
-// ---------------------------------------------------------------------------
-
 impl Isolate {
-    /// `Map::TransitionToDataProperty`: the map you get by adding `name` to
-    /// an object whose map is `map`.
-    ///
-    /// Reuses an existing transition when the same shape has been built
-    /// before, which is the common case and the whole reason transitions are
-    /// recorded.
     pub fn transition_to_data_property(
         &mut self,
         map: Map,
@@ -580,23 +464,12 @@ impl Isolate {
 
         let new_map = self.copy_add_descriptor(map, name, representation);
 
-        // Record the edge so the next object down this path reuses the map.
-        // If the array cannot be allocated the transition is simply not
-        // cached: the cost is a duplicate map, never a wrong answer.
         let transition_array_map = self.roots.transition_array_map();
         let _recorded =
             TransitionsAccessor::insert(&mut self.heap, map, name, new_map, transition_array_map);
         new_map
     }
 
-    /// `Map::CopyAddDescriptor`, including the `Map::ShareDescriptor` fast
-    /// path.
-    ///
-    /// The sharing is what keeps a long shape chain cheap. If `map` owns its
-    /// descriptor array and sits at its tip with slack left over, the new
-    /// descriptor is appended *in place* and the child map shares the same
-    /// array, reading one entry further into it. Ownership moves to the
-    /// child, because the child is now the one allowed to append.
     pub(crate) fn copy_add_descriptor(
         &mut self,
         map: Map,
@@ -618,7 +491,6 @@ impl Isolate {
             map.set_owns_descriptors(&mut self.heap, false);
             descriptors
         } else {
-            // Copy into a fresh array with slack for the next few properties.
             let capacity = number_of_own + 1 + K_DESCRIPTOR_ARRAY_SLACK;
             let fresh = self.new_descriptor_array(capacity);
             for i in 0..number_of_own {
@@ -635,8 +507,6 @@ impl Isolate {
         new_map.set_instance_descriptors(&mut self.heap, new_descriptors.tagged());
         new_map.set_number_of_own_descriptors(&mut self.heap, number_of_own + 1);
         new_map.set_owns_descriptors(&mut self.heap, true);
-        // The back pointer is how the engine walks a shape's history, and the
-        // field it shares with the constructor.
         new_map.set_constructor_or_back_pointer(&mut self.heap, map.tagged());
         new_map
     }
@@ -648,8 +518,6 @@ mod tests {
     use crate::heap::heap::AllocationType;
     use crate::objects::instance_type::{JS_OBJECT_TYPE, MAP_TYPE};
 
-    /// Builds a Map by hand. `Factory` is what does this for real; these
-    /// tests are about the layout and the bit fields.
     fn raw_map(heap: &mut Heap, instance_type: InstanceType, instance_size: i32) -> Map {
         let object = heap.allocate_raw_or_fail(Map::K_SIZE as usize, AllocationType::Map);
         let map = Map::unchecked_cast(object);
@@ -669,7 +537,6 @@ mod tests {
         assert_eq!(Map::K_INSTANCE_DESCRIPTORS_OFFSET, 40);
         assert_eq!(Map::K_TRANSITIONS_OR_PROTOTYPE_INFO_OFFSET, 48);
         assert_eq!(Map::K_SIZE, 56);
-        // Every tagged field must be word aligned or the heap will reject it.
         for offset in [
             Map::K_PROTOTYPE_OFFSET,
             Map::K_CONSTRUCTOR_OR_BACK_POINTER_OFFSET,
@@ -691,8 +558,6 @@ mod tests {
     #[test]
     fn inline_property_slots_are_what_is_left_after_the_header() {
         let mut heap = Heap::new();
-        // A JSObject header is 3 words (map, properties, elements); give it
-        // 4 inline property slots on top of that.
         let map = raw_map(&mut heap, JS_OBJECT_TYPE, (3 + 4) * K_TAGGED_SIZE);
         map.set_inobject_properties_start_in_words(&mut heap, 3);
 
@@ -720,7 +585,6 @@ mod tests {
         assert!(!map.is_deprecated(&heap));
         assert!(!map.is_prototype_map(&heap));
 
-        // Flipping one flag must not disturb the counts.
         map.set_is_deprecated(&mut heap, true);
         assert!(map.is_deprecated(&heap));
         assert_eq!(map.number_of_own_descriptors(&heap), 7);
@@ -776,7 +640,6 @@ mod tests {
         let object_map = raw_map(&mut heap, JS_OBJECT_TYPE, 32);
         heap.set_map(object_map.object(), meta_map.object());
 
-        // The meta map describes itself -- the root of the whole type system.
         assert_eq!(heap.map(meta_map.object()), meta_map.object());
         assert_eq!(heap.instance_type(meta_map.object()), MAP_TYPE);
         assert_eq!(heap.instance_type(object_map.object()), MAP_TYPE);
@@ -797,13 +660,11 @@ mod tests {
         let child = raw_map(&mut heap, JS_OBJECT_TYPE, 32);
         heap.set_map(child.object(), meta_map.object());
 
-        // A root map holds its constructor there; not a map, so no back pointer.
         let not_a_map = heap.allocate_raw_or_fail(32, AllocationType::Old);
         heap.set_map(not_a_map, root.object());
         root.set_constructor_or_back_pointer(&mut heap, not_a_map.tagged());
         assert_eq!(root.back_pointer(&heap), None);
 
-        // A transitioned map holds the map it came from.
         child.set_constructor_or_back_pointer(&mut heap, root.tagged());
         assert_eq!(child.back_pointer(&heap), Some(root));
     }

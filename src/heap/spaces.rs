@@ -1,40 +1,11 @@
-//! Ported from `src/heap/spaces.h`.
-//!
-//! V8 reserves virtual memory per space and hands out pages from it. `vx`
-//! reserves one contiguous arena up front and gives each space a disjoint
-//! sub-range of it, so an address still identifies its space by value alone.
-//! Within a space, allocation is the same bump pointer V8 uses: `top` walks
-//! up towards `limit`, and running out is what triggers a collection.
-//!
-//! `Space` is the base class every space derives from; the derived spaces
-//! live in the files V8 puts them in -- [`SemiSpace`] and
-//! [`SemiSpaceNewSpace`](crate::heap::new_spaces::SemiSpaceNewSpace) in
-//! `new_spaces`, [`PagedSpace`](crate::heap::paged_spaces::PagedSpace) in
-//! `paged_spaces`, [`ReadOnlySpace`](crate::heap::read_only_spaces::ReadOnlySpace)
-//! in `read_only_spaces`.
-//!
-//! Deviation: there are no pages. A space is one run of bytes, not a list of
-//! `MemoryChunk`s. Pages buy V8 incremental sweeping, per-page remembered
-//! sets and growable spaces without reservation games; none of that is needed
-//! until `vx` has a mark-compact collector, so it is deferred rather than
-//! faked. See `PORTING.md`.
-
 use crate::common::globals::*;
 use crate::objects::tagged::Address;
 
-/// `AllocationSpace` from `src/common/globals.h`, restricted to the spaces
-/// `vx` actually has.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AllocationSpace {
-    /// `RO_SPACE`: immortal, immovable objects -- maps, oddballs, the empty
-    /// arrays. Nothing here ever moves, which is why the GC can skip it as a
-    /// relocation target and why a map pointer stays valid across a scavenge.
     ReadOnlySpace,
-    /// `NEW_SPACE`, to-space half: where every young object is born.
     NewSpace,
-    /// `NEW_SPACE`, from-space half: idle between scavenges.
     FromSpace,
-    /// `OLD_SPACE`: survivors, and anything allocated tenured.
     OldSpace,
 }
 
@@ -49,22 +20,12 @@ impl AllocationSpace {
     }
 }
 
-/// One space's bump-allocation region inside the arena.
-///
-/// This is V8's `Space` reduced to what a bump allocator needs: the bounds of
-/// the reservation and how far into it allocation has got.
 #[derive(Clone, Debug)]
 pub struct Space {
     id: AllocationSpace,
-    /// First address of the reservation.
     start: Address,
-    /// Next address to allocate at. `start <= top <= limit`.
     top: Address,
-    /// One past the last usable address.
     limit: Address,
-    /// Bytes handed out since the space was last reset. Tracked separately
-    /// from `top - start` so that a reset can keep the running total for
-    /// `--trace-gc`-style reporting.
     allocated_since_reset: usize,
 }
 
@@ -107,7 +68,6 @@ impl Space {
         (self.limit - self.start) as usize
     }
 
-    /// `Space::Size`: bytes currently occupied by objects.
     #[inline]
     pub fn size(&self) -> usize {
         (self.top - self.start) as usize
@@ -128,18 +88,11 @@ impl Space {
         address >= self.start && address < self.limit
     }
 
-    /// Whether `address` points inside the *occupied* part of the space, i.e.
-    /// at something that has actually been allocated.
     #[inline]
     pub fn contains_allocated(&self, address: Address) -> bool {
         address >= self.start && address < self.top
     }
 
-    /// Bump allocation. `None` means the space is full, which is the caller's
-    /// cue to collect (`Heap::AllocateRaw` retries after a GC).
-    ///
-    /// The returned address is `kObjectAlignment`-aligned because `start` is
-    /// aligned and every allocation is rounded up.
     #[inline]
     pub fn allocate_raw(&mut self, size_in_bytes: usize) -> Option<Address> {
         let size = object_pointer_align(size_in_bytes as u64);
@@ -152,17 +105,11 @@ impl Space {
         Some(result)
     }
 
-    /// `SemiSpace::Reset`: drop everything in the space at once.
-    ///
-    /// Only sound for a space whose live contents have already been evacuated
-    /// -- which, for a semi-space after a scavenge, they have.
     pub fn reset(&mut self) {
         self.top = self.start;
         self.allocated_since_reset = 0;
     }
 
-    /// Exchange the role this space plays, used when the semi-spaces swap.
-    /// The address range is unaffected -- only the label moves.
     pub(crate) fn set_id_for_swap(&mut self, id: AllocationSpace) {
         debug_assert!(matches!(
             (self.id, id),
@@ -172,8 +119,6 @@ impl Space {
         self.id = id;
     }
 
-    /// Raise the limit, the way V8 grows a paged space by adding pages. The
-    /// caller owns making sure the arena actually reaches that far.
     pub fn set_limit(&mut self, limit: Address) {
         debug_assert!(limit >= self.top);
         self.limit = limit;

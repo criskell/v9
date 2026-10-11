@@ -1,24 +1,3 @@
-//! Ported from `src/interpreter/bytecode-array-builder.h` /
-//! `bytecode-array-builder.cc`.
-//!
-//! The interface the bytecode generator writes against: one method per
-//! operation it wants, each one choosing the bytecode, allocating the
-//! feedback slot and handing a [`BytecodeNode`] to the writer. Fluent, as in
-//! V8, so a sequence of emissions reads as one statement.
-//!
-//! It owns the register allocator and the writer, which is what lets
-//! [`Self::binary_operation`] decide between `Add` and `AddSmi` or
-//! [`Self::load_literal_smi`] decide between `LdaZero` and `LdaSmi` --
-//! peephole choices that need to know what is being emitted *and* what is
-//! already there.
-//!
-//! Deviation, tracked in `PORTING.md`: feedback slots are counted here
-//! rather than described by a `FeedbackVectorSpec` from
-//! `src/objects/feedback-vector.h`. The slot *indices* in the bytecode are
-//! therefore the ones V8 would use, but nothing allocates a feedback vector
-//! to go with them yet, so the inline caches have somewhere to live and
-//! nothing living there.
-
 use crate::ast::ast::Literal;
 use crate::interpreter::bytecode_array_writer::BytecodeArrayWriter;
 use crate::interpreter::bytecode_label::{BytecodeLabel, BytecodeLabels, BytecodeLoopHeader};
@@ -30,31 +9,18 @@ use crate::interpreter::constant_array_builder::ConstantEntry;
 use crate::objects::feedback_vector::{FeedbackSlotKind, FeedbackVectorSpec};
 use crate::parsing::token::Token;
 
-/// `BytecodeArrayBuilder::kUninitializedEmbeddedFeedback`: what a binary
-/// operation's inline feedback byte starts as.
 pub const K_UNINITIALIZED_EMBEDDED_FEEDBACK: i32 = 0;
 
-/// `BytecodeArrayBuilder::kFeedbackIsEmbedded`: the sentinel V8 passes where
-/// a feedback slot would go for operations whose feedback is in the bytecode.
 pub const K_FEEDBACK_IS_EMBEDDED: i32 = -1;
 
-/// What the builder produces: everything a `BytecodeArray` needs, before it
-/// is materialised in the heap. V8's `BytecodeArrayBuilder::ToBytecodeArray`
-/// allocates directly; `vx` separates the two so that generation never
-/// allocates (and so can never trigger a collection half way through a
-/// function).
 #[derive(Clone, Debug)]
 pub struct BytecodeArrayData {
     pub bytecodes: Vec<u8>,
     pub constants: Vec<ConstantEntry>,
-    /// Registers the frame needs, which is the allocator's high-water mark.
     pub register_count: i32,
     /// Including the receiver.
     pub parameter_count: i32,
     pub feedback_slot_count: i32,
-    /// The kind of each feedback site, in allocation order. The vector's
-    /// layout cannot be recovered from the bytecode alone, because a slot's
-    /// width depends on its kind.
     pub feedback_slot_kinds: Vec<FeedbackSlotKind>,
     pub source_position_table: Vec<(usize, usize)>,
 }
@@ -64,18 +30,11 @@ pub struct BytecodeArrayBuilder {
     register_allocator: BytecodeRegisterAllocator,
     parameter_count: i32,
     local_register_count: i32,
-    /// `BytecodeArrayBuilder::feedback_vector_spec_`: the sites, in the
-    /// order they were allocated.
     feedback_vector_spec: FeedbackVectorSpec,
-    /// The source position to attach to the next bytecode emitted.
     pending_source_position: Option<usize>,
 }
 
 impl BytecodeArrayBuilder {
-    /// `BytecodeArrayBuilder::BytecodeArrayBuilder`.
-    ///
-    /// `parameter_count` includes the receiver. Locals occupy registers
-    /// `r0..r(locals-1)`, and temporaries are allocated above them.
     pub fn new(parameter_count: i32, local_register_count: i32) -> BytecodeArrayBuilder {
         BytecodeArrayBuilder {
             bytecode_array_writer: BytecodeArrayWriter::new(),
@@ -94,8 +53,6 @@ impl BytecodeArrayBuilder {
         self.parameter_count
     }
 
-    /// `BytecodeArrayBuilder::Parameter`: the register holding declared
-    /// parameter `index` (0 is the first after the receiver).
     #[inline]
     pub fn parameter(&self, index: i32) -> Register {
         debug_assert!(index < self.parameter_count - 1);
@@ -107,7 +64,6 @@ impl BytecodeArrayBuilder {
         Register::receiver()
     }
 
-    /// The register holding local `index`.
     #[inline]
     pub fn local(&self, index: i32) -> Register {
         debug_assert!(index < self.local_register_count);
@@ -119,11 +75,6 @@ impl BytecodeArrayBuilder {
         &mut self.register_allocator
     }
 
-    /// `FeedbackVectorSpec::AddSlot`.
-    ///
-    /// The *kind* has to be declared here and not later, because it decides
-    /// how wide the slot is -- so the vector's layout is fixed by the time
-    /// the bytecode referring to it exists.
     pub fn allocate_feedback_slot(&mut self, kind: FeedbackSlotKind) -> i32 {
         self.feedback_vector_spec.add_slot(kind)
     }
@@ -132,8 +83,6 @@ impl BytecodeArrayBuilder {
         &self.feedback_vector_spec
     }
 
-    /// `BytecodeArrayBuilder::SetStatementPosition` /
-    /// `SetExpressionPosition`: the position lands on the next bytecode.
     pub fn set_source_position(&mut self, position: usize) -> &mut Self {
         self.pending_source_position = Some(position);
         self
@@ -155,12 +104,7 @@ impl BytecodeArrayBuilder {
         self
     }
 
-    // -- loading the accumulator ---------------------------------------------
-
-    /// `BytecodeArrayBuilder::LoadLiteral(Smi)`
     pub fn load_literal_smi(&mut self, value: i32) -> &mut Self {
-        // `LdaZero` exists because zero is the single most common literal in
-        // any program, and it saves the operand byte.
         if value == 0 {
             self.output(Bytecode::LdaZero, &[])
         } else {
@@ -168,7 +112,6 @@ impl BytecodeArrayBuilder {
         }
     }
 
-    /// `BytecodeArrayBuilder::LoadLiteral(double)`
     pub fn load_literal_number(&mut self, value: f64) -> &mut Self {
         let index = self
             .bytecode_array_writer
@@ -177,7 +120,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::LdaConstant, &[index])
     }
 
-    /// `BytecodeArrayBuilder::LoadLiteral(AstRawString)`
     pub fn load_literal_string(&mut self, value: &str) -> &mut Self {
         let index = self
             .bytecode_array_writer
@@ -206,7 +148,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::LdaFalse, &[])
     }
 
-    /// Loads any AST literal, picking the cheapest encoding.
     pub fn load_literal(&mut self, literal: &Literal) -> &mut Self {
         match literal {
             Literal::Smi(value) => self.load_literal_smi(*value),
@@ -237,10 +178,6 @@ impl BytecodeArrayBuilder {
 
     // -- contexts ------------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::CreateFunctionContext`.
-    ///
-    /// The names go in the constant pool as a `ScopeInfo`; `slots` is how
-    /// many variables the context holds, excluding the fixed header.
     pub fn create_function_context(&mut self, names: &[String], slots: i32) -> &mut Self {
         let index = self
             .bytecode_array_writer
@@ -249,8 +186,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::CreateFunctionContext, &[index, slots])
     }
 
-    /// `BytecodeArrayBuilder::PushContext`: saves the current context into
-    /// `register` and installs the one in the accumulator.
     pub fn push_context(&mut self, register: Register) -> &mut Self {
         self.output(Bytecode::PushContext, &[register.to_operand()])
     }
@@ -260,13 +195,10 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::PopContext, &[register.to_operand()])
     }
 
-    /// `BytecodeArrayBuilder::LoadContextSlot` at depth zero.
     pub fn load_current_context_slot(&mut self, slot: i32) -> &mut Self {
         self.output(Bytecode::LdaCurrentContextSlot, &[slot])
     }
 
-    /// `BytecodeArrayBuilder::LoadContextSlot`. The base register is the
-    /// frame's context slot, and `depth` is how many links to walk out.
     pub fn load_context_slot(&mut self, slot: i32, depth: i32) -> &mut Self {
         self.output(
             Bytecode::LdaContextSlot,
@@ -313,15 +245,11 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::LoadKeyedProperty`: the key is in the
-    /// accumulator.
     pub fn load_keyed_property(&mut self, object: Register) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadKeyed);
         self.output(Bytecode::GetKeyedProperty, &[object.to_operand(), slot])
     }
 
-    /// `BytecodeArrayBuilder::SetNamedProperty`: the value is in the
-    /// accumulator.
     pub fn set_named_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetNamedStrict);
@@ -331,9 +259,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::DefineNamedOwnProperty`: for an object literal,
-    /// where the property is known not to exist yet and no setter on the
-    /// prototype chain may intercept it.
     pub fn define_named_own_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::DefineNamedOwn);
@@ -354,10 +279,6 @@ impl BytecodeArrayBuilder {
 
     // -- operators -----------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::BinaryOperation`: `acc = reg op acc`.
-    ///
-    /// The feedback is embedded in the instruction rather than kept in a
-    /// slot, which is why no slot is allocated here.
     pub fn binary_operation(&mut self, op: Token, register: Register) -> &mut Self {
         let bytecode = match op {
             Token::Add => Bytecode::Add,
@@ -380,8 +301,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::BinaryOperationSmiLiteral`: `acc = acc op imm`,
-    /// which saves a register and a load for the very common `x + 1`.
     pub fn binary_operation_smi_literal(&mut self, op: Token, literal: i32) -> &mut Self {
         let bytecode = match op {
             Token::Add => Bytecode::AddSmi,
@@ -398,7 +317,6 @@ impl BytecodeArrayBuilder {
     pub fn unary_operation(&mut self, op: Token) -> &mut Self {
         match op {
             Token::Add => {
-                // Unary plus is ToNumber, nothing more.
                 let slot = self.allocate_feedback_slot(FeedbackSlotKind::BinaryOp);
                 self.output(Bytecode::ToNumber, &[slot])
             }
@@ -418,14 +336,10 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::Dec, &[K_UNINITIALIZED_EMBEDDED_FEEDBACK])
     }
 
-    /// `BytecodeArrayBuilder::LogicalNot`: negates a value already known to
-    /// be a boolean.
     pub fn logical_not(&mut self) -> &mut Self {
         self.output(Bytecode::LogicalNot, &[])
     }
 
-    /// `BytecodeArrayBuilder::ToBooleanLogicalNot`: `!x` for any `x`, which
-    /// has to coerce first.
     pub fn to_boolean_logical_not(&mut self) -> &mut Self {
         self.output(Bytecode::ToBooleanLogicalNot, &[])
     }
@@ -436,7 +350,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::TypeOf, &[slot])
     }
 
-    /// `BytecodeArrayBuilder::CompareOperation`: `acc = reg op acc`.
     pub fn compare_operation(&mut self, op: Token, register: Register) -> &mut Self {
         let bytecode = match op {
             Token::Eq => Bytecode::TestEqual,
@@ -447,9 +360,6 @@ impl BytecodeArrayBuilder {
             Token::GreaterThanEq => Bytecode::TestGreaterThanOrEqual,
             Token::InstanceOf => Bytecode::TestInstanceOf,
             Token::In => Bytecode::TestIn,
-            // `!=` and `!==` have no bytecode of their own: the generator
-            // emits the positive test and negates it, which is why V8's
-            // token list has them adjacent to their positive forms.
             other => unreachable!("{other} has no comparison bytecode"),
         };
         let operands = if matches!(op, Token::InstanceOf | Token::In) {
@@ -461,9 +371,6 @@ impl BytecodeArrayBuilder {
         self.output(bytecode, &operands)
     }
 
-    /// `BytecodeArrayBuilder::CompareUndefined` / `CompareNull`: the
-    /// comparisons against the oddballs get their own operand-free bytecodes,
-    /// because `x == null` is common and needs no feedback.
     pub fn compare_null(&mut self) -> &mut Self {
         self.output(Bytecode::TestNull, &[])
     }
@@ -472,12 +379,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::TestUndefined, &[])
     }
 
-    /// `BytecodeArrayBuilder::CompareTypeOf`-adjacent: `TestUndetectable` is
-    /// true for `null`, `undefined` and (in V8) `document.all`.
-    ///
-    /// This is what `x == null` compiles to. The *strict* comparisons get
-    /// `TestNull`/`TestUndefined` instead, because `null === undefined` is
-    /// false while `null == undefined` is true.
     pub fn compare_undetectable(&mut self) -> &mut Self {
         self.output(Bytecode::TestUndetectable, &[])
     }
@@ -528,11 +429,6 @@ impl BytecodeArrayBuilder {
 
     // -- calls ---------------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::CallUndefinedReceiver`: `f(a, b)`, where there
-    /// is no receiver to pass.
-    ///
-    /// `args` must be the registers holding the arguments, contiguously --
-    /// which is why the generator builds them with a growable register list.
     pub fn call_undefined_receiver(&mut self, callee: Register, args: RegisterList) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
         self.output(
@@ -546,8 +442,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::CallProperty`: `o.f(a)`, where `o` is the
-    /// receiver. The receiver is the first register of `args`.
     pub fn call_property(&mut self, callee: Register, args: RegisterList) -> &mut Self {
         debug_assert!(
             args.register_count() >= 1,
@@ -580,9 +474,6 @@ impl BytecodeArrayBuilder {
         self.output_jump(Bytecode::JumpIfFalse, label)
     }
 
-    /// `BytecodeArrayBuilder::JumpIfToBooleanTrue`: branches on any value,
-    /// coercing it. Saves the generator emitting a `ToBoolean` before every
-    /// `if`, which is why these bytecodes exist at all.
     pub fn jump_if_to_boolean_true(&mut self, label: &mut BytecodeLabel) -> &mut Self {
         self.output_jump(Bytecode::JumpIfToBooleanTrue, label)
     }
@@ -612,9 +503,6 @@ impl BytecodeArrayBuilder {
         self
     }
 
-    /// `BytecodeArrayBuilder::JumpLoop`: the backward jump that closes a
-    /// loop. Its own bytecode because it is where the interpreter checks for
-    /// interrupts and, in V8, where it decides to tier up.
     pub fn jump_loop(&mut self, loop_header: &BytecodeLoopHeader) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::JumpLoop);
         let node = BytecodeNode::new(Bytecode::JumpLoop, &[0, 0, slot]);
@@ -623,19 +511,16 @@ impl BytecodeArrayBuilder {
         self
     }
 
-    /// `BytecodeArrayBuilder::Bind(BytecodeLabel*)`
     pub fn bind(&mut self, label: &mut BytecodeLabel) -> &mut Self {
         self.bytecode_array_writer.bind_label(label);
         self
     }
 
-    /// `BytecodeArrayBuilder::Bind(BytecodeLabels*)`
     pub fn bind_labels(&mut self, labels: &mut BytecodeLabels) -> &mut Self {
         self.bytecode_array_writer.bind_labels(labels);
         self
     }
 
-    /// `BytecodeArrayBuilder::Bind(BytecodeLoopHeader*)`
     pub fn bind_loop_header(&mut self, loop_header: &mut BytecodeLoopHeader) -> &mut Self {
         self.bytecode_array_writer.bind_loop_header(loop_header);
         self
@@ -651,8 +536,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::Throw, &[])
     }
 
-    /// Marks the next bytecode as reachable. The generator gets this
-    /// implicitly by binding a label; tests sometimes need it directly.
     #[cfg(test)]
     pub fn start_basic_block_for_test(&mut self) {
         self.bytecode_array_writer.start_basic_block();
@@ -671,11 +554,6 @@ impl BytecodeArrayBuilder {
             .insert_name(name) as i32
     }
 
-    /// `BytecodeArrayBuilder::ToBytecodeArray`.
-    ///
-    /// Appends the implicit `return undefined` that every function ends with
-    /// if control can fall off the end, which is why a JavaScript function
-    /// without a `return` evaluates to `undefined`.
     pub fn to_bytecode_array(mut self) -> BytecodeArrayData {
         if !self.exit_seen_in_block() {
             self.load_undefined();
@@ -742,8 +620,6 @@ mod tests {
 
     #[test]
     fn a_binary_operation_reads_a_register_and_the_accumulator() {
-        // `a + b` compiles to: load a into a register, load b into the
-        // accumulator, then Add.
         let mut builder = BytecodeArrayBuilder::new(1, 2);
         let a = builder.local(0);
         let b = builder.local(1);
@@ -774,7 +650,6 @@ mod tests {
             ConstantEntry::String("hello".to_string())
         );
         assert_eq!(data.constants[1], ConstantEntry::Number(1.5));
-        // Both loads name index 0.
         assert_eq!(data.bytecodes[1], 0);
         assert_eq!(data.bytecodes[3], 0);
     }
@@ -791,14 +666,11 @@ mod tests {
 
     #[test]
     fn each_property_access_gets_its_own_feedback_slot() {
-        // Two sites that could cache different maps must not share a slot.
         let mut builder = BytecodeArrayBuilder::new(1, 1);
         let object = builder.local(0);
         builder.load_named_property(object, "x");
         builder.load_named_property(object, "x");
         let data = builder.to_bytecode_array();
-        // A load site is two slots wide -- one for the map, one for the
-        // handler -- so the second site starts at 2.
         assert_eq!(data.feedback_slot_count, 4);
         assert_eq!(data.bytecodes[3], 0, "first site: slot 0");
         assert_eq!(data.bytecodes[7], 2, "second site: slot 2");
@@ -830,7 +702,6 @@ mod tests {
 
     #[test]
     fn a_forward_branch_is_resolved_when_bound() {
-        // if (x) { } -- jump over the empty body.
         let mut builder = BytecodeArrayBuilder::new(1, 1);
         let mut end = BytecodeLabel::new();
         builder.load_accumulator_with_register(builder.local(0));
@@ -840,7 +711,6 @@ mod tests {
         let data = builder.to_bytecode_array();
 
         assert_eq!(data.bytecodes[2], Bytecode::JumpIfToBooleanFalse.to_byte());
-        // The jump is 2 bytes, LdaSmi is 2, so the target is 4 on.
         assert_eq!(data.bytecodes[3], 4);
         assert!(data.constants.is_empty(), "a short jump needs no constant");
     }
@@ -896,8 +766,6 @@ mod tests {
         builder.call_undefined_receiver(callee, args);
         let data = builder.to_bytecode_array();
 
-        // Locate the call rather than computing its offset: it has four
-        // operands, so the arithmetic is easy to get wrong and says nothing.
         let call_offset = data
             .bytecodes
             .iter()

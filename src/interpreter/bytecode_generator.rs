@@ -1,36 +1,3 @@
-//! Ported from `src/interpreter/bytecode-generator.h` /
-//! `bytecode-generator.cc`.
-//!
-//! The AST walker that emits bytecode.
-//!
-//! Where the value goes
-//! --------------------
-//! The central idea, and the reason V8's generator is not a naive tree walk,
-//! is that an expression is compiled differently depending on what its
-//! result is *for*. V8 tracks this with an `ExpressionResultScope`; `vx`
-//! passes it as a parameter, which is the same decision reached without a
-//! stack:
-//!
-//! * [`Self::visit_for_accumulator_value`] -- leave the value in the
-//!   accumulator.
-//! * [`Self::visit_for_register_value`] -- leave it in a fresh register.
-//! * [`Self::visit_for_effect`] -- the value is discarded, so don't produce
-//!   it.
-//! * [`Self::visit_for_test`] -- the value is a branch condition, so compile
-//!   it *into* the branch rather than materialising a boolean and then
-//!   testing it.
-//!
-//! The last one is what makes `if (a && b)` compile to two conditional jumps
-//! with no boolean ever existing, and `if (!x)` compile with the branches
-//! swapped instead of with a `LogicalNot`.
-//!
-//! Deviations, tracked in `PORTING.md`: no scope tree, so a variable is
-//! either a register in the current function or a global -- there are no
-//! contexts and therefore no closures over locals. No generators, no
-//! `try`/`catch`, no classes, no destructuring, no `for...in`/`for...of`,
-//! no labelled break. `let`/`const` are compiled as function-scoped, so
-//! their temporal dead zone is not enforced.
-
 use crate::ast::ast::*;
 use crate::ast::scopes::Scope;
 use crate::common::globals::VariableLocation;
@@ -40,10 +7,6 @@ use crate::interpreter::bytecode_register::Register;
 use crate::interpreter::control_flow_builders::{ConditionalControlFlowBuilder, LoopBuilder};
 use crate::parsing::token::Token;
 
-/// `TestFallthrough`: which branch control reaches by *not* jumping.
-///
-/// Knowing this lets the generator emit one conditional jump instead of a
-/// conditional jump plus an unconditional one.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TestFallthrough {
     Then,
@@ -52,8 +15,6 @@ pub enum TestFallthrough {
 }
 
 impl TestFallthrough {
-    /// Swapping the branches swaps the fallthrough, which is how `!x` is
-    /// compiled without emitting anything.
     fn inverted(self) -> TestFallthrough {
         match self {
             TestFallthrough::Then => TestFallthrough::Else,
@@ -63,9 +24,6 @@ impl TestFallthrough {
     }
 }
 
-/// One compiled function. Index 0 of a [`CompiledProgram`] is the top-level
-/// script; the rest are its nested function literals, in the order the
-/// generator reached them.
 #[derive(Clone, Debug)]
 pub struct CompiledFunction {
     pub name: String,
@@ -76,8 +34,6 @@ pub struct CompiledFunction {
 #[derive(Clone, Debug)]
 pub struct CompiledProgram {
     pub functions: Vec<CompiledFunction>,
-    /// `var`s and function declarations at the top level, which become
-    /// properties of the global object.
     pub global_declarations: Vec<String>,
 }
 
@@ -88,43 +44,28 @@ pub struct GeneratorError {
 
 type Result<T> = std::result::Result<T, GeneratorError>;
 
-/// `BytecodeGenerator`
-/// Where a name's storage is, as the generator needs it.
-///
-/// `Variable::location()` plus the *depth* -- how many contexts out the
-/// declaring scope is, which only the chain can say.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Resolution {
-    /// A register in this frame.
     Local(Register),
-    /// A parameter of this frame.
     Parameter(Register),
-    /// A slot `depth` contexts out. Depth zero is the current context.
-    Context { depth: i32, slot: i32 },
+    Context {
+        depth: i32,
+        slot: i32,
+    },
     /// A property of the global object.
     Global,
 }
 
 pub struct BytecodeGenerator {
     builder: BytecodeArrayBuilder,
-    /// The scopes from the script down to the function being generated,
-    /// which is what makes a context depth computable.
     scope_chain: Vec<Scope>,
-    /// The register holding the context saved by `PushContext`, per scope
-    /// that allocated one. `None` for a function that needed no context.
     context_registers: Vec<Option<Register>>,
-    /// Loops currently being generated, innermost last. `break` and
-    /// `continue` target the last entry.
     loop_stack: Vec<LoopBuilder>,
-    /// Functions compiled so far, shared across the whole generation so that
-    /// `CreateClosure` can name one by index.
     functions: Vec<CompiledFunction>,
 }
 
 impl BytecodeGenerator {
-    /// `BytecodeGenerator::GenerateBytecode` for a whole script.
     pub fn generate(program: &Program) -> Result<CompiledProgram> {
-        // The top-level script has only the receiver as a parameter.
         let mut generator = BytecodeGenerator {
             builder: BytecodeArrayBuilder::new(1, 0),
             scope_chain: vec![program.scope.clone()],
@@ -132,20 +73,13 @@ impl BytecodeGenerator {
             loop_stack: Vec::new(),
             functions: Vec::new(),
         };
-        // Reserve the slot the script itself will occupy, so nested
-        // functions get stable indices while it is still being generated.
         generator.functions.push(CompiledFunction {
             name: "<script>".to_string(),
             declared_parameter_count: 0,
             data: BytecodeArrayBuilder::new(1, 0).to_bytecode_array(),
         });
 
-        // At the top level, `var` declarations become globals rather than
-        // registers -- which is why `var x` at the top level is visible as
-        // `globalThis.x`.
         generator.builder = BytecodeArrayBuilder::new(1, 0);
-        // The script may itself need a context, if a function captured one
-        // of its top-level variables.
         generator.build_function_context(&program.scope)?;
         for function in &program.hoisted_functions {
             let index = generator.compile_function(function)?;
@@ -156,9 +90,6 @@ impl BytecodeGenerator {
             generator.builder.create_closure(index);
             generator.builder.store_global(&name);
         }
-        // A script has a *completion value*: the value of its last
-        // expression statement, which is what `eval` yields and what a REPL
-        // prints. Everything before it is generated for effect.
         match program.body.split_last() {
             Some((Statement::Expression { expression, .. }, rest)) => {
                 generator.visit_statements(rest)?;
@@ -170,8 +101,6 @@ impl BytecodeGenerator {
             _ => generator.visit_statements(&program.body)?,
         }
 
-        // Top-level variables that stayed unallocated are globals; the ones
-        // a function captured live in the script's context instead.
         let declarations: Vec<String> = program
             .scope
             .variables()
@@ -193,10 +122,7 @@ impl BytecodeGenerator {
         })
     }
 
-    /// Compiles a nested function literal and returns its index.
     fn compile_function(&mut self, function: &FunctionLiteral) -> Result<usize> {
-        // Reserve the index first, so a recursive function can refer to
-        // itself while its own body is still being generated.
         let index = self.functions.len();
         self.functions.push(CompiledFunction {
             name: function.name.clone().unwrap_or_default(),
@@ -204,8 +130,6 @@ impl BytecodeGenerator {
             data: BytecodeArrayBuilder::new(1, 0).to_bytecode_array(),
         });
 
-        // Scope analysis already decided where everything lives; the
-        // register count is what it left in the frame.
         let parameter_count = function.parameters.len() as i32 + 1;
         let builder = BytecodeArrayBuilder::new(parameter_count, function.scope.local_count());
 
@@ -214,12 +138,8 @@ impl BytecodeGenerator {
         self.scope_chain.push(function.scope.clone());
 
         let result = (|| -> Result<()> {
-            // If anything captured one of this function's variables, the
-            // context has to exist before the first statement runs.
             self.build_function_context(&function.scope)?;
 
-            // Nested function declarations are created on entry, before any
-            // statement runs -- that is what hoisting means.
             let nested: Vec<FunctionLiteral> = function.hoisted_functions.clone();
             for inner in &nested {
                 let inner_index = self.compile_function(inner)?;
@@ -258,8 +178,6 @@ impl BytecodeGenerator {
     fn visit_statements(&mut self, statements: &[Statement]) -> Result<()> {
         for statement in statements {
             self.visit_statement(statement)?;
-            // V8 stops emitting once a block cannot be left normally; the
-            // writer drops the rest anyway, but stopping here saves the work.
             if self.builder.exit_seen_in_block() {
                 break;
             }
@@ -327,9 +245,6 @@ impl BytecodeGenerator {
                     self.visit_for_accumulator_value(initializer)?;
                     self.build_variable_assignment(&declaration.name);
                 }
-                // A `var` with no initialiser does nothing at this point:
-                // the binding already exists, holding undefined, because it
-                // was hoisted.
                 None => {}
             }
         }
@@ -345,8 +260,6 @@ impl BytecodeGenerator {
     ) -> Result<()> {
         let mut conditional = ConditionalControlFlowBuilder::new();
 
-        // A constant condition is folded away, so `if (false)` emits nothing
-        // and `while (true)` emits no test.
         match condition.to_boolean_is_true() {
             Some(true) => return self.visit_statement(then_statement),
             Some(false) => {
@@ -390,7 +303,6 @@ impl BytecodeGenerator {
         let depth = self.loop_stack.len() - 1;
         self.loop_stack[depth].loop_header(&mut self.builder);
 
-        // `while (true)` needs no test at all.
         let mut exit_labels = BytecodeLabels::new();
         let always_true = condition.to_boolean_is_true() == Some(true);
         if !always_true {
@@ -408,15 +320,12 @@ impl BytecodeGenerator {
         self.loop_stack[depth].bind_continue_target(&mut self.builder);
         self.loop_stack[depth].jump_to_header(&mut self.builder);
 
-        // The condition's false exit and `break` both land here.
         self.builder.bind_labels(&mut exit_labels);
         self.loop_stack[depth].finish(&mut self.builder);
         self.loop_stack.pop();
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitDoWhileStatement`: the body runs before the
-    /// condition is ever evaluated.
     fn visit_do_while_statement(&mut self, body: &Statement, condition: &Expression) -> Result<()> {
         self.loop_stack.push(LoopBuilder::new());
         let depth = self.loop_stack.len() - 1;
@@ -429,9 +338,6 @@ impl BytecodeGenerator {
         if condition.to_boolean_is_true() == Some(true) {
             self.loop_stack[depth].jump_to_header(&mut self.builder);
         } else {
-            // The instruction after the test is the backward jump, so the
-            // `then` branch is the one reached by falling through -- jump
-            // out only when the condition is false.
             let mut again_labels = BytecodeLabels::new();
             self.visit_for_test(
                 condition,
@@ -481,9 +387,6 @@ impl BytecodeGenerator {
 
         self.visit_statement(body)?;
 
-        // `continue` lands here, *before* the increment, so that it still
-        // runs. That is the whole reason the continue target is separate
-        // from the loop header.
         self.loop_stack[depth].bind_continue_target(&mut self.builder);
         if let Some(next) = next {
             self.visit_for_effect(next)?;
@@ -500,7 +403,6 @@ impl BytecodeGenerator {
     fn visit_return_statement(&mut self, value: Option<&Expression>) -> Result<()> {
         match value {
             Some(value) => self.visit_for_accumulator_value(value)?,
-            // `return;` returns undefined.
             None => {
                 self.builder.load_undefined();
             }
@@ -513,12 +415,6 @@ impl BytecodeGenerator {
     // Variables
     // -----------------------------------------------------------------------
 
-    /// `Scope::LookupRecursively`, with the depth counted.
-    ///
-    /// Depth counts only the scopes that *have* a context: a function that
-    /// captured nothing allocates none, and a closure created in it keeps
-    /// using the context it was created in. Counting scope levels instead of
-    /// contexts would walk one link too many.
     fn resolve(&self, name: &str) -> Resolution {
         let mut context_depth = 0;
         for (level, scope) in self.scope_chain.iter().rev().enumerate() {
@@ -538,8 +434,6 @@ impl BytecodeGenerator {
                     }
                     VariableLocation::Parameter => {
                         debug_assert_eq!(level, 0, "likewise for a parameter");
-                        // Parameter 0 is the receiver, so a declared
-                        // parameter is one further along.
                         Resolution::Parameter(Register::from_parameter_index(variable.index + 1))
                     }
                     VariableLocation::Unallocated => Resolution::Global,
@@ -552,8 +446,6 @@ impl BytecodeGenerator {
         Resolution::Global
     }
 
-    /// `BytecodeGenerator::BuildFunctionContext`: allocate this scope's
-    /// context, if it needs one, and copy the captured parameters in.
     fn build_function_context(&mut self, scope: &Scope) -> Result<()> {
         if !scope.needs_context() {
             self.context_registers.push(None);
@@ -563,15 +455,10 @@ impl BytecodeGenerator {
         let names = scope.context_local_names();
         self.builder
             .create_function_context(&names, scope.context_slot_count());
-        // `PushContext` saves the context we were called in and installs the
-        // new one. The saved one is what the new context's `previous` points
-        // at, so the chain is built by the act of pushing.
         let saved = self.builder.register_allocator().new_register();
         self.builder.push_context(saved);
         self.context_registers.push(Some(saved));
 
-        // A captured parameter arrives in the frame but has to be read from
-        // the context from now on, so it is copied once at entry.
         for (parameter_index, slot) in scope.context_allocated_parameters() {
             let register = self.builder.parameter(parameter_index);
             self.builder.load_accumulator_with_register(register);
@@ -586,23 +473,18 @@ impl BytecodeGenerator {
             Resolution::Local(register) | Resolution::Parameter(register) => {
                 self.builder.load_accumulator_with_register(register);
             }
-            // The depth-zero case gets its own bytecode because it is the
-            // overwhelmingly common one.
             Resolution::Context { depth: 0, slot } => {
                 self.builder.load_current_context_slot(slot);
             }
             Resolution::Context { depth, slot } => {
                 self.builder.load_context_slot(slot, depth);
             }
-            // Not declared anywhere on the chain: a global, deferred to run
-            // time with a feedback slot to cache it.
             Resolution::Global => {
                 self.builder.load_global(name);
             }
         }
     }
 
-    /// `BytecodeGenerator::BuildVariableAssignment`: stores the accumulator.
     fn build_variable_assignment(&mut self, name: &str) {
         match self.resolve(name) {
             Resolution::Local(register) | Resolution::Parameter(register) => {
@@ -621,7 +503,6 @@ impl BytecodeGenerator {
     }
 
     // -----------------------------------------------------------------------
-    // Expression result scopes
     // -----------------------------------------------------------------------
 
     /// `BytecodeGenerator::VisitForAccumulatorValue`
@@ -636,7 +517,6 @@ impl BytecodeGenerator {
                 self.build_variable_load(name);
                 Ok(())
             }
-            // No contexts, so `this` at the top level is undefined.
             Expression::This { .. } => {
                 self.builder
                     .load_accumulator_with_register(Register::receiver());
@@ -690,13 +570,7 @@ impl BytecodeGenerator {
         }
     }
 
-    /// `BytecodeGenerator::VisitForRegisterValue`: the value in a fresh
-    /// register, which is what any operation needing two operands does with
-    /// its left-hand side.
     fn visit_for_register_value(&mut self, expression: &Expression) -> Result<Register> {
-        // A variable already in a register needs no copy -- the peephole
-        // that saves a Star on every `a + b`. A context variable is *not* in
-        // a register, so it does not qualify.
         if let Expression::VariableProxy { name, .. } = expression {
             match self.resolve(name) {
                 Resolution::Local(register) | Resolution::Parameter(register) => {
@@ -711,12 +585,8 @@ impl BytecodeGenerator {
         Ok(register)
     }
 
-    /// `BytecodeGenerator::VisitForEffect`: the value is thrown away, so
-    /// don't compute one.
     fn visit_for_effect(&mut self, expression: &Expression) -> Result<()> {
         match expression {
-            // A literal or a variable read with nothing done to it has no
-            // effect at all.
             Expression::Literal { .. }
             | Expression::VariableProxy { .. }
             | Expression::This { .. } => Ok(()),
@@ -732,7 +602,6 @@ impl BytecodeGenerator {
                 else_expression,
                 ..
             } => {
-                // Both arms for effect, so neither produces a value.
                 let mut conditional = ConditionalControlFlowBuilder::new();
                 let mut then_labels = BytecodeLabels::new();
                 let mut else_labels = BytecodeLabels::new();
@@ -750,18 +619,10 @@ impl BytecodeGenerator {
                 conditional.finish(&mut self.builder);
                 Ok(())
             }
-            // Everything else may have a side effect, so it is generated and
-            // its value simply left in the accumulator for the next
-            // instruction to overwrite.
             _ => self.visit_for_accumulator_value(expression),
         }
     }
 
-    /// `BytecodeGenerator::VisitForTest`.
-    ///
-    /// Compiles `expression` as a condition: control reaches one of the two
-    /// label sets, and no boolean is produced. `fallthrough` says which side
-    /// control arrives at by not jumping, so only the other side needs one.
     fn visit_for_test(
         &mut self,
         expression: &Expression,
@@ -770,15 +631,12 @@ impl BytecodeGenerator {
         fallthrough: TestFallthrough,
     ) -> Result<()> {
         match expression {
-            // `!x`: swap the branches instead of emitting a negation.
             Expression::Unary {
                 op: Token::Not,
                 expression,
                 ..
             } => self.visit_for_test(expression, else_labels, then_labels, fallthrough.inverted()),
 
-            // `a && b`: if `a` is false the whole thing is false; otherwise
-            // the answer is `b`. No boolean is materialised for `a`.
             Expression::Logical {
                 op: Token::And,
                 left,
@@ -791,7 +649,6 @@ impl BytecodeGenerator {
                 self.visit_for_test(right, then_labels, else_labels, fallthrough)
             }
 
-            // `a || b`, the mirror image.
             Expression::Logical {
                 op: Token::Or,
                 left,
@@ -805,9 +662,6 @@ impl BytecodeGenerator {
             }
 
             _ => {
-                // Anything else: produce the value, then branch on it.
-                // `JumpIfToBoolean*` does the coercion, so no `ToBoolean` is
-                // needed first.
                 let produces_boolean = matches!(expression, Expression::Compare { .. });
                 self.visit_for_accumulator_value(expression)?;
                 match fallthrough {
@@ -857,9 +711,6 @@ impl BytecodeGenerator {
         left: &Expression,
         right: &Expression,
     ) -> Result<()> {
-        // `x + 1`: the Smi-literal form saves a register and a load. V8 only
-        // takes it when the *right* operand is the literal, because the
-        // operators that have this form are not all commutative.
         if let Expression::Literal {
             value: Literal::Smi(literal),
             ..
@@ -890,29 +741,20 @@ impl BytecodeGenerator {
         left: &Expression,
         right: &Expression,
     ) -> Result<()> {
-        // A comparison against `null` or `undefined` gets an operand-free
-        // bytecode -- but which one depends on strictness, and getting that
-        // wrong makes `null == undefined` false.
         if let Some((value, oddball)) = compare_against_oddball(op, left, right) {
             self.visit_for_accumulator_value(value)?;
             match op {
-                // `x === null` is identity, and so is `x === undefined`.
                 Token::EqStrict => match oddball {
                     Literal::Null => self.builder.compare_null(),
                     Literal::Undefined => self.builder.compare_undefined(),
                     _ => unreachable!(),
                 },
-                // `x == null` and `x == undefined` are the same test: both
-                // are true for either value.
                 Token::Eq => self.builder.compare_undetectable(),
                 other => unreachable!("{other} does not fold against an oddball"),
             };
             return Ok(());
         }
 
-        // `!=` and `!==` have no bytecode: emit the positive test and negate
-        // it. The result of a comparison is always a boolean, so the cheap
-        // `LogicalNot` is enough -- no coercion needed.
         let (positive, negate) = match op {
             Token::NotEq => (Token::Eq, true),
             Token::NotEqStrict => (Token::EqStrict, true),
@@ -930,9 +772,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `a && b` where the *value* is wanted, not a branch. Unlike the test
-    /// form, this has to leave one of the operands in the accumulator --
-    /// `a && b` evaluates to `a` when `a` is falsy, not to `false`.
     fn visit_logical_operation_for_value(
         &mut self,
         op: Token,
@@ -942,23 +781,18 @@ impl BytecodeGenerator {
         let mut end_labels = BytecodeLabels::new();
         self.visit_for_accumulator_value(left)?;
         match op {
-            // `a && b` is `a` when `a` is falsy, so jump over `b` then.
             Token::And => {
                 let label = end_labels.new_label();
                 self.builder
                     .jump_if_to_boolean_false(end_labels.label_mut(label));
                 self.visit_for_accumulator_value(right)?;
             }
-            // `a || b` is `a` when `a` is truthy.
             Token::Or => {
                 let label = end_labels.new_label();
                 self.builder
                     .jump_if_to_boolean_true(end_labels.label_mut(label));
                 self.visit_for_accumulator_value(right)?;
             }
-            // `a ?? b` is `a` unless `a` is nullish -- the *opposite* test
-            // from the other two, and there is no `JumpIfNotUndefinedOrNull`
-            // bytecode, so the sense is inverted with a second jump.
             Token::Nullish => {
                 let mut right_labels = BytecodeLabels::new();
                 let to_right = right_labels.new_label();
@@ -1003,11 +837,6 @@ impl BytecodeGenerator {
         }
     }
 
-    /// `BytecodeGenerator::VisitCountOperation`: `++x` and `x++`.
-    ///
-    /// The difference is only *when* the old value is saved: a postfix
-    /// operation keeps it in a register before incrementing, which is the
-    /// one extra instruction `x++` costs over `++x`.
     fn visit_count_operation(
         &mut self,
         op: Token,
@@ -1020,8 +849,6 @@ impl BytecodeGenerator {
             Expression::VariableProxy { name, .. } => {
                 let name = name.clone();
                 self.build_variable_load(&name);
-                // `x++` must evaluate to a number even if `x` was a string,
-                // so the old value is converted before being saved.
                 self.builder.to_number();
                 let old_value = if is_prefix {
                     None
@@ -1057,8 +884,6 @@ impl BytecodeGenerator {
                                 self.builder.load_accumulator_with_register(old_value);
                             }
                             None => {
-                                // The store clobbers the accumulator, so the
-                                // new value has to be reloaded.
                                 self.builder.load_named_property(object_register, &name);
                             }
                         }
@@ -1123,8 +948,6 @@ impl BytecodeGenerator {
                 if op == Token::Assign {
                     self.visit_for_accumulator_value(value)?;
                 } else {
-                    // `a += b` evaluates `a` once. The old value goes in a
-                    // register so the operator can take it as its left side.
                     let binary_op = op.binary_op_for_assignment();
                     self.build_variable_load(&name);
                     let old_value = self.builder.register_allocator().new_register();
@@ -1133,8 +956,6 @@ impl BytecodeGenerator {
                     self.builder.binary_operation(binary_op, old_value);
                 }
                 self.build_variable_assignment(&name);
-                // A store to a register leaves the accumulator alone, so the
-                // assignment's value is already there.
             }
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
@@ -1151,8 +972,6 @@ impl BytecodeGenerator {
                             self.visit_for_accumulator_value(value)?;
                             self.builder.binary_operation(binary_op, old_value);
                         }
-                        // The value has to survive the store, which clobbers
-                        // the accumulator.
                         let stored = self.builder.register_allocator().new_register();
                         self.builder.store_accumulator_in_register(stored);
                         self.builder.load_accumulator_with_register(stored);
@@ -1222,8 +1041,6 @@ impl BytecodeGenerator {
         let mark = self.builder.register_allocator().next_register_index();
         let object_register = self.visit_for_register_value(object)?;
         match key {
-            // A name known at compile time gets `GetNamedProperty` with an
-            // inline cache; a computed one gets the keyed form.
             PropertyAccess::Named(name) => {
                 let name = name.clone();
                 self.builder.load_named_property(object_register, &name);
@@ -1241,9 +1058,6 @@ impl BytecodeGenerator {
     fn visit_call(&mut self, callee: &Expression, arguments: &[Expression]) -> Result<()> {
         let mark = self.builder.register_allocator().next_register_index();
 
-        // `o.f(x)` passes `o` as the receiver; `f(x)` passes undefined. The
-        // distinction has to be made here, before the callee is evaluated,
-        // because `o` must be evaluated exactly once.
         match callee {
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
@@ -1260,7 +1074,6 @@ impl BytecodeGenerator {
                 }
                 self.builder.store_accumulator_in_register(callee_register);
 
-                // The receiver is the first register of the argument list.
                 let mut args = self
                     .builder
                     .register_allocator()
@@ -1317,8 +1130,6 @@ impl BytecodeGenerator {
                 PropertyKey::Name(name) => {
                     let name = name.clone();
                     self.visit_for_accumulator_value(&property.value)?;
-                    // The property is known not to exist yet, so no setter
-                    // on the prototype chain can intercept it.
                     self.builder.define_named_own_property(object, &name);
                 }
                 PropertyKey::Computed(key) => {
@@ -1362,8 +1173,6 @@ impl BytecodeGenerator {
     }
 }
 
-/// `x == null` / `null == x` and the `undefined` forms, which have
-/// operand-free bytecodes because they are common and need no feedback.
 fn compare_against_oddball<'a>(
     op: Token,
     left: &'a Expression,

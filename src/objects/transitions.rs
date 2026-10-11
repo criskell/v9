@@ -1,35 +1,3 @@
-//! Ported from `src/objects/transitions.h` / `transitions.cc`.
-//!
-//! The edges of the hidden-class graph. When `o.x = 1` adds a property to an
-//! object whose map has none, the engine does not just build a new map -- it
-//! records a *transition* from the old map to the new one, keyed by the
-//! property name. The next object to walk the same path finds the transition
-//! and reuses the map. That is why a constructor run a million times produces
-//! one map chain rather than a million maps.
-//!
-//! A map's `transitions_or_prototype_info` field is overloaded; V8 calls the
-//! cases `Encoding`, and `vx` keeps them:
-//!
-//! * [`Encoding::Uninitialized`] -- Smi zero, no transitions at all.
-//! * [`Encoding::WeakRef`] -- exactly one transition, stored as a bare weak
-//!   reference to the target map with *no* array and *no* stored key. The key
-//!   is recovered from the target map itself, since the property it added is
-//!   its own last descriptor. One pointer for the overwhelmingly common case
-//!   of a shape with a single successor.
-//! * [`Encoding::FullTransitionArray`] -- a [`TransitionArray`]:
-//!
-//! ```text
-//!   [0] prototype transitions (unused in vx)
-//!   [1] side-step transitions (unused in vx)
-//!   [2] number of transitions (Smi)
-//!   [3] key 0   (strong)
-//!   [4] target 0 (weak)
-//!   [5] key 1, [6] target 1, ...
-//! ```
-//!
-//! Targets are weak: a transition must not keep a map alive by itself, or a
-//! long-lived shape graph would pin every shape ever created.
-
 use crate::heap::heap::{AllocationType, Heap};
 use crate::objects::fixed_array::WeakFixedArray;
 use crate::objects::instance_type;
@@ -57,7 +25,6 @@ impl TransitionArray {
     /// `TransitionArray::kTransitionSize`
     pub const K_TRANSITION_SIZE: i32 = 2;
 
-    /// Slots needed to hold `number_of_transitions` entries.
     #[inline]
     pub const fn length_for(number_of_transitions: i32) -> i32 {
         Self::K_FIRST_INDEX + number_of_transitions * Self::K_TRANSITION_SIZE
@@ -116,8 +83,6 @@ impl TransitionArray {
             .set(heap, Self::key_index(transition_number), key);
     }
 
-    /// `TransitionArray::GetRawTarget`: the weak slot, which may have been
-    /// cleared by the GC.
     #[inline]
     pub fn get_raw_target(self, heap: &Heap, transition_number: i32) -> Tagged {
         debug_assert!(transition_number < self.number_of_transitions(heap));
@@ -150,12 +115,6 @@ impl TransitionArray {
             .element_address(Self::target_index(transition_number))
     }
 
-    /// `TransitionArray::SearchName`, linear.
-    ///
-    /// V8 keeps transitions sorted by name hash and binary-searches above
-    /// `kMaxElementsForLinearSearch` (32). Shapes with more than a handful of
-    /// successors are rare, and `vx` does not have name hashes yet, so this
-    /// stays linear -- see `PORTING.md`.
     pub fn search_name(self, heap: &Heap, name: Tagged) -> i32 {
         for i in 0..self.number_of_transitions(heap) {
             if self.get_key(heap, i) == name {
@@ -169,24 +128,15 @@ impl TransitionArray {
 /// `TransitionsAccessor::Encoding`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
-    /// No transitions recorded yet.
     Uninitialized,
-    /// Exactly one transition, held as a bare weak reference.
     WeakRef,
     /// A `TransitionArray`.
     FullTransitionArray,
 }
 
-/// `TransitionsAccessor`: reads and writes a map's transitions without the
-/// caller having to know which encoding is in use.
-///
-/// V8's version holds a `Map` and a no-GC scope. `vx` makes it a set of
-/// functions taking the map explicitly -- there is nothing to cache, and
-/// passing the heap in keeps the borrow visible at every call site.
 pub struct TransitionsAccessor;
 
 impl TransitionsAccessor {
-    /// Which encoding `map`'s transition field currently uses.
     pub fn encoding(heap: &Heap, map: Map) -> Encoding {
         let raw = map.raw_transitions(heap);
         if raw.is_smi() {
@@ -213,17 +163,10 @@ impl TransitionsAccessor {
         Some(Map::unchecked_cast(raw.to_heap_object()?))
     }
 
-    /// `TransitionsAccessor::GetSimpleTransitionKey`.
-    ///
-    /// The key is not stored: a map reached by adding a property has that
-    /// property as its own last descriptor, so the name can be read back out
-    /// of the target. This is what makes the one-transition case free.
     fn simple_transition_key(heap: &Heap, target: Map) -> Tagged {
         target.last_added_key(heap)
     }
 
-    /// `TransitionsAccessor::SearchTransition`: the map reached from `map` by
-    /// adding `name`, if that path has been walked before.
     pub fn search_transition(heap: &Heap, map: Map, name: Tagged) -> Option<Map> {
         match Self::encoding(heap, map) {
             Encoding::Uninitialized => None,
@@ -272,8 +215,6 @@ impl TransitionsAccessor {
         }
     }
 
-    /// Every transition out of `map`, as (key, target) pairs. For diagnostics
-    /// and for tests; the hot paths use [`Self::search_transition`].
     pub fn transitions(heap: &Heap, map: Map) -> Vec<(Tagged, Map)> {
         match Self::encoding(heap, map) {
             Encoding::Uninitialized => Vec::new(),
@@ -290,17 +231,6 @@ impl TransitionsAccessor {
         }
     }
 
-    /// `TransitionsAccessor::Insert`, for a property transition.
-    ///
-    /// Grows the encoding as needed: nothing becomes a weak ref, and a weak
-    /// ref becomes an array. Returns `false` if there was no room to allocate
-    /// the array, in which case the transition is simply not recorded -- a
-    /// missing transition costs a duplicate map, never correctness, which is
-    /// exactly why V8 is free to drop them under memory pressure too.
-    ///
-    /// `transition_array_map` is the map to stamp on a newly allocated
-    /// `TransitionArray`. V8 reaches it through the factory; passing it in
-    /// keeps this module independent of the root table.
     #[must_use]
     pub fn insert(
         heap: &mut Heap,
@@ -316,7 +246,6 @@ impl TransitionsAccessor {
 
         match Self::encoding(heap, map) {
             Encoding::Uninitialized => {
-                // The cheap case: one weak pointer, no array, no key.
                 debug_assert_eq!(Self::simple_transition_key(heap, target), name);
                 map.set_raw_transitions(heap, target.object().tagged_weak());
                 true
@@ -349,7 +278,6 @@ impl TransitionsAccessor {
                     array.set_number_of_transitions(heap, number + 1);
                     return true;
                 }
-                // Full: copy into a larger array, as V8 does on overflow.
                 let Some(grown) =
                     Self::allocate_transition_array(heap, (number + 1) * 2, transition_array_map)
                 else {
@@ -370,13 +298,6 @@ impl TransitionsAccessor {
         }
     }
 
-    /// Allocates an empty transition array with room for `capacity` entries.
-    ///
-    /// Tenured: a transition array is reachable from a map, which lives in
-    /// read-only space, and `vx`'s young collector does not scan read-only
-    /// space for references into the nursery. Allocating here in old space is
-    /// what keeps that true. (V8 solves the same problem with a write
-    /// barrier and a remembered set; see `PORTING.md`.)
     fn allocate_transition_array(
         heap: &mut Heap,
         capacity: i32,
@@ -391,7 +312,6 @@ impl TransitionsAccessor {
         let array = WeakFixedArray::unchecked_cast(object);
         array.set_length(heap, length);
         let transitions = TransitionArray::unchecked_cast(object);
-        // Slots start out as Smi zero, which is a safe, non-reference value.
         transitions.set_number_of_transitions(heap, 0);
         Some(transitions)
     }
@@ -404,8 +324,6 @@ mod tests {
     use crate::objects::instance_type::{JS_OBJECT_TYPE, MAP_TYPE};
     use crate::objects::property_details::{default_data_field, Representation};
 
-    /// A minimal world: a meta map, and a helper that builds a map whose last
-    /// descriptor is a given name, which is all the transition code reads.
     struct World {
         heap: Heap,
         meta_map: Map,
@@ -425,8 +343,6 @@ mod tests {
             let transition_array_map = Map::unchecked_cast(object);
             heap.set_map(object, meta_map.object());
             transition_array_map.set_instance_type(&mut heap, instance_type::TRANSITION_ARRAY_TYPE);
-            // A TransitionArray is variable sized; its map carries no fixed
-            // instance size, like V8's kVariableSizeSentinel.
             transition_array_map.set_instance_size(&mut heap, 0);
             World {
                 heap,
@@ -467,8 +383,6 @@ mod tests {
             array
         }
 
-        /// A map whose own last descriptor is `name` -- i.e. the map you
-        /// reach by adding `name`.
         fn map_adding(&mut self, name: Tagged) -> Map {
             let descriptors = self.descriptor_array(1);
             descriptors.append(
@@ -551,7 +465,6 @@ mod tests {
             TransitionsAccessor::search_transition(&w.heap, source, x),
             Some(target)
         );
-        // The key was never stored; it is read back out of the target map.
         assert!(source.raw_transitions(&w.heap).is_weak());
     }
 
@@ -600,7 +513,6 @@ mod tests {
             None
         );
 
-        // ...and still misses once the array encoding is in use.
         let y = w.name();
         let to_y = w.map_adding(y);
         assert!(w.insert(source, y, to_y));
@@ -669,7 +581,6 @@ mod tests {
         assert!(w.insert(source, x, to_x));
         assert!(w.insert(source, y, to_y));
 
-        // Simulate the collector clearing a dead map's transition.
         let array = TransitionsAccessor::transition_array(&w.heap, source);
         let index = array.search_name(&w.heap, x);
         array.set_raw_target(&mut w.heap, index, Tagged::cleared());
@@ -694,14 +605,12 @@ mod tests {
         let x = w.name();
         let to_x = w.map_adding(x);
 
-        // WeakRef encoding.
         assert!(w.insert(source, x, to_x));
         assert_eq!(
             TransitionsAccessor::transitions(&w.heap, source),
             vec![(x, to_x)]
         );
 
-        // Array encoding.
         let y = w.name();
         let to_y = w.map_adding(y);
         assert!(w.insert(source, y, to_y));

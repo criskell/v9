@@ -1,25 +1,3 @@
-//! Ported from `src/objects/scope-info.h`, in miniature.
-//!
-//! Describes a [`Context`](crate::objects::contexts::Context)'s slots: how
-//! many there are, and which name each one holds.
-//!
-//! ```text
-//!   0  map
-//!   8  context_local_count  i32
-//!  12  (padding)            u32
-//!  16  names[count]         tagged
-//! ```
-//!
-//! Nothing on the hot path reads this -- a context slot is reached by index,
-//! not by name, which is the point of scope analysis. It exists because the
-//! context has to say what it is: V8 needs it for the debugger, for `eval`,
-//! for stack traces and for serialising a closure into a snapshot.
-//!
-//! Deviation, tracked in `PORTING.md`: V8's `ScopeInfo` is a large packed
-//! object carrying the scope type, the language mode, the function kind, the
-//! parameter count, flags for every special binding, and a positions table.
-//! `vx` keeps the names and the count.
-
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
 use crate::objects::tagged::{Address, Tagged};

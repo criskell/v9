@@ -1,20 +1,3 @@
-//! Ported from `src/heap/heap-visitor.h`, `heap-visitor.cc` and
-//! `heap-visitor-inl.h`.
-//!
-//! Given an object, enumerate the slots in it that hold tagged values. This
-//! is the one piece of knowledge the garbage collector cannot derive: a word
-//! of heap memory is a reference or a float or a packed bitfield depending
-//! entirely on what kind of object it is in.
-//!
-//! V8 dispatches on the map's `visitor_id`, a precomputed byte, so the hot
-//! loop never switches on the instance type. `vx` switches on the instance
-//! type directly; the `visitor_id` field exists in the `Map` layout for when
-//! that becomes worth doing.
-//!
-//! Getting this wrong in either direction is fatal, which is why it lives in
-//! one place: miss a slot and the collector drops a live object, visit a
-//! non-slot and it will try to follow a float as a pointer.
-
 use crate::execution::isolate::Isolate;
 use crate::objects::bytecode_array::BytecodeArray;
 use crate::objects::descriptor_array::DescriptorArray;
@@ -28,17 +11,10 @@ use crate::objects::shared_function_info::SharedFunctionInfo;
 use crate::objects::tagged::{Address, HeapObject};
 
 impl Isolate {
-    /// Calls `visit` with the address of every tagged slot inside `object`.
-    ///
-    /// The map word itself is *not* included: it is handled separately,
-    /// because during a scavenge it may hold a forwarding address rather than
-    /// a map, and because maps live in read-only space and never move.
     pub fn visit_object_slots(&self, object: HeapObject, visit: &mut impl FnMut(Address)) {
         let map = self.heap.map_of(object);
         let instance_type = map.instance_type(&self.heap);
 
-        // Strings carry character data, not references. Visiting their bodies
-        // would mean following text as pointers.
         if it::is_string(instance_type) {
             return;
         }
@@ -52,9 +28,7 @@ impl Isolate {
                 visit(map.raw_transitions_address());
             }
 
-            it::HEAP_NUMBER_TYPE => {
-                // A boxed double has no references.
-            }
+            it::HEAP_NUMBER_TYPE => {}
 
             it::ODDBALL_TYPE => {
                 let oddball = Oddball::unchecked_cast(object);
@@ -87,13 +61,9 @@ impl Isolate {
             it::DESCRIPTOR_ARRAY_TYPE => {
                 let array = DescriptorArray::unchecked_cast(object);
                 visit(array.field(DescriptorArray::K_ENUM_CACHE_OFFSET));
-                // The full capacity, not just the occupied prefix: the slack
-                // entries are zeroed, so visiting them is harmless, and this
-                // way a concurrent append cannot leave a slot unvisited.
                 for i in 0..array.number_of_all_descriptors(&self.heap) {
                     visit(array.key_address(i));
                     visit(array.value_address(i));
-                    // The details slot is a Smi and needs no visiting.
                 }
             }
 
@@ -119,8 +89,6 @@ impl Isolate {
                 let array = BytecodeArray::unchecked_cast(object);
                 visit(array.source_position_table_address());
                 visit(array.constant_pool_address());
-                // The instruction bytes are not slots. Tracing them would
-                // mean following opcodes as pointers.
             }
 
             it::SHARED_FUNCTION_INFO_TYPE => {
@@ -135,23 +103,16 @@ impl Isolate {
                 let vector = FeedbackVector::unchecked_cast(object);
                 visit(vector.shared_function_info_address());
                 visit(vector.metadata_address());
-                // The slots hold maps weakly and handlers as Smis, so they
-                // are visited like any other tagged slot -- the weakness is
-                // in the reference, not in how it is traced.
                 for slot in 0..vector.length(&self.heap) {
                     visit(vector.slot_address(slot));
                 }
             }
 
-            it::FEEDBACK_METADATA_TYPE => {
-                // Just a run of bytes.
-            }
+            it::FEEDBACK_METADATA_TYPE => {}
 
             it::CONTEXT_TYPE => {
                 use crate::objects::contexts::Context;
                 let context = Context::unchecked_cast(object);
-                // Every slot, including the scope info and the previous
-                // link -- the chain has to keep the outer contexts alive.
                 for index in 0..context.length(&self.heap) {
                     visit(context.slot_address(index));
                 }
@@ -171,12 +132,9 @@ impl Isolate {
                 visit(cell.name_address());
                 visit(cell.value_address());
                 visit(cell.dependent_code_address());
-                // The details slot is a Smi.
             }
 
-            it::FILLER_TYPE => {
-                // Free space: nothing to trace.
-            }
+            it::FILLER_TYPE => {}
 
             other => panic!(
                 "no visitor for instance type {} ({}) at 0x{:x}",
@@ -187,20 +145,12 @@ impl Isolate {
         }
     }
 
-    /// Hands every root slot to `visit`: the root table, the string table and
-    /// the handle scope. `Isolate::Iterate` in V8.
-    ///
-    /// This is the full set of places a live object can be reachable from
-    /// without being reachable *through* another heap object. Once the
-    /// interpreter exists, its register frames join the list.
     pub fn iterate_roots(&mut self, visit: &mut impl FnMut(&mut crate::objects::tagged::Tagged)) {
         self.roots.iterate(visit);
         self.iterate_string_table(visit);
         for handle in self.handles.iter_mut() {
             visit(handle);
         }
-        // The interpreter's register file, which is why an object held only
-        // in a register is not collected.
         for slot in self.stack.iter_mut() {
             visit(slot);
         }
@@ -228,11 +178,9 @@ mod tests {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
         let slots = slots_of(&isolate, object.object());
-        // properties, elements, and the four inline property slots.
         assert_eq!(slots.len(), 2 + Map::K_INITIAL_INOBJECT_SLACK as usize);
         assert_eq!(slots[0], object.properties_or_hash_address());
         assert_eq!(slots[1], object.elements_address());
-        // Never the map word.
         assert!(!slots.contains(&object.address()));
     }
 
@@ -253,7 +201,6 @@ mod tests {
     #[test]
     fn strings_are_never_traced_as_references() {
         let mut isolate = Isolate::new();
-        // Characters that would look like tagged pointers if misread.
         let string = isolate.new_string("\u{1}\u{1}\u{1}\u{1}\u{1}\u{1}\u{1}\u{1}");
         assert!(
             slots_of(&isolate, string.object()).is_empty(),
@@ -264,7 +211,6 @@ mod tests {
     #[test]
     fn heap_numbers_are_never_traced() {
         let mut isolate = Isolate::new();
-        // A double whose bit pattern is a plausible tagged pointer.
         let number = isolate.new_heap_number(f64::from_bits(0x1_0001));
         assert!(slots_of(&isolate, number.object()).is_empty());
     }
@@ -297,7 +243,6 @@ mod tests {
         let mut isolate = Isolate::new();
         let array = isolate.new_descriptor_array(3);
         let slots = slots_of(&isolate, array.object());
-        // enum cache + (key, value) per entry.
         assert_eq!(slots.len(), 1 + 3 * 2);
         for i in 0..3 {
             assert!(slots.contains(&array.key_address(i)));
@@ -318,7 +263,6 @@ mod tests {
         assert!(seen.contains(&Smi::from_int(99)), "handles are roots");
         assert!(seen.len() > 20, "the root table itself should be in there");
 
-        // And the interpreter's registers.
         isolate.stack.push(Smi::from_int(7));
         let mut seen: Vec<Tagged> = Vec::new();
         isolate.iterate_roots(&mut |slot| seen.push(*slot));

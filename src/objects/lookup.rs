@@ -1,15 +1,3 @@
-//! Ported from `src/objects/lookup.h` / `lookup.cc`.
-//!
-//! Finding a property, and storing one. Lookup is the mirror image of a map
-//! transition: the map's descriptors say which slot a property occupies, and
-//! reading it is a map check plus one indexed load. A miss walks the
-//! prototype chain.
-//!
-//! Adding a property is not done here -- that is a shape change, and it
-//! lives with the shapes in [`crate::objects::map`]. This file decides
-//! *whether* a property is already there, and `set_property` calls
-//! `Map::TransitionToDataProperty` when it is not.
-
 use crate::execution::isolate::Isolate;
 use crate::objects::instance_type;
 use crate::objects::js_objects::JSObject;
@@ -17,17 +5,9 @@ use crate::objects::map::Map;
 use crate::objects::property_details::{PropertyDetails, Representation};
 use crate::objects::tagged::Tagged;
 
-/// Where a property was found, for the inline cache to remember.
-///
-/// This is the information V8's `LookupIterator` hands to the IC: the map
-/// that was checked and the slot to read. With both, a repeat of the same
-/// load needs no lookup at all.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PropertyLocationInfo {
-    /// The map the property was found on. For an own property that is the
-    /// receiver's map; for an inherited one, a prototype's.
     pub holder_map: Map,
-    /// The object the value actually lives on.
     pub holder: JSObject,
     pub details: PropertyDetails,
 }
@@ -41,7 +21,6 @@ impl Isolate {
     // Lookup
     // -----------------------------------------------------------------------
 
-    /// Finds an own property of `object`, without consulting its prototype.
     pub fn lookup_own_property(
         &self,
         object: JSObject,
@@ -56,11 +35,6 @@ impl Isolate {
         })
     }
 
-    /// `LookupIterator`, reduced to data properties on the prototype chain.
-    ///
-    /// Deviation: no accessors, no proxies, no interceptors, no indexed
-    /// elements. Those are each a branch in V8's state machine; `vx` has the
-    /// data-property path only. See `PORTING.md`.
     pub fn lookup_property(&self, object: JSObject, name: Tagged) -> Option<PropertyLocationInfo> {
         let mut holder = object;
         loop {
@@ -79,7 +53,6 @@ impl Isolate {
         }
     }
 
-    /// `Object::GetProperty`: the value, or `undefined` if there is none.
     pub fn get_property(&self, object: JSObject, name: Tagged) -> Tagged {
         match self.get_property_raw(object, name) {
             Some(value) => self.unwrap_cell(object, value),
@@ -87,13 +60,11 @@ impl Isolate {
         }
     }
 
-    /// Own property only -- what `Object.getOwnPropertyDescriptor` reads.
     pub fn get_own_property(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
         let value = self.get_own_property_raw(object, name)?;
         Some(self.unwrap_cell(object, value))
     }
 
-    /// The stored value, without unwrapping a global's cell.
     pub(crate) fn get_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
         let found = self.lookup_property(object, name)?;
         Some(
@@ -112,8 +83,6 @@ impl Isolate {
         )
     }
 
-    /// On the global object a property holds a `PropertyCell`, so reading it
-    /// is one hop further. Everywhere else this is the identity.
     #[inline]
     fn unwrap_cell(&self, holder: JSObject, value: Tagged) -> Tagged {
         if !self.is_global_object(holder) {
@@ -130,17 +99,7 @@ impl Isolate {
         }
     }
 
-    /// `Object::SetProperty` for the data-property case: overwrite the
-    /// property if the object already has it, otherwise transition to a map
-    /// that does.
-    ///
-    /// Returns `false` if the property could not be added because the object
-    /// is not extensible (`Object.preventExtensions`), which is the one way
-    /// this can fail without throwing.
     pub fn set_property(&mut self, object: JSObject, name: Tagged, value: Tagged) -> bool {
-        // A global's property is a cell, so the write goes through it rather
-        // than replacing it -- otherwise every cached global access would
-        // suddenly be holding a stale cell.
         if self.is_global_object(object) {
             self.store_global(name, value);
             return true;
@@ -148,8 +107,6 @@ impl Isolate {
         self.set_property_ignoring_cells(object, name, value)
     }
 
-    /// `set_property` without the global-object special case. The cell
-    /// machinery uses it to install a cell *as* a property.
     pub(crate) fn set_property_ignoring_cells(
         &mut self,
         object: JSObject,
@@ -158,7 +115,6 @@ impl Isolate {
     ) -> bool {
         let map = object.map(&self.heap);
 
-        // Already present: write the slot the map already assigned.
         if let Some(details) = map.find_property_details(&self.heap, name) {
             if details.is_read_only() {
                 return false;
@@ -173,7 +129,6 @@ impl Isolate {
             return false;
         }
 
-        // New property: find or create the map that has it.
         let representation = Representation::for_value(value);
         let new_map = self.transition_to_data_property(map, name, representation);
         let field_index = new_map
@@ -181,9 +136,6 @@ impl Isolate {
             .expect("the transition target must own the property")
             .field_index() as i32;
 
-        // Make room out of object if the inline slots are used up. This has
-        // to happen *before* the map is swapped in: between the two, the
-        // object's map would promise a field that does not exist yet.
         let inobject = new_map.inobject_properties(&self.heap);
         if field_index >= inobject {
             self.grow_property_array(object, field_index - inobject + 1);
@@ -194,9 +146,6 @@ impl Isolate {
         true
     }
 
-    // -- convenience for tests and for the builtins -------------------------
-
-    /// `o[name] = value` with a Rust string key, internalizing the name.
     pub fn set_property_by_str(&mut self, object: JSObject, name: &str, value: Tagged) -> bool {
         let key = self.internalize_string(name).tagged();
         self.set_property(object, key, value)
@@ -281,10 +230,8 @@ mod tests {
             "{{x, y}} and {{y, x}} are different shapes -- the classic \
              performance footgun"
         );
-        // Both still read back correctly.
         assert_eq!(Smi::to_int(isolate.get_property_by_str(xy, "x")), 1);
         assert_eq!(Smi::to_int(isolate.get_property_by_str(yx, "x")), 1);
-        // ...but the field indices differ.
         let x_in_xy = xy.map(&isolate.heap);
         let x_key = isolate.internalize_string("x").tagged();
         assert_eq!(
@@ -319,7 +266,6 @@ mod tests {
             "the edge must be cached on the source map"
         );
 
-        // A second object follows the edge rather than building a new map.
         let b = isolate.new_js_object();
         isolate.set_property_by_str(b, "x", Smi::from_int(9));
         assert_eq!(b.map(&isolate.heap), map1);
@@ -371,10 +317,8 @@ mod tests {
             descriptors1, descriptors2,
             "the child should append into the parent's slack, not copy"
         );
-        // Ownership moved to the tip of the chain.
         assert!(!map1.owns_descriptors(&isolate.heap));
         assert!(map2.owns_descriptors(&isolate.heap));
-        // ...and the parent still sees only its own prefix.
         assert_eq!(map1.number_of_own_descriptors(&isolate.heap), 1);
         assert_eq!(map2.number_of_own_descriptors(&isolate.heap), 2);
         let b = isolate.internalize_string("b").tagged();
@@ -392,14 +336,12 @@ mod tests {
         let inline_slots = object.map(&isolate.heap).inobject_properties(&isolate.heap);
         assert_eq!(inline_slots, Map::K_INITIAL_INOBJECT_SLACK);
 
-        // One more property than fits inline.
         let count = inline_slots + 3;
         for i in 0..count {
             let name = format!("p{i}");
             assert!(isolate.set_property_by_str(object, &name, Smi::from_int(i)));
         }
 
-        // Everything still reads back, inline or not.
         for i in 0..count {
             let name = format!("p{i}");
             assert_eq!(
@@ -488,7 +430,6 @@ mod tests {
         let prototype = isolate.new_js_object();
         isolate.set_property_by_str(prototype, "inherited", Smi::from_int(7));
 
-        // A fresh map whose prototype is that object.
         let object = isolate.new_js_object();
         isolate.set_property_by_str(object, "own", Smi::from_int(1));
         let map = object.map(&isolate.heap);
@@ -500,11 +441,9 @@ mod tests {
         );
         assert_eq!(Smi::to_int(isolate.get_property_by_str(object, "own")), 1);
 
-        // Own-property lookup does not see it.
         let inherited = isolate.internalize_string("inherited").tagged();
         assert_eq!(isolate.get_own_property(object, inherited), None);
 
-        // The holder reported is the prototype, not the receiver.
         let found = isolate.lookup_property(object, inherited).unwrap();
         assert_eq!(found.holder, prototype);
         assert_eq!(found.holder_map, prototype.map(&isolate.heap));
@@ -575,7 +514,6 @@ mod tests {
             );
         }
 
-        // Walking the back pointers gets us all the way home.
         let mut steps = 0;
         let mut current = map;
         while let Some(parent) = current.back_pointer(&isolate.heap) {
@@ -604,24 +542,12 @@ mod tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The global object
-//
-// Its properties hold `PropertyCell`s rather than values, so that a global
-// access can be cached by remembering the cell -- see
-// `crate::objects::property_cell`. Everything that reads or writes a global
-// has to unwrap, which V8 also special-cases on `JSGlobalObject`.
-// ---------------------------------------------------------------------------
-
 impl Isolate {
-    /// Whether `object` is *the* global object, whose properties are cells.
     #[inline]
     pub fn is_global_object(&self, object: JSObject) -> bool {
         self.heap.instance_type(object.object()) == instance_type::JS_GLOBAL_OBJECT_TYPE
     }
 
-    /// `JSGlobalObject::global_dictionary` lookup: the cell holding `name`,
-    /// if the global has been declared.
     pub fn global_cell(&self, name: Tagged) -> Option<crate::objects::property_cell::PropertyCell> {
         use crate::objects::property_cell::PropertyCell;
         let global = self.global_object();
@@ -634,9 +560,6 @@ impl Isolate {
         }
     }
 
-    /// Declares a global, creating its cell if it does not exist yet.
-    ///
-    /// Returns the cell, which is what a `LoadGlobalIC` caches.
     pub fn declare_global_cell(
         &mut self,
         name: Tagged,
@@ -647,15 +570,10 @@ impl Isolate {
         }
         let cell = self.new_property_cell(name, value);
         let global = self.global_object();
-        // The cell goes in as an ordinary property. Adding it reshapes the
-        // global object, which is exactly what caching the *cell* rather
-        // than the map makes harmless.
         self.set_property_ignoring_cells(global, name, cell.tagged());
         cell
     }
 
-    /// `PropertyCell::PrepareForAndSetValue`: writes through a cell and walks
-    /// its type down the lattice.
     pub fn set_global_cell_value(
         &mut self,
         cell: crate::objects::property_cell::PropertyCell,
@@ -668,14 +586,10 @@ impl Isolate {
         cell.set_value(&mut self.heap, value);
     }
 
-    /// Reads a global. `None` if it has not been declared, which is a
-    /// `ReferenceError` at the call site.
     pub fn load_global(&self, name: Tagged) -> Option<Tagged> {
         Some(self.global_cell(name)?.value(&self.heap))
     }
 
-    /// Writes a global, declaring it if necessary -- which is what `x = 1`
-    /// without a declaration does in sloppy mode.
     pub fn store_global(&mut self, name: Tagged, value: Tagged) {
         match self.global_cell(name) {
             Some(cell) => self.set_global_cell_value(cell, value),

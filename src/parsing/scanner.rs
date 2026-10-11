@@ -1,35 +1,5 @@
-//! Ported from `src/parsing/scanner.h` / `scanner.cc`.
-//!
-//! Source text in, tokens out. The structure is V8's:
-//!
-//! * `c0_` holds the current character and `Advance` pulls the next one, so
-//!   every scan routine reads exactly one character of lookahead.
-//! * Three token slots -- `current`, `next`, `next_next` -- give the parser
-//!   one token of lookahead plus a second on request. The parser needs two in
-//!   a few places (telling `async function` from an identifier called
-//!   `async`, for one), and V8 pays for exactly that much and no more.
-//! * Each slot is a [`TokenDesc`]: the token, where it was, and whatever
-//!   payload it carries (an identifier's text, a literal's value).
-//! * `has_line_terminator_before_next` is recorded while skipping
-//!   whitespace, because automatic semicolon insertion needs to know whether
-//!   a newline was crossed -- the one place where JavaScript's grammar
-//!   depends on whitespace.
-//!
-//! Deviations, tracked in `PORTING.md`:
-//!
-//! * **Scans `char`, not UTF-16 code units.** V8 scans a UTF-16 stream. The
-//!   two differ only for lone surrogates in the source text, which cannot
-//!   appear in a Rust `&str` anyway. Positions are therefore scalar-value
-//!   offsets. String *literals* are still converted to UTF-16 when they
-//!   become heap strings, so JavaScript's `length` stays correct.
-//! * No template literals, no regular expression literals, no `\u` escapes
-//!   in identifiers, no numeric separators, no BigInt.
-//! * Identifier start/continue use Rust's Unicode alphabetic classes rather
-//!   than the exact `ID_Start`/`ID_Continue` tables.
-
 use crate::parsing::token::Token;
 
-/// `Scanner::Location`: a half-open range of source positions.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Location {
     pub beg_pos: usize,
@@ -46,19 +16,12 @@ impl Location {
     }
 }
 
-/// `Scanner::TokenDesc`: one scanned token and its payload.
 #[derive(Clone, Debug)]
 pub struct TokenDesc {
     pub token: Token,
     pub location: Location,
-    /// The text of an identifier or string literal. V8 keeps this in a
-    /// scratch buffer and only materialises a heap string when the parser
-    /// asks; `vx` keeps a Rust `String`, which costs an allocation per
-    /// identifier and is the obvious thing to optimise later.
     pub literal: String,
-    /// Set for [`Token::Smi`]: the value, already known to fit.
     pub smi_value: i32,
-    /// Set for [`Token::Number`].
     pub number_value: f64,
 }
 
@@ -74,8 +37,6 @@ impl Default for TokenDesc {
     }
 }
 
-/// A message plus the place it applies to. The parser turns this into a
-/// `SyntaxError`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScannerError {
     pub message: String,
@@ -84,10 +45,7 @@ pub struct ScannerError {
 
 pub struct Scanner {
     source: Vec<char>,
-    /// Index of the character *after* `c0`.
     cursor: usize,
-    /// `Scanner::c0_`: the character under the scanner, or `None` at the end
-    /// of input.
     c0: Option<char>,
 
     current: TokenDesc,
@@ -97,12 +55,9 @@ pub struct Scanner {
     has_line_terminator_before_next: bool,
     has_line_terminator_after_next: bool,
 
-    /// The first error found. Scanning continues so the parser can report a
-    /// position, but the token stream after this is not trustworthy.
     error: Option<ScannerError>,
 }
 
-/// `Scanner::kEndOfInput` stands in for V8's sentinel; `vx` uses `None`.
 impl Scanner {
     pub fn new(source: &str) -> Scanner {
         let mut scanner = Scanner {
@@ -117,13 +72,9 @@ impl Scanner {
             error: None,
         };
         scanner.advance();
-        // `Scanner::Initialize`: prime the lookahead so `peek` is valid
-        // before the first `next`.
         scanner.scan_into_next();
         scanner
     }
-
-    // -- the token stream ---------------------------------------------------
 
     /// `Scanner::current_token`
     #[inline]
@@ -131,14 +82,11 @@ impl Scanner {
         self.current.token
     }
 
-    /// `Scanner::peek`: the next token, without consuming it.
     #[inline]
     pub fn peek(&self) -> Token {
         self.next.token
     }
 
-    /// `Scanner::PeekAhead`: the token after next. Scans it on demand, the
-    /// way V8 does -- most parses never need it.
     pub fn peek_ahead(&mut self) -> Token {
         if self.next_next.token != Token::Uninitialized {
             return self.next_next.token;
@@ -152,7 +100,6 @@ impl Scanner {
         self.next_next.token
     }
 
-    /// `Scanner::Next`: consume one token and return it.
     pub fn next(&mut self) -> Token {
         self.current = std::mem::take(&mut self.next);
         if self.next_next.token != Token::Uninitialized {
@@ -171,7 +118,6 @@ impl Scanner {
         self.next = self.scan_token();
     }
 
-    /// `Scanner::location`: where the current token is.
     #[inline]
     pub fn location(&self) -> Location {
         self.current.location
@@ -183,7 +129,6 @@ impl Scanner {
         self.next.location
     }
 
-    /// The identifier or string-literal text of the current token.
     #[inline]
     pub fn current_literal(&self) -> &str {
         &self.current.literal
@@ -208,10 +153,6 @@ impl Scanner {
         }
     }
 
-    /// `Scanner::HasLineTerminatorBeforeNext`: whether a newline was crossed
-    /// between the current token and the next one. Automatic semicolon
-    /// insertion is the only consumer, and the only reason the scanner has to
-    /// remember anything about whitespace.
     #[inline]
     pub fn has_line_terminator_before_next(&self) -> bool {
         self.has_line_terminator_before_next
@@ -239,19 +180,16 @@ impl Scanner {
         self.cursor += 1;
     }
 
-    /// Position of `c0` in the source.
     #[inline]
     fn position(&self) -> usize {
         self.cursor.saturating_sub(1)
     }
 
-    /// The character after `c0`, without consuming anything.
     #[inline]
     fn peek_char(&self) -> Option<char> {
         self.source.get(self.cursor).copied()
     }
 
-    /// `Scanner::AdvanceUntil`-style helper: consume `c0` if it is `expected`.
     #[inline]
     fn advance_if(&mut self, expected: char) -> bool {
         if self.c0 == Some(expected) {
@@ -262,8 +200,6 @@ impl Scanner {
         }
     }
 
-    /// `unibrow::IsLineTerminator`. JavaScript counts four characters as line
-    /// terminators, not just `\n`.
     #[inline]
     fn is_line_terminator(c: char) -> bool {
         matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
@@ -292,8 +228,6 @@ impl Scanner {
 
     // -- skipping -----------------------------------------------------------
 
-    /// `Scanner::SkipWhiteSpace`, which also skips comments, since both are
-    /// invisible to the grammar and both can contain line terminators.
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             while let Some(c) = self.c0 {
@@ -339,9 +273,6 @@ impl Scanner {
         self.advance(); // '*'
         while let Some(c) = self.c0 {
             if Self::is_line_terminator(c) {
-                // A newline inside a block comment still counts for
-                // semicolon insertion, which is why this is tracked here and
-                // not only in `skip_whitespace_and_comments`.
                 self.has_line_terminator_before_next = true;
             }
             if c == '*' && self.peek_char() == Some('/') {
@@ -359,7 +290,6 @@ impl Scanner {
 
     // -- scanning -----------------------------------------------------------
 
-    /// `Scanner::Scan`: the dispatch on `c0`.
     fn scan_token(&mut self) -> TokenDesc {
         self.skip_whitespace_and_comments();
         let beg_pos = self.position();
@@ -368,8 +298,6 @@ impl Scanner {
             return self.make(Token::Eos, beg_pos);
         };
 
-        // Single- and multi-character punctuators. Each arm consumes exactly
-        // what it matched, longest first -- `>>>=` before `>>>` before `>>`.
         match c {
             '(' => {
                 self.advance();
@@ -419,7 +347,6 @@ impl Scanner {
                     self.advance();
                     return self.make(Token::Ellipsis, beg_pos);
                 }
-                // `.5` is a number, not a member access.
                 if self.c0.is_some_and(|c| c.is_ascii_digit()) {
                     return self.scan_number(beg_pos, true);
                 }
@@ -434,8 +361,6 @@ impl Scanner {
                     }
                     return self.make(Token::Nullish, beg_pos);
                 }
-                // `?.` is optional chaining, but `?.5` is a conditional
-                // followed by a number -- the lookahead matters.
                 if self.c0 == Some('.') && !self.peek_char().is_some_and(|c| c.is_ascii_digit()) {
                     self.advance();
                     return self.make(Token::QuestionPeriod, beg_pos);
@@ -477,7 +402,6 @@ impl Scanner {
                 self.make(Token::Mul, beg_pos)
             }
             '/' => {
-                // Comments were already skipped, so this is division.
                 self.advance();
                 if self.advance_if('=') {
                     return self.make(Token::AssignDiv, beg_pos);
@@ -717,15 +641,11 @@ impl Scanner {
                 out.push(char::from_u32(value).unwrap_or('\u{fffd}'));
             }
             'u' => self.scan_unicode_escape(out, beg_pos),
-            // A backslash before a newline is a line continuation: the
-            // newline is simply dropped.
             c if Self::is_line_terminator(c) => {
                 if c == '\r' {
                     self.advance_if('\n');
                 }
             }
-            // Anything else stands for itself, which is what makes `\'`,
-            // `\"` and `\\` work without listing them.
             other => out.push(other),
         }
     }
@@ -767,18 +687,10 @@ impl Scanner {
         }
         match char::from_u32(value) {
             Some(c) => out.push(c),
-            // A lone surrogate. V8 can hold one in a two-byte string;
-            // `vx`'s literals go through Rust `String`, which cannot, so it
-            // becomes the replacement character. Noted in `PORTING.md`.
             None => out.push('\u{fffd}'),
         }
     }
 
-    /// `Scanner::ScanNumber`.
-    ///
-    /// Produces [`Token::Smi`] when the value is an integer that fits in a
-    /// Smi, and [`Token::Number`] otherwise. The split is not cosmetic: a Smi
-    /// literal compiles to `LdaSmi`, with no allocation at all.
     fn scan_number(&mut self, beg_pos: usize, seen_period: bool) -> TokenDesc {
         let mut text = String::new();
         let mut is_integer = !seen_period;
@@ -816,16 +728,12 @@ impl Scanner {
                     );
                     return self.make(Token::Illegal, beg_pos);
                 }
-                // Parse as u128 first so a long literal becomes a double
-                // rather than overflowing.
                 let value = match u128::from_str_radix(&digits, radix) {
                     Ok(value) => value as f64,
                     Err(_) => f64::INFINITY,
                 };
                 return self.finish_number(beg_pos, value, true);
             }
-            // A leading zero followed by digits is a legacy octal in sloppy
-            // mode. `vx` reads it as decimal and notes the divergence.
             while self.c0.is_some_and(|c| c.is_ascii_digit()) {
                 text.push(self.c0.unwrap());
                 self.advance();
@@ -868,8 +776,6 @@ impl Scanner {
             }
         }
 
-        // A number may not be followed immediately by an identifier
-        // character: `3in` is a syntax error, not `3 in`.
         if self.c0.is_some_and(Self::is_identifier_start) {
             self.report_error(
                 "identifier starts immediately after a numeric literal",
@@ -904,7 +810,6 @@ impl Scanner {
         }
     }
 
-    /// Scans the whole input, for tests and for `vx tokens`.
     pub fn tokenize_all(source: &str) -> (Vec<TokenDesc>, Option<ScannerError>) {
         let mut scanner = Scanner::new(source);
         let mut tokens = Vec::new();
@@ -920,11 +825,6 @@ impl Scanner {
     }
 }
 
-/// `Scanner::KeywordOrIdentifierToken`.
-///
-/// V8 hand-writes a switch on the length and first character so that the
-/// common case -- an identifier -- is rejected after one comparison. A match
-/// on the string is the same decision tree, written by the compiler.
 fn keyword_or_identifier_token(literal: &str) -> Token {
     match literal {
         "break" => Token::Break,
@@ -963,9 +863,6 @@ fn keyword_or_identifier_token(literal: &str) -> Token {
         "void" => Token::Void,
         "while" => Token::While,
         "with" => Token::With,
-        // Contextual keywords: their own token, but usable as identifiers
-        // wherever the grammar does not give them a role. See
-        // `Token::is_valid_identifier`.
         "accessor" => Token::Accessor,
         "async" => Token::Async,
         "await" => Token::Await,
@@ -976,7 +873,6 @@ fn keyword_or_identifier_token(literal: &str) -> Token {
         "static" => Token::Static,
         "using" => Token::Using,
         "yield" => Token::Yield,
-        // Reserved in strict mode only.
         "implements" | "interface" | "package" | "private" | "protected" | "public" => {
             Token::FutureStrictReservedWord
         }
@@ -1009,8 +905,6 @@ mod tests {
 
     #[test]
     fn punctuators_scan_longest_first() {
-        // The classic scanner trap: every prefix has to lose to the longer
-        // match.
         assert_eq!(scan_one(">").token, Token::GreaterThan);
         assert_eq!(scan_one(">=").token, Token::GreaterThanEq);
         assert_eq!(scan_one(">>").token, Token::Sar);
@@ -1046,8 +940,6 @@ mod tests {
 
     #[test]
     fn optional_chaining_versus_a_conditional_followed_by_a_number() {
-        // `a?.5:1` is a conditional, not optional chaining -- the scanner
-        // needs two characters of lookahead to tell.
         assert_eq!(
             tokens("a?.5:1"),
             vec![
@@ -1078,7 +970,6 @@ mod tests {
         assert_eq!(scan_one("null").token, Token::NullLiteral);
         assert_eq!(scan_one("true").token, Token::TrueLiteral);
         assert_eq!(scan_one("instanceof").token, Token::InstanceOf);
-        // Near misses are identifiers.
         assert_eq!(scan_one("iff").token, Token::Identifier);
         assert_eq!(scan_one("functio").token, Token::Identifier);
         assert_eq!(scan_one("Function").token, Token::Identifier);
@@ -1096,7 +987,6 @@ mod tests {
             ("static", Token::Static),
         ] {
             assert_eq!(scan_one(source).token, expected, "{source}");
-            // ...and is still allowed where an identifier is expected.
             assert!(
                 expected.is_valid_identifier(false, false, false),
                 "{source}"
@@ -1115,7 +1005,6 @@ mod tests {
             assert_eq!(desc.token, Token::Identifier, "{source}");
             assert_eq!(desc.literal, source);
         }
-        // ...but not with a digit.
         assert_ne!(scan_one("1").token, Token::Identifier);
     }
 
@@ -1126,7 +1015,6 @@ mod tests {
         assert_eq!(scan_one("42").smi_value, 42);
         assert_eq!(scan_one("2147483647").smi_value, i32::MAX);
 
-        // Just past Smi range.
         let big = scan_one("2147483648");
         assert_eq!(big.token, Token::Number);
         assert_eq!(big.number_value, 2147483648.0);
@@ -1176,8 +1064,6 @@ mod tests {
                 Token::Eos
             ]
         );
-        // `1..toString()` -- the first period ends the number, the second is
-        // a member access.
         assert_eq!(
             tokens("1..x"),
             vec![Token::Number, Token::Period, Token::Identifier, Token::Eos]
@@ -1198,9 +1084,7 @@ mod tests {
         assert_eq!(scan_one(r"'A'").literal, "A");
         assert_eq!(scan_one(r"'\u{1f600}'").literal, "😀");
         assert_eq!(scan_one(r"'\0'").literal, "\0");
-        // An unknown escape stands for itself.
         assert_eq!(scan_one(r"'\q'").literal, "q");
-        // A quote of the other kind needs no escaping.
         assert_eq!(scan_one("'say \"hi\"'").literal, "say \"hi\"");
     }
 
@@ -1215,7 +1099,6 @@ mod tests {
         assert!(error.is_some());
         assert!(error.unwrap().message.contains("unterminated string"));
 
-        // A raw newline inside a string is also unterminated.
         let (_, error) = Scanner::tokenize_all("'oops\n'");
         assert!(error.is_some());
     }
@@ -1235,7 +1118,6 @@ mod tests {
             tokens("a /* multi\nline */ b"),
             vec![Token::Identifier, Token::Identifier, Token::Eos]
         );
-        // A `/` that is not a comment is division.
         assert_eq!(
             tokens("a / b"),
             vec![Token::Identifier, Token::Div, Token::Identifier, Token::Eos]
@@ -1267,7 +1149,6 @@ mod tests {
 
     #[test]
     fn a_newline_inside_a_block_comment_still_counts() {
-        // `return /*\n*/ 1` must insert a semicolon after `return`.
         let mut scanner = Scanner::new("return /*\n*/ 1");
         assert_eq!(scanner.next(), Token::Return);
         assert!(scanner.has_line_terminator_before_next());
@@ -1297,10 +1178,8 @@ mod tests {
         let mut scanner = Scanner::new("a + b");
         assert_eq!(scanner.peek(), Token::Identifier);
         assert_eq!(scanner.peek_ahead(), Token::Add);
-        // Peeking twice is stable.
         assert_eq!(scanner.peek(), Token::Identifier);
         assert_eq!(scanner.peek_ahead(), Token::Add);
-        // ...and the stream is unaffected.
         assert_eq!(scanner.next(), Token::Identifier);
         assert_eq!(scanner.next(), Token::Add);
         assert_eq!(scanner.next(), Token::Identifier);
@@ -1309,7 +1188,6 @@ mod tests {
 
     #[test]
     fn lookahead_preserves_the_line_terminator_flag() {
-        // Peeking ahead must not lose the newline between `a` and `b`.
         let mut scanner = Scanner::new("a\nb c");
         scanner.next(); // a
         assert!(scanner.has_line_terminator_before_next());
@@ -1345,7 +1223,6 @@ mod tests {
     #[test]
     fn a_realistic_program_scans_cleanly() {
         let source = r#"
-            // Compute a few factorials.
             function factorial(n) {
               if (n <= 1) return 1;
               return n * factorial(n - 1);
@@ -1361,7 +1238,6 @@ mod tests {
         assert_eq!(descs.last().unwrap().token, Token::Eos);
         assert!(!descs.iter().any(|d| d.token == Token::Illegal));
 
-        // Spot-check the shape of the stream.
         let stream: Vec<Token> = descs.iter().map(|d| d.token).collect();
         assert_eq!(stream[0], Token::Function);
         assert_eq!(stream[1], Token::Identifier);
@@ -1373,7 +1249,6 @@ mod tests {
 
     #[test]
     fn a_number_followed_by_an_identifier_is_rejected() {
-        // `3in` is a syntax error, not `3 in`.
         let (_, error) = Scanner::tokenize_all("3in x");
         assert!(error.is_some());
         assert!(error.unwrap().message.contains("identifier starts"));

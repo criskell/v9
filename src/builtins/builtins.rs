@@ -1,10 +1,3 @@
-//! Ported from `src/builtins/builtins.h`, in miniature.
-//!
-//! V8's builtins are generated code -- Torque or CSA compiled into the
-//! snapshot -- and there are well over a thousand of them. `vx` has a handful
-//! written in Rust, named by this enum and reached through a
-//! `SharedFunctionInfo` whose `function_data` holds the id.
-
 use crate::execution::isolate::Isolate;
 use crate::interpreter::interpreter::{ExecutionResult, Thrown};
 use crate::objects::tagged::Tagged;
@@ -45,7 +38,6 @@ impl Builtin {
 }
 
 impl Isolate {
-    /// Runs a builtin. `args` excludes the receiver.
     pub fn call_builtin(&mut self, builtin: Builtin, args: &[Tagged]) -> ExecutionResult {
         let argument = |index: usize| args.get(index).copied();
         match builtin {
@@ -67,8 +59,6 @@ impl Isolate {
                 Ok(self.new_number(value.abs()))
             }
             Builtin::MathMax => {
-                // `Math.max()` with no arguments is -Infinity, which is the
-                // identity for max -- not NaN.
                 let mut result = f64::NEG_INFINITY;
                 for value in args {
                     let number = self.to_number(*value);
@@ -115,9 +105,6 @@ impl Isolate {
         }
     }
 
-    /// How a value prints at the console. Differs from `ToString` in one
-    /// place that matters for reading output: a string argument to
-    /// `console.log` is printed bare, not quoted.
     pub fn to_display(&mut self, value: Tagged) -> String {
         self.to_string(value)
     }
@@ -159,7 +146,6 @@ mod tests {
 
     #[test]
     fn max_with_no_arguments_is_negative_infinity() {
-        // The identity for max, which is what the spec says -- not NaN.
         let mut isolate = Isolate::new();
         let result = isolate.call_builtin(Builtin::MathMax, &[]).unwrap();
         assert_eq!(isolate.to_number(result), f64::NEG_INFINITY);

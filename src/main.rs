@@ -1,10 +1,3 @@
-//! `vx` command line.
-//!
-//! There is no parser yet, so this cannot take a `.js` file. What it does is
-//! drive the engine through its API and show what the heap and the object
-//! model are actually doing -- the equivalent of V8's `--trace-maps`,
-//! `--trace-gc` and `--print-heap` output, on a worked example.
-
 use vx::ast::prettyprinter::AstPrinter;
 use vx::execution::isolate::Isolate;
 use vx::heap::heap::Heap;
@@ -87,18 +80,14 @@ fn print_ast(_path: &str, source: &str) {
     }
 }
 
-/// Runs a script, the way `d8 file.js` does.
 fn run_file(_path: &str, source: &str) {
     let mut isolate = Isolate::new();
     let result = isolate.run_script(source);
-    // Whatever the script printed comes out even if it then threw.
     for line in isolate.take_output() {
         println!("{line}");
     }
     match result {
         Ok(value) => {
-            // A completion value of undefined is not worth printing, the way
-            // a REPL suppresses it.
             if value != isolate.undefined_value() {
                 println!("{}", isolate.to_string(value));
             }
@@ -110,7 +99,6 @@ fn run_file(_path: &str, source: &str) {
     }
 }
 
-/// `--trace-ic`: run a script and report what its caches learned.
 fn trace_ic(_path: &str, source: &str) {
     let mut isolate = Isolate::new();
     isolate.trace_ic_enabled = true;
@@ -159,8 +147,6 @@ fn trace_ic(_path: &str, source: &str) {
         statistics.property.megamorphic_transitions
     );
 
-    // The shared table is counted apart: a hit here means a *different* site
-    // had already resolved the same (map, name) pair.
     let (primary, secondary, misses, updates) = isolate.stub_cache_statistics();
     let (primary_used, secondary_used) = isolate.stub_cache_occupancy();
     println!(
@@ -249,7 +235,6 @@ fn describe_map(isolate: &Isolate, map: Map) -> String {
     )
 }
 
-/// `--trace-maps`: watch an object change shape.
 fn trace_maps() {
     let mut isolate = Isolate::new();
 
@@ -290,12 +275,10 @@ fn trace_maps() {
         a.map(&isolate.heap) == c.map(&isolate.heap)
     );
 
-    // Walk the transition graph out of the empty-object map.
     println!();
     println!("Transition graph from the initial object map:");
     print_transitions(&isolate, isolate.roots.js_object_map(), 1);
 
-    // Spilling out of the inline slots.
     println!();
     let wide = isolate.new_js_object();
     let inline = wide.map(&isolate.heap).inobject_properties(&isolate.heap);
@@ -342,11 +325,9 @@ fn print_transitions(isolate: &Isolate, map: Map, depth: usize) {
     }
 }
 
-/// `--trace-gc`: a scavenge, with the survivors.
 fn trace_gc() {
     let mut isolate = Isolate::with_heap(Heap::with_config(vx::heap::heap::HeapConfig {
         read_only_space_size: 512 * 1024,
-        // A small nursery, so the example is legible.
         semi_space_size: 16 * 1024,
         initial_old_space_size: 1024 * 1024,
         max_old_space_size: 64 * 1024 * 1024,
@@ -355,15 +336,12 @@ fn trace_gc() {
     println!("== garbage collection ==");
     println!();
 
-    // One object graph we keep, parked in the handle scope so the collector
-    // treats it as a root.
     let kept = isolate.new_js_object();
     let inner = isolate.new_js_object();
     isolate.set_property_by_str(inner, "deep", Smi::from_int(42));
     isolate.set_property_by_str(kept, "inner", inner.tagged());
     isolate.handles.push(kept.tagged());
 
-    // ...and a pile we do not.
     for i in 0..200 {
         isolate.new_heap_number(i as f64 + 0.5);
     }
@@ -416,7 +394,6 @@ fn trace_gc() {
 
         address_before = address_after;
 
-        // More garbage for the next round.
         for i in 0..50 {
             isolate.new_heap_number(i as f64);
         }
@@ -425,7 +402,6 @@ fn trace_gc() {
 
 fn print_heap() {
     let mut isolate = Isolate::new();
-    // Put something in it first, so the numbers mean something.
     for i in 0..100 {
         let object = isolate.new_js_object();
         isolate.set_property_by_str(object, "x", Smi::from_int(i));

@@ -1,50 +1,8 @@
-//! Ported from `src/ast/scopes.h` / `scopes.cc`.
-//!
-//! Scope analysis: deciding, for each variable, *where it lives*.
-//!
-//! The question that matters
-//! -------------------------
-//! A local normally lives in a register -- fast, and gone when the function
-//! returns. But if an inner function refers to it, it has to outlive the
-//! frame:
-//!
-//! ```js
-//! function makeCounter() {
-//!   var n = 0;                       // cannot be a register
-//!   return function () { return ++n; };
-//! }
-//! ```
-//!
-//! So scope analysis asks one question per variable: *does anything inside a
-//! nested function reference it?* If not, it is a register
-//! ([`VariableLocation::Local`]). If so, it is promoted to a slot in a heap
-//! [`Context`](crate::objects::contexts::Context), shared by the frame and
-//! every closure created in it.
-//!
-//! That is the whole mechanism, and it is why closures cost nothing in
-//! JavaScript until one actually captures something.
-//!
-//! How references are resolved
-//! ---------------------------
-//! A reference can precede its declaration (`x = 1; var x;`), so a name
-//! cannot be resolved where it is seen. Each scope collects the names it
-//! could not resolve and hands them outward when it closes -- V8's
-//! `Scope::ResolveVariablesRecursively`. Crossing a function boundary on the
-//! way out is exactly what marks the variable as needing a context.
-//!
-//! Deviations, tracked in `PORTING.md`: only function scopes. V8 also has
-//! block, eval, with, catch, class and module scopes, which is what makes
-//! `let` block-scoped and gives it a temporal dead zone. `vx` gives
-//! `let`/`const` function scope, so neither is enforced. No `eval`, so no
-//! dynamic lookup (`VariableLocation::LOOKUP`).
-
 use crate::ast::ast::VariableMode;
 use crate::common::globals::VariableLocation;
 
-/// `ScopeType`, restricted to what `vx` has.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ScopeKind {
-    /// The top level. Its variables are globals, not registers.
     Script,
     Function,
 }
@@ -55,16 +13,9 @@ pub struct Variable {
     pub name: String,
     pub mode: VariableMode,
     pub location: VariableLocation,
-    /// A register number, a parameter index or a context slot, depending on
-    /// `location`.
     pub index: i32,
-    /// `Variable::ForceContextAllocation`: something inside a nested
-    /// function refers to this, so a register will not do.
     pub force_context_allocation: bool,
-    /// Parameters keep their frame slot even when also context-allocated;
-    /// the generator copies them in at function entry.
     pub is_parameter: bool,
-    /// The parameter's position, for that copy.
     pub parameter_index: i32,
 }
 
@@ -98,17 +49,9 @@ impl Variable {
 pub struct Scope {
     pub kind: ScopeKind,
     variables: Vec<Variable>,
-    /// Names referenced here that no declaration in this scope matched.
-    /// Handed to the enclosing scope when this one closes.
     unresolved: Vec<String>,
-    /// `Scope::num_heap_slots`, after allocation: how many variables ended
-    /// up in the context.
     context_slot_count: i32,
-    /// Registers needed for the locals that stayed in the frame.
     local_count: i32,
-    /// `Scope::NeedsContext`. A scope with no captured variable allocates no
-    /// context at all, and a closure created in it simply keeps using the
-    /// context it was created in -- which is why depth counting skips these.
     needs_context: bool,
     allocated: bool,
 }
@@ -126,8 +69,6 @@ impl Scope {
         }
     }
 
-    /// `Scope::DeclareVariable`. Re-declaring a `var` is legal and refers to
-    /// the same binding, so this is idempotent by name.
     pub fn declare(&mut self, name: &str, mode: VariableMode) -> usize {
         if let Some(index) = self.variables.iter().position(|v| v.name == name) {
             return index;
@@ -145,8 +86,6 @@ impl Scope {
         index
     }
 
-    /// Records a reference. Resolved here if possible, otherwise remembered
-    /// for the enclosing scope.
     pub fn record_reference(&mut self, name: &str) {
         if self.lookup_local(name).is_some() {
             return;
@@ -185,8 +124,6 @@ impl Scope {
         self.local_count
     }
 
-    /// The names that are context-allocated, in slot order. Becomes the
-    /// `ScopeInfo`.
     pub fn context_local_names(&self) -> Vec<String> {
         let mut names: Vec<(i32, String)> = self
             .variables
@@ -198,8 +135,6 @@ impl Scope {
         names.into_iter().map(|(_, name)| name).collect()
     }
 
-    /// Parameters that also live in the context, so the generator knows to
-    /// copy them in at entry.
     pub fn context_allocated_parameters(&self) -> Vec<(i32, i32)> {
         self.variables
             .iter()
@@ -209,11 +144,6 @@ impl Scope {
     }
 }
 
-/// The scope chain the parser maintains, innermost last.
-///
-/// Stands in for V8's `Scope` tree with parent pointers: `vx` only ever
-/// needs the path from the root to the scope being parsed, and a stack is
-/// that path.
 #[derive(Debug, Default)]
 pub struct ScopeChain {
     scopes: Vec<Scope>,
@@ -236,36 +166,20 @@ impl ScopeChain {
         self.scopes.len()
     }
 
-    /// `Scope::ResolveVariablesRecursively` for one scope, then
-    /// `Scope::AllocateVariables`.
-    ///
-    /// Closes the innermost scope: every name it could not resolve is looked
-    /// for outward, and **finding one across a function boundary is what
-    /// forces that variable into a context**. Names found nowhere are
-    /// globals, and names still unresolved are handed to the parent so the
-    /// search continues when *it* closes.
     pub fn pop(&mut self) -> Scope {
         let mut scope = self.scopes.pop().expect("a scope is open");
 
         let unresolved = std::mem::take(&mut scope.unresolved);
         for name in unresolved {
             let mut found = false;
-            // Search outward, innermost enclosing scope first.
             for outer in self.scopes.iter_mut().rev() {
                 if let Some(variable) = outer.lookup_local_mut(&name) {
-                    // The reference crossed a function boundary to get here,
-                    // so a register in that frame would be gone by the time
-                    // the closure runs.
                     variable.force_context_allocation = true;
                     found = true;
                     break;
                 }
             }
             if !found {
-                // Not declared anywhere on the chain yet. It may still be
-                // declared in an enclosing scope that has not finished
-                // parsing, so hand it on; if it reaches the top unresolved,
-                // it is a global.
                 if let Some(parent) = self.scopes.last_mut() {
                     parent.record_reference(&name);
                 }
@@ -276,19 +190,12 @@ impl ScopeChain {
         scope
     }
 
-    /// Closes the last scope without an enclosing one: the script.
     pub fn pop_root(&mut self) -> Scope {
         debug_assert_eq!(self.scopes.len(), 1);
         self.pop()
     }
 }
 
-/// `Scope::AllocateVariables`.
-///
-/// Every variable is given its storage: a context slot if anything captured
-/// it, a register otherwise. At the script level there are no registers to
-/// give -- a top-level `var` is a property of the global object -- so those
-/// stay unallocated and the generator emits a global access.
 pub fn allocate_variables(scope: &mut Scope) {
     let mut context_slots = 0;
     let mut locals = 0;
@@ -302,15 +209,12 @@ pub fn allocate_variables(scope: &mut Scope) {
             continue;
         }
         match scope.kind {
-            // A top-level declaration is a global, not a frame slot.
             ScopeKind::Script => {
                 variable.location = VariableLocation::Unallocated;
                 variable.index = -1;
             }
             ScopeKind::Function => {
                 if variable.is_parameter {
-                    // `Scope::AllocateParameter`: it is already in the
-                    // frame, so nothing to allocate.
                     variable.location = VariableLocation::Parameter;
                     variable.index = variable.parameter_index;
                 } else {
@@ -351,7 +255,6 @@ mod tests {
 
     #[test]
     fn a_local_an_inner_function_captures_is_promoted_to_the_context() {
-        // The whole mechanism, in one test.
         let mut chain = ScopeChain::new();
         chain.push(ScopeKind::Function); // makeCounter
         chain.current().declare("n", VariableMode::Var);
@@ -375,8 +278,6 @@ mod tests {
 
     #[test]
     fn a_reference_may_precede_its_declaration() {
-        // `function f() { x = 1; var x; }` -- resolution cannot happen where
-        // the reference is seen.
         let mut chain = ScopeChain::new();
         chain.push(ScopeKind::Function);
         chain.current().record_reference("x");
@@ -391,9 +292,6 @@ mod tests {
 
     #[test]
     fn capture_propagates_through_an_intermediate_function() {
-        // `a` is referenced two functions down. The variable has to go in
-        // the *declaring* scope's context, and the scope in between gets no
-        // context of its own because it captures nothing.
         let mut chain = ScopeChain::new();
         chain.push(ScopeKind::Function); // declares a
         chain.current().declare("a", VariableMode::Var);
@@ -479,9 +377,6 @@ mod tests {
 
     #[test]
     fn a_captured_top_level_variable_still_goes_in_a_context() {
-        // Even at the script level: if a function captures it, a global
-        // would be observable as `globalThis.x`, but the *binding* still has
-        // to be shared, so the context wins.
         let mut chain = ScopeChain::new();
         chain.push(ScopeKind::Script);
         chain.current().declare("x", VariableMode::Var);

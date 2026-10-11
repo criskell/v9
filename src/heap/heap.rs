@@ -6,29 +6,17 @@ use crate::heap::spaces::AllocationSpace;
 use crate::objects::map_word::MapWord;
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
-/// `AllocationType` from `src/common/globals.h`, restricted to the kinds
-/// `vx` can satisfy.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AllocationType {
-    /// `kYoung`: allocated in new space, expected to die young.
     Young,
-    /// `kOld`: allocated tenured, skipping the nursery.
     Old,
-    /// `kMap`: V8 puts maps in old space; `vx` puts them in read-only space
-    /// so that a map pointer is immovable and the scavenger never has to
-    /// consider relocating one.
     Map,
-    /// `kReadOnly`: immortal and immovable.
     ReadOnly,
 }
 
-/// How the arena is carved up. The defaults are small on purpose: a tiny
-/// nursery means the scavenger runs often, which is exactly what you want
-/// when exercising a young collector.
 #[derive(Copy, Clone, Debug)]
 pub struct HeapConfig {
     pub read_only_space_size: usize,
-    /// Size of *each* semi-space. New space commits twice this.
     pub semi_space_size: usize,
     pub initial_old_space_size: usize,
     pub max_old_space_size: usize,
@@ -46,18 +34,14 @@ impl Default for HeapConfig {
 }
 
 pub struct Heap {
-    /// The single reservation backing every space.
     memory: Vec<u8>,
     config: HeapConfig,
 
     read_only_space: ReadOnlySpace,
-    /// `Heap::new_space_`: both halves of the nursery, and the age mark that
-    /// separates the survivors from the objects allocated since.
     new_space: SemiSpaceNewSpace,
     /// `Heap::old_space_`
     old_space: PagedSpace,
 
-    /// Statistics, for `--trace-gc`.
     pub gc_count: usize,
     pub bytes_promoted: usize,
     pub bytes_evacuated: usize,
@@ -69,8 +53,6 @@ impl Heap {
     }
 
     pub fn with_config(config: HeapConfig) -> Heap {
-        // Address 0 is reserved: one word of guard so that kNullAddress is
-        // never a valid object address.
         let guard = K_OBJECT_ALIGNMENT as usize;
 
         let read_only_start = guard as Address;
@@ -125,7 +107,6 @@ impl Heap {
         &mut self.new_space
     }
 
-    /// Which space holds `address`, or `None` if it is not a heap address.
     pub fn space_of(&self, address: Address) -> Option<AllocationSpace> {
         if self.read_only_space.contains(address) {
             return Some(AllocationSpace::ReadOnlySpace);
@@ -142,15 +123,11 @@ impl Heap {
         None
     }
 
-    /// `Heap::InYoungGeneration`. The scavenger's central question: only
-    /// young objects are evacuated, so this decides whether a reference needs
-    /// updating at all.
     #[inline]
     pub fn in_young_generation(&self, object: HeapObject) -> bool {
         self.new_space.contains(object.address())
     }
 
-    /// Whether `object` lives in the half currently being evacuated.
     #[inline]
     pub fn in_from_space(&self, object: HeapObject) -> bool {
         self.new_space.from_space().contains(object.address())
@@ -163,12 +140,6 @@ impl Heap {
 
     // -- Allocation ---------------------------------------------------------
 
-    /// `Heap::AllocateRaw`.
-    ///
-    /// Returns `None` when the target space is full. Triggering a collection
-    /// and retrying is the caller's job (see `Factory`), because only the
-    /// caller knows which values are rooted and therefore whether it is safe
-    /// to let objects move.
     pub fn allocate_raw(
         &mut self,
         size_in_bytes: usize,
@@ -178,8 +149,6 @@ impl Heap {
         let address = match allocation {
             AllocationType::Young => self.new_space.allocate_raw(size_in_bytes),
             AllocationType::Old => self.allocate_in_old_space(size_in_bytes),
-            // Maps and other immortal objects go to read-only space, where
-            // nothing ever moves.
             AllocationType::Map | AllocationType::ReadOnly => {
                 self.read_only_space.allocate_raw(size_in_bytes)
             }
@@ -187,8 +156,6 @@ impl Heap {
         Some(HeapObject::from_address(address))
     }
 
-    /// Old space is the last reservation in the arena, so it can grow simply
-    /// by extending the arena -- offsets stay valid across the reallocation.
     fn allocate_in_old_space(&mut self, size_in_bytes: usize) -> Option<Address> {
         if let Some(address) = self.old_space.allocate_raw(size_in_bytes) {
             return Some(address);
@@ -200,8 +167,6 @@ impl Heap {
         self.old_space.allocate_raw(size_in_bytes)
     }
 
-    /// `Heap::AllocateRawOrFail`, for the bootstrap paths where failure means
-    /// the configuration is simply too small to start up.
     pub fn allocate_raw_or_fail(
         &mut self,
         size_in_bytes: usize,
@@ -221,12 +186,6 @@ impl Heap {
             ),
         }
     }
-
-    // -- Raw memory access --------------------------------------------------
-    //
-    // These stand in for V8's `TaggedField` / `ReadField` / `WriteField`. The
-    // bounds and alignment checks are the point: an address that does not
-    // name a slot inside the arena cannot be read at all.
 
     #[inline]
     fn index(&self, address: Address, width: usize) -> usize {
@@ -313,9 +272,6 @@ impl Heap {
 
     #[inline]
     pub fn write_f64(&mut self, address: Address, value: f64) {
-        // `to_bits` rather than a transmute so that a NaN payload -- which is
-        // how JavaScript's hole and V8's signalling NaN survive a round trip
-        // through the heap -- is preserved exactly.
         self.write_u64(address, value.to_bits());
     }
 
@@ -331,16 +287,12 @@ impl Heap {
         self.memory[i..i + bytes.len()].copy_from_slice(bytes);
     }
 
-    /// Copies `length` bytes within the arena. Used by the scavenger to
-    /// evacuate an object, and by string flattening.
     pub fn copy_within(&mut self, from: Address, to: Address, length: usize) {
         let src = self.index(from, length);
         let dst = self.index(to, length);
         self.memory.copy_within(src..src + length, dst);
     }
 
-    /// Overwrites a range with zeroes, which decodes as a run of Smi zeroes
-    /// and is therefore always safe for the GC to walk.
     pub fn zero_range(&mut self, address: Address, length: usize) {
         let i = self.index(address, length);
         self.memory[i..i + length].fill(0);
@@ -360,9 +312,6 @@ impl Heap {
         self.write_u64(object.address(), map_word.ptr());
     }
 
-    /// `HeapObject::map`. Panics if the object has been evacuated, because
-    /// reading a map out of a forwarded object is always a bug outside the
-    /// scavenger itself.
     #[inline]
     pub fn map(&self, object: HeapObject) -> HeapObject {
         let word = self.map_word(object);
@@ -504,19 +453,15 @@ mod tests {
             assert!(count < 1000, "new space should have filled up by now");
         }
         assert_eq!(count, 1024 / 16);
-        // Old space is unaffected: failure is per-space, and it is the
-        // caller's job to decide to collect.
         assert!(heap.allocate_raw(16, AllocationType::Old).is_some());
     }
 
     #[test]
     fn old_space_grows_and_offsets_stay_valid_across_the_reallocation() {
         let mut heap = small_heap();
-        // Write a recognisable value into the first old-space object.
         let first = heap.allocate_raw_or_fail(16, AllocationType::Old);
         heap.write_tagged(first.address(), Smi::from_int(0x1234));
 
-        // Fill and overflow old space, forcing the arena to be reallocated.
         let mut last = first;
         for _ in 0..512 {
             last = heap.allocate_raw_or_fail(16, AllocationType::Old);
@@ -526,7 +471,6 @@ mod tests {
             "old space should have grown"
         );
 
-        // The offset recorded before the growth still names the same object.
         assert_eq!(Smi::to_int(heap.read_tagged(first.address())), 0x1234);
         assert_ne!(first, last);
         assert_eq!(
@@ -656,7 +600,6 @@ mod tests {
 
         heap.new_space_mut().swap_semi_spaces();
 
-        // The object did not move; its half changed role.
         assert!(heap.in_from_space(young));
         assert!(
             heap.in_young_generation(young),
