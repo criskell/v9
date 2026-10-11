@@ -235,6 +235,56 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::Mov, &[from.to_operand(), to.to_operand()])
     }
 
+    // -- contexts ------------------------------------------------------------
+
+    /// `BytecodeArrayBuilder::CreateFunctionContext`.
+    ///
+    /// The names go in the constant pool as a `ScopeInfo`; `slots` is how
+    /// many variables the context holds, excluding the fixed header.
+    pub fn create_function_context(&mut self, names: &[String], slots: i32) -> &mut Self {
+        let index = self
+            .bytecode_array_writer
+            .constant_array_builder_mut()
+            .insert_scope_info(names) as i32;
+        self.output(Bytecode::CreateFunctionContext, &[index, slots])
+    }
+
+    /// `BytecodeArrayBuilder::PushContext`: saves the current context into
+    /// `register` and installs the one in the accumulator.
+    pub fn push_context(&mut self, register: Register) -> &mut Self {
+        self.output(Bytecode::PushContext, &[register.to_operand()])
+    }
+
+    /// `BytecodeArrayBuilder::PopContext`
+    pub fn pop_context(&mut self, register: Register) -> &mut Self {
+        self.output(Bytecode::PopContext, &[register.to_operand()])
+    }
+
+    /// `BytecodeArrayBuilder::LoadContextSlot` at depth zero.
+    pub fn load_current_context_slot(&mut self, slot: i32) -> &mut Self {
+        self.output(Bytecode::LdaCurrentContextSlot, &[slot])
+    }
+
+    /// `BytecodeArrayBuilder::LoadContextSlot`. The base register is the
+    /// frame's context slot, and `depth` is how many links to walk out.
+    pub fn load_context_slot(&mut self, slot: i32, depth: i32) -> &mut Self {
+        self.output(
+            Bytecode::LdaContextSlot,
+            &[Register::current_context().to_operand(), slot, depth],
+        )
+    }
+
+    pub fn store_current_context_slot(&mut self, slot: i32) -> &mut Self {
+        self.output(Bytecode::StaCurrentContextSlot, &[slot])
+    }
+
+    pub fn store_context_slot(&mut self, slot: i32, depth: i32) -> &mut Self {
+        self.output(
+            Bytecode::StaContextSlot,
+            &[Register::current_context().to_operand(), slot, depth],
+        )
+    }
+
     // -- globals -------------------------------------------------------------
 
     /// `BytecodeArrayBuilder::LoadGlobal`

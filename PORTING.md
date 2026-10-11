@@ -125,12 +125,15 @@ which is the argument for reading it.
 | `src/objects/oddball.h` | `src/objects/oddball.rs` | [T] done |
 | `src/objects/js-objects.h` | `src/objects/js_objects.rs` | [T] `JSObject` layout; `JSFunction` is a placeholder |
 | `src/objects/lookup.cc`, transition half of `map.cc` | `src/objects/lookup.rs` | [A] data properties on the prototype chain |
+| `src/objects/js-function.h` | `src/objects/js_function.rs` | [T] layout: shared, context, feedback vector |
+| `src/objects/contexts.h` | `src/objects/contexts.rs` | [T] slot indices; function contexts only |
+| `src/objects/scope-info.h` | `src/objects/scope_info.rs` | [A] the context slot names, nothing else |
 | `src/roots/roots.h` | `src/roots/roots.rs` | [A] the roots `vx` needs |
 | `src/execution/isolate.h` | `src/execution/isolate.rs` | [A] heap + roots + string table + bootstrap |
 | `src/heap/spaces.h`, `new-spaces.h`, `paged-spaces.h` | `src/heap/spaces.rs` | [A] bump allocation, no pages |
 | `src/heap/heap.h`, `heap.cc` | `src/heap/heap.rs` | [A] arena, spaces, raw access |
 | `src/heap/factory.h`, `factory.cc` | `src/heap/factory.rs` | [A] the objects `vx` can build |
-| `src/heap/heap-visitor.h` | `src/heap/visitor.rs` | [A] switches on instance type, not `visitor_id` |
+| `src/heap/heap-visitor.h` | `src/heap/heap_visitor.rs` | [A] switches on instance type, not `visitor_id` |
 | `src/heap/scavenger.h`, `scavenger.cc` | `src/heap/scavenger.rs` | [A] Cheney copying collector with `age_mark` promotion |
 | `src/numbers/conversions.cc` | `src/numbers/conversions.rs` | [A] `Number::toString` per ECMA-262 §6.1.6.1.20 |
 | `src/objects/objects.h`, `objects.cc` | `src/objects/objects.rs` | [A] the abstract operations: `ToNumber`, `Add`, the comparisons |
@@ -159,13 +162,15 @@ which is the argument for reading it.
 | `src/parsing/token.h` | `src/parsing/token.rs` | [T] full token list, precedences and enum order |
 | `src/parsing/scanner.h`, `scanner.cc` | `src/parsing/scanner.rs` | [A] `c0_`, two-token lookahead, ASI line tracking |
 | `src/ast/ast.h` | `src/ast/ast.rs` | [R] node kinds follow `AST_NODE_LIST`; enums replace the class hierarchy |
+| `src/ast/scopes.h`, `scopes.cc` | `src/ast/scopes.rs` | [A] declaration, resolution, `AllocateVariables` |
+| `src/ast/prettyprinter.cc` | `src/ast/prettyprinter.rs` | [R] `--print-ast` |
 | `src/parsing/parser-base.h`, `parser.cc` | `src/parsing/parser.rs` | **[R]** method chain and names are V8's; the bodies are written from the grammar |
 
 ### Not started
 
 | V8 | Would become | Notes |
 | --- | --- | --- |
-| `src/objects/contexts.h`, `src/ast/scopes.cc` | `src/objects/contexts.rs` | contexts, and therefore closures over locals |
+| `src/objects/scope-info.h` (the rest) | `src/objects/scope_info.rs` | `with`, `catch`, block and module scopes |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
 | `src/objects/js-array.h`, `elements.cc` | `src/objects/` | real arrays with `length` and elements kinds |
 | `src/objects/dictionary.h` | `src/objects/` | dictionary-mode objects |
@@ -320,6 +325,47 @@ Zero site hits, because the site is megamorphic and holds nothing. Two
 hundred shared hits, because the pairs were all in the table. The 724 misses
 are the property *stores* that build the objects, which are uncacheable by
 construction.
+
+### Contexts and closures
+
+A `Context` is a `FixedArray` with a fixed header -- `[scope_info, previous,
+var0, ...]`, `MIN_CONTEXT_SLOTS = 2` -- and the `previous` links are the
+scope chain at runtime. `vx` has function contexts only: no `with`, `catch`,
+block, module or native contexts, and no `ScriptContext` table.
+
+Which variables go there is decided while parsing, in `src/ast/scopes.rs`.
+Closing a scope hands every name it could not resolve to the enclosing
+scope, and a name that resolves **across a function boundary** sets
+`force_context_allocation` on the variable it found. `AllocateVariables`
+then gives each variable a context slot, a register, or neither (a global, at
+script level). Three consequences worth stating, because each one is a place
+a plausible port goes wrong:
+
+* **One context per invocation, not per closure.** Two closures made in one
+  call share the context, so one sees the other's writes; two calls to the
+  same function do not. This is what `tests/closures.rs` asserts on, since
+  both a shared slot and a per-closure copy would compute the same answers
+  for a counter that is only ever read once.
+* **A scope that captures nothing allocates no context**, and so is skipped
+  when counting depth. A closure created in it simply keeps using the
+  context it was created in. Behaviour cannot show this -- a context per
+  call would give the same answers -- so it is asserted on the bytecode.
+* **A captured parameter keeps its frame slot and gains a context slot.**
+  Parameters arrive in the frame, so the prologue copies each captured one
+  into the context with `Ldar a_i; StaCurrentContextSlot`.
+
+The generator resolves a reference to a `(depth, slot)` pair, which is what
+makes the runtime load a pointer walk of known length rather than a search:
+`LdaCurrentContextSlot` at depth 0, `LdaContextSlot` beyond it. A closure
+captures by storing the context it was created in -- `JSFunction::context`,
+the one field that makes a closure close over anything at all.
+
+The interpreter frame grew the fixed slots this needs. V8's
+`InterpreterFrameConstants` puts the context and the closure at negative
+register indices below the parameters, so `Register::current_context()` and
+`Register::function_closure()` are ordinary registers as far as the
+bytecode is concerned, and `register_slot` maps the three index ranges --
+registers, parameters, fixed slots -- onto one `Vec<Tagged>`.
 
 ### What the offsets do and do not catch
 

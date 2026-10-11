@@ -96,11 +96,10 @@ pub struct FunctionLiteral {
     pub name: Option<String>,
     pub parameters: Vec<String>,
     pub body: Vec<Statement>,
-    /// Every `var` declared anywhere in the function, hoisted to the top as
-    /// JavaScript requires. V8 collects these into the function scope; `vx`
-    /// hands the list to the bytecode generator, which allocates a register
-    /// for each.
-    pub hoisted_vars: Vec<String>,
+    /// `FunctionLiteral::scope`: where each of this function's variables
+    /// lives, decided by [`crate::ast::scopes`] while parsing. A register if
+    /// nothing captured it, a context slot if something did.
+    pub scope: crate::ast::scopes::Scope,
     /// Function declarations in the body, which are hoisted with their
     /// definitions.
     pub hoisted_functions: Vec<FunctionLiteral>,
@@ -376,7 +375,10 @@ impl Statement {
 #[derive(Clone, Debug)]
 pub struct Program {
     pub body: Vec<Statement>,
-    pub hoisted_vars: Vec<String>,
+    /// The script's own scope. A top-level `var` is a property of the global
+    /// object unless a function captured it, in which case it is a context
+    /// slot like any other captured variable.
+    pub scope: crate::ast::scopes::Scope,
     pub hoisted_functions: Vec<FunctionLiteral>,
 }
 

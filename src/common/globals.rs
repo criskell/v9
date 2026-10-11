@@ -96,6 +96,23 @@ pub const fn is_aligned(value: u64, alignment: u64) -> bool {
     value & (alignment - 1) == 0
 }
 
+/// `VariableLocation` from `src/common/globals.h`: where a variable's
+/// storage ended up, decided by scope analysis.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum VariableLocation {
+    /// Not yet decided, or -- after allocation -- a property of the global
+    /// object, possibly absent.
+    Unallocated,
+    /// A parameter slot in the frame. `index` counts left to right from 0;
+    /// the receiver is -1.
+    Parameter,
+    /// A register in the frame. `index` is the register number.
+    Local,
+    /// A slot in a heap `Context`. `index` is the slot; the *depth* comes
+    /// from how far out the declaring scope is.
+    Context,
+}
+
 /// `InlineCacheState` from `src/common/globals.h`.
 ///
 /// The lattice an inline cache climbs. It only ever moves one way -- a site

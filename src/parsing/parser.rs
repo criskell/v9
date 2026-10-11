@@ -38,6 +38,7 @@
 //!   labels, `new`, getters/setters.
 
 use crate::ast::ast::*;
+use crate::ast::scopes::{ScopeChain, ScopeKind};
 use crate::parsing::scanner::{Location, Scanner};
 use crate::parsing::token::Token;
 
@@ -79,18 +80,20 @@ type Result<T> = std::result::Result<T, ParserError>;
 
 /// `ParserBase::FunctionState`: what the parser has to remember about the
 /// function it is currently inside.
+///
+/// The variables themselves live in the [`ScopeChain`], which is what V8's
+/// `Scope` tree does; this holds what is left.
 #[derive(Default)]
 struct FunctionState {
-    /// Every `var` seen anywhere in this function, in declaration order.
-    /// JavaScript hoists them to the top of the function regardless of where
-    /// they are written, so the generator needs the full list before it can
-    /// allocate registers.
-    hoisted_vars: Vec<String>,
     hoisted_functions: Vec<FunctionLiteral>,
 }
 
 pub struct Parser {
     scanner: Scanner,
+    /// `ParserBase::scope_`: the path from the script scope to the one being
+    /// parsed. Declarations go in, references are recorded, and closing a
+    /// scope resolves what it could not.
+    scope_chain: ScopeChain,
     /// The `[In]` grammar parameter. Inside a `for` header, `in` is not a
     /// relational operator, so precedence climbing has to stop before it.
     accept_in: bool,
@@ -105,8 +108,11 @@ const MAX_RECURSION_DEPTH: usize = 256;
 
 impl Parser {
     pub fn new(source: &str) -> Parser {
+        let mut scope_chain = ScopeChain::new();
+        scope_chain.push(ScopeKind::Script);
         Parser {
             scanner: Scanner::new(source),
+            scope_chain,
             accept_in: true,
             function_state: vec![FunctionState::default()],
             recursion_depth: 0,
@@ -120,9 +126,12 @@ impl Parser {
         parser.expect(Token::Eos)?;
         parser.check_scanner_error()?;
         let state = parser.function_state.pop().expect("the top-level state");
+        // Closing the script scope resolves whatever is still unresolved:
+        // those names are globals.
+        let scope = parser.scope_chain.pop_root();
         Ok(Program {
             body,
-            hoisted_vars: state.hoisted_vars,
+            scope,
             hoisted_functions: state.hoisted_functions,
         })
     }
@@ -253,13 +262,18 @@ impl Parser {
         self.function_state.last_mut().expect("a function state")
     }
 
-    /// `Parser::DeclareVariable` for the `var` case: record the name on the
-    /// enclosing function so it is hoisted.
-    fn declare_hoisted_var(&mut self, name: &str) {
-        let state = self.state();
-        if !state.hoisted_vars.iter().any(|existing| existing == name) {
-            state.hoisted_vars.push(name.to_string());
-        }
+    /// `Parser::DeclareVariable`: the binding belongs to the enclosing
+    /// function scope, wherever in it the declaration was written. That is
+    /// what hoisting means.
+    fn declare_variable(&mut self, name: &str, mode: VariableMode) {
+        self.scope_chain.current().declare(name, mode);
+    }
+
+    /// `Scope::NewUnresolved`: a reference, to be resolved when the scope
+    /// closes -- it may be declared later in the same function, or in an
+    /// enclosing one that is still being parsed.
+    fn record_reference(&mut self, name: &str) {
+        self.scope_chain.current().record_reference(name);
     }
 
     // -----------------------------------------------------------------------
@@ -393,14 +407,10 @@ impl Parser {
         loop {
             let position = self.peek_position();
             let name = self.parse_identifier()?;
-            if mode == VariableMode::Var {
-                self.declare_hoisted_var(&name);
-            } else {
-                // Deviation: `let` and `const` are given function scope, so
-                // they are hoisted alongside `var`. Their block scoping needs
-                // the scope tree this parser does not build.
-                self.declare_hoisted_var(&name);
-            }
+            // Deviation: `let` and `const` are given *function* scope, like
+            // `var`. Block scoping and the temporal dead zone need block
+            // scopes, which `vx` does not have -- see `crate::ast::scopes`.
+            self.declare_variable(&name, mode);
 
             let initializer = if self.check(Token::Assign) {
                 Some(self.parse_assignment_expression()?)
@@ -446,7 +456,7 @@ impl Parser {
         // bytecode generator emit the closure twice -- once at scope entry
         // and once where it is written.
         self.state().hoisted_functions.push(function);
-        self.declare_hoisted_var(&name);
+        self.declare_variable(&name, VariableMode::Var);
         Ok(Statement::Empty { position })
     }
 
@@ -1105,6 +1115,7 @@ impl Parser {
                         self.unexpected_token_with_hint("arrow functions are not implemented")
                     );
                 }
+                self.record_reference(&name);
                 Ok(Expression::VariableProxy { name, position })
             }
             _ => {
@@ -1231,6 +1242,8 @@ impl Parser {
                     location: self.scanner.location(),
                 });
             }
+            // `{x}` is `{x: x}`, so the shorthand is a reference too.
+            self.record_reference(&name);
             return Ok(ObjectLiteralProperty {
                 key: PropertyKey::Name(name.clone()),
                 value: Expression::VariableProxy { name, position },
@@ -1254,9 +1267,16 @@ impl Parser {
     ) -> Result<FunctionLiteral> {
         let parameters = self.parse_formal_parameter_list()?;
 
-        // A fresh function state: `var`s hoist to the function they are in,
-        // not to the enclosing one.
+        // A fresh scope and function state: `var`s hoist to the function
+        // they are in, not to the enclosing one.
         self.function_state.push(FunctionState::default());
+        self.scope_chain.push(ScopeKind::Function);
+        for (index, parameter) in parameters.iter().enumerate() {
+            self.scope_chain
+                .current()
+                .declare_parameter(parameter, index as i32);
+        }
+
         let body = (|| -> Result<Vec<Statement>> {
             self.expect(Token::LeftBrace)?;
             // `in` is unrestricted inside a body, even when the function
@@ -1269,6 +1289,11 @@ impl Parser {
             self.expect(Token::RightBrace)?;
             Ok(body)
         })();
+
+        // Closing the scope is where capture is detected: a name this
+        // function could not resolve is looked for outward, and finding it
+        // forces that variable into a context.
+        let scope = self.scope_chain.pop();
         let state = self.function_state.pop().expect("the function state");
         let body = body?;
 
@@ -1276,7 +1301,7 @@ impl Parser {
             name,
             parameters,
             body,
-            hoisted_vars: state.hoisted_vars,
+            scope,
             hoisted_functions: state.hoisted_functions,
             position,
         })

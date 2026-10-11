@@ -56,6 +56,9 @@ impl Isolate {
                 crate::objects::property_cell::PropertyCell::K_SIZE,
             )
             .tagged();
+        // Both variable sized: their lengths live in a field.
+        self.roots.scope_info_map = self.new_bare_map(SCOPE_INFO_TYPE, 0).tagged();
+        self.roots.function_context_map = self.new_bare_map(CONTEXT_TYPE, 0).tagged();
         self.roots.shared_function_info_map = self
             .new_bare_map(
                 SHARED_FUNCTION_INFO_TYPE,
@@ -85,6 +88,8 @@ impl Isolate {
             self.roots.bytecode_array_map,
             self.roots.feedback_metadata_map,
             self.roots.property_cell_map,
+            self.roots.scope_info_map,
+            self.roots.function_context_map,
             self.roots.shared_function_info_map,
             self.roots.filler_map,
         ];

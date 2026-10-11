@@ -316,11 +316,65 @@ impl Isolate {
                     self.internalize_string(&name).tagged()
                 }
                 ConstantEntry::FunctionLiteral(code_index) => Smi::from_int(*code_index as i32),
+                ConstantEntry::ScopeInfo(names) => {
+                    let names = names.clone();
+                    self.new_scope_info(&names).tagged()
+                }
                 ConstantEntry::TheHole => self.the_hole_value(),
             };
             pool.set(&mut self.heap, index as i32, value);
         }
         pool
+    }
+
+    /// `Factory::NewScopeInfo`
+    pub fn new_scope_info(&mut self, names: &[String]) -> crate::objects::scope_info::ScopeInfo {
+        use crate::objects::scope_info::ScopeInfo;
+        let count = names.len() as i32;
+        let map = self.roots.scope_info_map.to_strong_heap_object().unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(ScopeInfo::size_for(count) as usize, AllocationType::Old);
+        self.heap.set_map(object, map);
+        let info = ScopeInfo::unchecked_cast(object);
+        info.set_context_local_count(&mut self.heap, count);
+        for (index, name) in names.iter().enumerate() {
+            let name = name.clone();
+            let interned = self.internalize_string(&name).tagged();
+            info.set_context_local_name(&mut self.heap, index as i32, interned);
+        }
+        info
+    }
+
+    /// `Factory::NewFunctionContext`.
+    ///
+    /// `slots` counts only the variables; the fixed header is added here.
+    /// Young: a context dies with its closures, and most closures are
+    /// short-lived -- which is exactly what the nursery is for.
+    pub fn new_function_context(
+        &mut self,
+        slots: i32,
+        previous: Tagged,
+    ) -> crate::objects::contexts::Context {
+        use crate::objects::contexts::Context;
+        let length = Context::MIN_CONTEXT_SLOTS + slots;
+        let map = self
+            .roots
+            .function_context_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(Context::size_for(length) as usize, AllocationType::Young);
+        self.heap.set_map(object, map);
+        let context = Context::unchecked_cast(object);
+        context.set_length(&mut self.heap, length);
+        let undefined = self.undefined_value();
+        for index in 0..length {
+            context.set(&mut self.heap, index, undefined);
+        }
+        context.set_previous(&mut self.heap, previous);
+        context
     }
 
     /// `Factory::NewPropertyCell`.
@@ -481,6 +535,9 @@ impl Isolate {
         let object = self.new_js_object_from_map(map);
         let function = JSFunction::unchecked_cast(object.object());
         function.set_shared_function_info(&mut self.heap, shared.tagged());
+        // The caller installs the real context; a function created outside
+        // any JavaScript frame has none.
+        function.set_context(&mut self.heap, self.roots.undefined_value);
         // Each closure gets its own feedback vector: two closures over the
         // same literal can be called with different shapes, and sharing one
         // vector would make each pollute the other's caches.
@@ -584,6 +641,16 @@ impl Isolate {
             it::BYTECODE_ARRAY_TYPE => {
                 use crate::objects::bytecode_array::BytecodeArray;
                 BytecodeArray::size_for(BytecodeArray::unchecked_cast(object).length(&self.heap))
+            }
+            it::CONTEXT_TYPE => {
+                use crate::objects::contexts::Context;
+                Context::size_for(Context::unchecked_cast(object).length(&self.heap))
+            }
+            it::SCOPE_INFO_TYPE => {
+                use crate::objects::scope_info::ScopeInfo;
+                ScopeInfo::size_for(
+                    ScopeInfo::unchecked_cast(object).context_local_count(&self.heap),
+                )
             }
             it::MAP_TYPE => Map::K_SIZE,
             other => panic!(

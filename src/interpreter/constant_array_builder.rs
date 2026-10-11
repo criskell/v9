@@ -60,6 +60,8 @@ pub enum ConstantEntry {
     Name(String),
     /// A nested function literal, by index into the isolate's code store.
     FunctionLiteral(usize),
+    /// A `ScopeInfo`: the names of a context's slots, in slot order.
+    ScopeInfo(Vec<String>),
     /// `the_hole`: a gap left by an unused reservation, or by a slice that
     /// started before the previous one filled up. Never read by a bytecode.
     TheHole,
@@ -146,6 +148,7 @@ enum DedupKey {
     String(String),
     Name(String),
     FunctionLiteral(usize),
+    ScopeInfo(Vec<String>),
 }
 
 impl Default for ConstantArrayBuilder {
@@ -245,6 +248,14 @@ impl ConstantArrayBuilder {
         self.insert_deduped(
             DedupKey::Name(value.to_owned()),
             ConstantEntry::Name(value.to_owned()),
+        )
+    }
+
+    /// The `ScopeInfo` for a context, which `CreateFunctionContext` names.
+    pub fn insert_scope_info(&mut self, names: &[String]) -> usize {
+        self.insert_deduped(
+            DedupKey::ScopeInfo(names.to_vec()),
+            ConstantEntry::ScopeInfo(names.to_vec()),
         )
     }
 

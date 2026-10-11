@@ -113,6 +113,8 @@ pub const SHARED_FUNCTION_INFO_TYPE: InstanceType = 137;
 pub const BYTECODE_ARRAY_TYPE: InstanceType = 138;
 pub const FEEDBACK_METADATA_TYPE: InstanceType = 140;
 pub const PROPERTY_CELL_TYPE: InstanceType = 141;
+pub const SCOPE_INFO_TYPE: InstanceType = 142;
+pub const CONTEXT_TYPE: InstanceType = 143;
 pub const FILLER_TYPE: InstanceType = 139;
 
 pub const JS_OBJECT_TYPE: InstanceType = 1058;
@@ -238,6 +240,8 @@ pub fn instance_type_name(t: InstanceType) -> &'static str {
         BYTECODE_ARRAY_TYPE => "BYTECODE_ARRAY",
         FEEDBACK_METADATA_TYPE => "FEEDBACK_METADATA",
         PROPERTY_CELL_TYPE => "PROPERTY_CELL",
+        SCOPE_INFO_TYPE => "SCOPE_INFO",
+        CONTEXT_TYPE => "CONTEXT",
         SHARED_FUNCTION_INFO_TYPE => "SHARED_FUNCTION_INFO",
         FILLER_TYPE => "FILLER",
         JS_OBJECT_TYPE => "JS_OBJECT",

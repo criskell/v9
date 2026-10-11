@@ -27,7 +27,13 @@ impl JSFunction {
     pub const K_PROPERTIES_OR_HASH_OFFSET: i32 = JSObject::K_PROPERTIES_OR_HASH_OFFSET;
     pub const K_ELEMENTS_OFFSET: i32 = JSObject::K_ELEMENTS_OFFSET;
     pub const K_SHARED_FUNCTION_INFO_OFFSET: i32 = JSObject::K_HEADER_SIZE;
-    pub const K_FEEDBACK_VECTOR_OFFSET: i32 = Self::K_SHARED_FUNCTION_INFO_OFFSET + K_TAGGED_SIZE;
+    /// `JSFunction::context`: the context this closure was created in.
+    ///
+    /// This single field is what makes a closure a closure. Two closures
+    /// made in the same call hold the same context and therefore share the
+    /// captured variable; two made in different calls hold different ones.
+    pub const K_CONTEXT_OFFSET: i32 = Self::K_SHARED_FUNCTION_INFO_OFFSET + K_TAGGED_SIZE;
+    pub const K_FEEDBACK_VECTOR_OFFSET: i32 = Self::K_CONTEXT_OFFSET + K_TAGGED_SIZE;
     pub const K_SIZE: i32 = Self::K_FEEDBACK_VECTOR_OFFSET + K_TAGGED_SIZE;
 
     #[inline]
@@ -55,6 +61,17 @@ impl JSFunction {
         heap.write_tagged(self.field(Self::K_SHARED_FUNCTION_INFO_OFFSET), value);
     }
 
+    /// `JSFunction::context`
+    #[inline]
+    pub fn context(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_CONTEXT_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_context(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_CONTEXT_OFFSET), value);
+    }
+
     #[inline]
     pub fn feedback_vector(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_FEEDBACK_VECTOR_OFFSET))
@@ -77,8 +94,9 @@ mod tests {
             JSObject::K_HEADER_SIZE
         );
         assert_eq!(JSFunction::K_SHARED_FUNCTION_INFO_OFFSET, 24);
-        assert_eq!(JSFunction::K_FEEDBACK_VECTOR_OFFSET, 32);
-        assert_eq!(JSFunction::K_SIZE, 40);
+        assert_eq!(JSFunction::K_CONTEXT_OFFSET, 32);
+        assert_eq!(JSFunction::K_FEEDBACK_VECTOR_OFFSET, 40);
+        assert_eq!(JSFunction::K_SIZE, 48);
         // It shares the JSObject header, so a function has properties and
         // elements like any other object.
         assert_eq!(

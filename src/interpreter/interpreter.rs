@@ -52,6 +52,11 @@ pub type ExecutionResult = Result<Tagged, Thrown>;
 const K_MAX_CALL_DEPTH: usize = 180;
 
 /// The part of the interpreter frame that is not on the value stack.
+/// How many fixed slots the frame has: the argument count, the closure, the
+/// current context, the bytecode array and the feedback vector -- the ones
+/// [`Register`] addresses with its small negative indices.
+const K_FIXED_SLOT_COUNT: usize = 5;
+
 struct InterpreterFrame {
     bytecode: BytecodeArray,
     /// This closure's feedback vector, where the inline caches live.
@@ -61,6 +66,8 @@ struct InterpreterFrame {
     /// `params_base + i`.
     params_base: usize,
     params_count: usize,
+    /// Where the fixed slots sit. Slot `-k` is at `fixed_base + (k - 1)`.
+    fixed_base: usize,
     /// Where `r0` sits.
     registers_base: usize,
 }
@@ -104,6 +111,16 @@ impl Isolate {
             self.stack
                 .push(args.get(index).copied().unwrap_or(undefined));
         }
+        // The fixed slots are real frame slots, as in V8, so that
+        // `Register::current_context()` is an ordinary register and
+        // `PushContext` needs no special case. They are traced like any
+        // other stack slot, which is what keeps a context alive while its
+        // frame runs.
+        let fixed_base = self.stack.len();
+        for _ in 0..K_FIXED_SLOT_COUNT {
+            self.stack.push(undefined);
+        }
+
         let registers_base = self.stack.len();
         for _ in 0..register_count {
             self.stack.push(undefined);
@@ -123,8 +140,15 @@ impl Isolate {
             feedback_vector,
             params_base,
             params_count,
+            fixed_base,
             registers_base,
         };
+
+        // The closure's own context becomes the frame's current one. A
+        // function that captured nothing simply keeps using it.
+        let context = function.context(&self.heap);
+        self.write_register(&frame, Register::current_context(), context);
+        self.write_register(&frame, Register::function_closure(), function.tagged());
 
         self.call_depth += 1;
         let result = self.dispatch(&frame);
@@ -136,15 +160,28 @@ impl Isolate {
     }
 
     /// Where a register lives on the value stack.
+    ///
+    /// Three ranges, as [`Register`]'s encoding implies: non-negative is the
+    /// register file, a small negative is one of the fixed slots, and
+    /// anything further down is a parameter.
     #[inline]
     fn register_slot(&self, frame: &InterpreterFrame, register: Register) -> usize {
-        if register.is_parameter() {
-            let index = register.to_parameter_index() as usize;
-            debug_assert!(index < frame.params_count, "parameter {index} out of range");
-            frame.params_base + index
-        } else {
-            frame.registers_base + register.index() as usize
+        let index = register.index();
+        if index >= 0 {
+            return frame.registers_base + index as usize;
         }
+        let parameter = register.to_parameter_index();
+        if parameter >= 0 {
+            debug_assert!(
+                (parameter as usize) < frame.params_count,
+                "parameter {parameter} out of range"
+            );
+            return frame.params_base + parameter as usize;
+        }
+        // A fixed slot: index -1 is the first, -5 the last.
+        let fixed = (-index - 1) as usize;
+        debug_assert!(fixed < K_FIXED_SLOT_COUNT, "unknown fixed slot {index}");
+        frame.fixed_base + fixed
     }
 
     #[inline]
@@ -229,6 +266,59 @@ impl Isolate {
                     let to = register_operand(self, 1);
                     let value = self.read_register(frame, from);
                     self.write_register(frame, to, value);
+                }
+
+                // -- contexts ---------------------------------------------
+                Bytecode::CreateFunctionContext => {
+                    let index = operand(self, 0);
+                    let slots = operand(self, 1);
+                    let scope_info = bytecode_array
+                        .constant_pool(&self.heap)
+                        .get(&self.heap, index);
+                    // `previous` is whatever is current now, so the chain is
+                    // built by the act of creating the context in the frame.
+                    let previous = self.read_register(frame, Register::current_context());
+                    let context = self.new_function_context(slots, previous);
+                    context.set_scope_info(&mut self.heap, scope_info);
+                    accumulator = context.tagged();
+                }
+                Bytecode::PushContext => {
+                    // Save the current context, install the new one.
+                    let register = register_operand(self, 0);
+                    let current = self.read_register(frame, Register::current_context());
+                    self.write_register(frame, register, current);
+                    self.write_register(frame, Register::current_context(), accumulator);
+                }
+                Bytecode::PopContext => {
+                    let register = register_operand(self, 0);
+                    let saved = self.read_register(frame, register);
+                    self.write_register(frame, Register::current_context(), saved);
+                }
+                Bytecode::LdaCurrentContextSlot => {
+                    let slot = operand(self, 0);
+                    accumulator = self.context_slot(frame, Register::current_context(), 0, slot)?;
+                }
+                Bytecode::LdaContextSlot => {
+                    let base = register_operand(self, 0);
+                    let slot = operand(self, 1);
+                    let depth = operand(self, 2);
+                    accumulator = self.context_slot(frame, base, depth, slot)?;
+                }
+                Bytecode::StaCurrentContextSlot => {
+                    let slot = operand(self, 0);
+                    self.set_context_slot(
+                        frame,
+                        Register::current_context(),
+                        0,
+                        slot,
+                        accumulator,
+                    )?;
+                }
+                Bytecode::StaContextSlot => {
+                    let base = register_operand(self, 0);
+                    let slot = operand(self, 1);
+                    let depth = operand(self, 2);
+                    self.set_context_slot(frame, base, depth, slot, accumulator)?;
                 }
 
                 // -- globals ----------------------------------------------
@@ -404,7 +494,12 @@ impl Isolate {
                     let shared_index = bytecode_array
                         .constant_pool(&self.heap)
                         .get(&self.heap, index);
-                    accumulator = self.closure_for(Smi::to_int(shared_index) as usize);
+                    // The closure records the context it is created in --
+                    // the one field that makes a closure close over
+                    // anything at all.
+                    let context = self.read_register(frame, Register::current_context());
+                    accumulator =
+                        self.closure_for_with_context(Smi::to_int(shared_index) as usize, context);
                 }
 
                 // -- calls ------------------------------------------------
@@ -559,6 +654,58 @@ impl Isolate {
             TestGreaterThanOrEqual => self.greater_than_or_equal(left, right),
             TestIn => self.has_property(right, left),
             other => unreachable!("{other} is not a comparison"),
+        }
+    }
+
+    /// Walks `depth` links out from the context in `base` and reads `slot`.
+    fn context_slot(
+        &mut self,
+        frame: &InterpreterFrame,
+        base: Register,
+        depth: i32,
+        slot: i32,
+    ) -> ExecutionResult {
+        let context = self.context_at(frame, base, depth)?;
+        Ok(context.get(&self.heap, slot))
+    }
+
+    fn set_context_slot(
+        &mut self,
+        frame: &InterpreterFrame,
+        base: Register,
+        depth: i32,
+        slot: i32,
+        value: Tagged,
+    ) -> ExecutionResult {
+        let context = self.context_at(frame, base, depth)?;
+        context.set(&mut self.heap, slot, value);
+        Ok(value)
+    }
+
+    fn context_at(
+        &mut self,
+        frame: &InterpreterFrame,
+        base: Register,
+        depth: i32,
+    ) -> Result<crate::objects::contexts::Context, Thrown> {
+        use crate::objects::contexts::Context;
+        let value = self.read_register(frame, base);
+        match value.to_strong_heap_object() {
+            Some(object)
+                if self.heap.instance_type(object)
+                    == crate::objects::instance_type::CONTEXT_TYPE =>
+            {
+                Ok(Context::unchecked_cast(object).at_depth(&self.heap, depth))
+            }
+            // Only reachable if scope analysis and the generator disagree,
+            // so it is a bug rather than a program error -- but throwing
+            // beats reading a non-context as one.
+            _ => {
+                let message = self
+                    .new_string("internal: no context in this frame")
+                    .tagged();
+                Err(Thrown(message))
+            }
         }
     }
 

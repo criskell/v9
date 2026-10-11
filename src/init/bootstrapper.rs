@@ -91,11 +91,19 @@ impl Isolate {
 
     /// A closure over the compiled function at `index`.
     pub(crate) fn closure_for(&mut self, index: usize) -> Tagged {
+        let undefined = self.undefined_value();
+        self.closure_for_with_context(index, undefined)
+    }
+
+    /// A closure over the compiled function at `index`, holding `context`.
+    pub(crate) fn closure_for_with_context(&mut self, index: usize, context: Tagged) -> Tagged {
         let shared = self.shared_function_infos[index];
         let shared = crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
             shared.to_strong_heap_object().expect("a compiled function"),
         );
-        self.new_js_function(shared).tagged()
+        let function = self.new_js_function(shared);
+        function.set_context(&mut self.heap, context);
+        function.tagged()
     }
 
     /// The feedback vector of the script last run, for `--trace-ic`.

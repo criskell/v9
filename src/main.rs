@@ -214,6 +214,7 @@ fn print_bytecode(_path: &str, source: &str) {
                 ConstantEntry::String(value) => format!("{value:?}"),
                 ConstantEntry::Name(value) => format!("#{value}"),
                 ConstantEntry::FunctionLiteral(index) => format!("<function {index}>"),
+                ConstantEntry::ScopeInfo(names) => format!("<scope {}>", names.join(", ")),
                 ConstantEntry::TheHole => "<the_hole>".to_string(),
             })
             .collect();

@@ -14,9 +14,7 @@ impl AstPrinter {
     pub fn print_program(program: &Program) -> String {
         let mut out = String::new();
         out.push_str("PROGRAM\n");
-        if !program.hoisted_vars.is_empty() {
-            out.push_str(&format!(". VARS {}\n", program.hoisted_vars.join(", ")));
-        }
+        print_scope(&mut out, &program.scope, 1);
         for function in &program.hoisted_functions {
             print_function(&mut out, function, 1);
         }
@@ -41,6 +39,30 @@ impl AstPrinter {
     }
 }
 
+/// The scope's variables and where each one ended up, which is the output
+/// worth having: it says at a glance which variables were captured.
+fn print_scope(out: &mut String, scope: &crate::ast::scopes::Scope, depth: usize) {
+    use crate::common::globals::VariableLocation;
+    if scope.variables().is_empty() {
+        return;
+    }
+    indent(out, depth);
+    let described: Vec<String> = scope
+        .variables()
+        .iter()
+        .map(|variable| {
+            let where_ = match variable.location {
+                VariableLocation::Local => format!("r{}", variable.index),
+                VariableLocation::Parameter => format!("a{}", variable.index),
+                VariableLocation::Context => format!("context[{}]", variable.index),
+                VariableLocation::Unallocated => "global".to_string(),
+            };
+            format!("{}:{where_}", variable.name)
+        })
+        .collect();
+    out.push_str(&format!("VARS {}\n", described.join(", ")));
+}
+
 fn indent(out: &mut String, depth: usize) {
     for _ in 0..depth {
         out.push_str(". ");
@@ -54,10 +76,7 @@ fn print_function(out: &mut String, function: &FunctionLiteral, depth: usize) {
         function.name.as_deref().unwrap_or("<anonymous>"),
         function.parameters.join(", ")
     ));
-    if !function.hoisted_vars.is_empty() {
-        indent(out, depth + 1);
-        out.push_str(&format!("VARS {}\n", function.hoisted_vars.join(", ")));
-    }
+    print_scope(out, &function.scope, depth + 1);
     for inner in &function.hoisted_functions {
         print_function(out, inner, depth + 1);
     }

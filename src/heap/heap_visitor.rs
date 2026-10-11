@@ -102,6 +102,7 @@ impl Isolate {
                 visit(function.field(JSFunction::K_PROPERTIES_OR_HASH_OFFSET));
                 visit(function.field(JSFunction::K_ELEMENTS_OFFSET));
                 visit(function.field(JSFunction::K_SHARED_FUNCTION_INFO_OFFSET));
+                visit(function.field(JSFunction::K_CONTEXT_OFFSET));
                 visit(function.field(JSFunction::K_FEEDBACK_VECTOR_OFFSET));
             }
 
@@ -144,6 +145,24 @@ impl Isolate {
 
             it::FEEDBACK_METADATA_TYPE => {
                 // Just a run of bytes.
+            }
+
+            it::CONTEXT_TYPE => {
+                use crate::objects::contexts::Context;
+                let context = Context::unchecked_cast(object);
+                // Every slot, including the scope info and the previous
+                // link -- the chain has to keep the outer contexts alive.
+                for index in 0..context.length(&self.heap) {
+                    visit(context.slot_address(index));
+                }
+            }
+
+            it::SCOPE_INFO_TYPE => {
+                use crate::objects::scope_info::ScopeInfo;
+                let info = ScopeInfo::unchecked_cast(object);
+                for index in 0..info.context_local_count(&self.heap) {
+                    visit(info.name_address(index));
+                }
             }
 
             it::PROPERTY_CELL_TYPE => {

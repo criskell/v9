@@ -82,10 +82,20 @@ bytecode_list! {
     LdaTrue,                  Use::WRITE_ACCUMULATOR;
     LdaFalse,                 Use::WRITE_ACCUMULATOR;
     LdaConstant,              Use::WRITE_ACCUMULATOR, ConstantPoolIndex;
+    // Captured variables. The `Reg` holds the context to start from and the
+    // `UImm` is the depth -- how many `previous` links to walk. Depth zero
+    // is overwhelmingly the common case, so it gets its own operand-free
+    // form.
+    LdaContextSlot,           Use::WRITE_ACCUMULATOR, Reg, ContextSlot, UImm;
+    LdaCurrentContextSlot,    Use::WRITE_ACCUMULATOR, ContextSlot;
 
     // -- Register loads
     Star,                     Use::READ_ACCUMULATOR, RegOut;
     Mov,                      Use::NONE, Reg, RegOut;
+    // `PushContext` saves the current context into a register and installs
+    // the one in the accumulator; `PopContext` puts the saved one back.
+    PushContext,              Use::READ_ACCUMULATOR, RegOut;
+    PopContext,               Use::NONE, Reg;
 
     // -- Side-effect-free tests
     TestReferenceEqual,       Use::READ_WRITE_ACCUMULATOR, Reg;
@@ -97,6 +107,8 @@ bytecode_list! {
     // -- Globals
     LdaGlobal,                Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot;
     StaGlobal,                Use::READ_AND_CLOBBER_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot;
+    StaContextSlot,           Use::READ_ACCUMULATOR, Reg, ContextSlot, UImm;
+    StaCurrentContextSlot,    Use::READ_ACCUMULATOR, ContextSlot;
 
     // -- Property access. The feedback slot is what an inline cache keys off.
     GetNamedProperty,         Use::WRITE_ACCUMULATOR, Reg, ConstantPoolIndex, FeedbackSlot;
@@ -165,6 +177,7 @@ bytecode_list! {
     CreateObjectLiteral,      Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot, Flag8;
     CreateEmptyObjectLiteral, Use::WRITE_ACCUMULATOR;
     CreateClosure,            Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot, Flag8;
+    CreateFunctionContext,    Use::WRITE_ACCUMULATOR, ConstantPoolIndex, UImm;
 
     // -- Control flow.
     //

@@ -18,6 +18,17 @@ fn parse(source: &str) -> Program {
     }
 }
 
+/// The names a scope declares, excluding parameters -- the scope's own
+/// `var` bindings, which is what hoisting decides.
+fn declared_vars(scope: &vx::ast::scopes::Scope) -> Vec<&str> {
+    scope
+        .variables()
+        .iter()
+        .filter(|variable| !variable.is_parameter)
+        .map(|variable| variable.name.as_str())
+        .collect()
+}
+
 fn parse_error(source: &str) -> String {
     match Parser::parse_program(source) {
         Ok(_) => panic!("expected {source:?} to fail to parse"),
@@ -367,11 +378,11 @@ fn var_declarations_hoist_to_the_enclosing_function() {
            while (false) { var d = 4; }
          }",
     );
-    assert_eq!(program.hoisted_vars, vec!["a", "f"]);
+    assert_eq!(declared_vars(&program.scope), vec!["a", "f"]);
 
     let function = &program.hoisted_functions[0];
     assert_eq!(
-        function.hoisted_vars,
+        declared_vars(&function.scope),
         vec!["b", "c", "d"],
         "a var inside a block still belongs to the function"
     );
@@ -394,7 +405,7 @@ fn a_function_declaration_is_not_a_statement() {
         program.body[1]
     );
     // The name is still bound, so it is hoisted as a variable too.
-    assert_eq!(program.hoisted_vars, vec!["f"]);
+    assert_eq!(declared_vars(&program.scope), vec!["f"]);
 }
 
 #[test]
@@ -413,7 +424,7 @@ fn a_function_literals_parameters_and_body_are_recorded() {
     assert_eq!(function.body.len(), 1);
     // A function expression is not hoisted into the enclosing scope.
     assert_eq!(program.hoisted_functions.len(), 0);
-    assert_eq!(program.hoisted_vars, vec!["f"]);
+    assert_eq!(declared_vars(&program.scope), vec!["f"]);
 }
 
 #[test]
@@ -607,7 +618,7 @@ fn a_realistic_program_parses() {
     let program = parse(source);
     assert_eq!(program.hoisted_functions.len(), 2);
     assert_eq!(
-        program.hoisted_vars,
+        declared_vars(&program.scope),
         vec!["factorial", "sum", "results", "i", "report", "verdict"]
     );
     // The printer runs over the whole tree without panicking, which is a

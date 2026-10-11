@@ -31,9 +31,9 @@
 //! no labelled break. `let`/`const` are compiled as function-scoped, so
 //! their temporal dead zone is not enforced.
 
-use std::collections::HashMap;
-
 use crate::ast::ast::*;
+use crate::ast::scopes::Scope;
+use crate::common::globals::VariableLocation;
 use crate::interpreter::bytecode_array_builder::{BytecodeArrayBuilder, BytecodeArrayData};
 use crate::interpreter::bytecode_label::BytecodeLabels;
 use crate::interpreter::bytecode_register::Register;
@@ -89,11 +89,30 @@ pub struct GeneratorError {
 type Result<T> = std::result::Result<T, GeneratorError>;
 
 /// `BytecodeGenerator`
+/// Where a name's storage is, as the generator needs it.
+///
+/// `Variable::location()` plus the *depth* -- how many contexts out the
+/// declaring scope is, which only the chain can say.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Resolution {
+    /// A register in this frame.
+    Local(Register),
+    /// A parameter of this frame.
+    Parameter(Register),
+    /// A slot `depth` contexts out. Depth zero is the current context.
+    Context { depth: i32, slot: i32 },
+    /// A property of the global object.
+    Global,
+}
+
 pub struct BytecodeGenerator {
     builder: BytecodeArrayBuilder,
-    /// The current function's locals and parameters, by name. Stands in for
-    /// V8's `Scope`/`Variable` resolution, which happens in the parser.
-    locals: HashMap<String, Register>,
+    /// The scopes from the script down to the function being generated,
+    /// which is what makes a context depth computable.
+    scope_chain: Vec<Scope>,
+    /// The register holding the context saved by `PushContext`, per scope
+    /// that allocated one. `None` for a function that needed no context.
+    context_registers: Vec<Option<Register>>,
     /// Loops currently being generated, innermost last. `break` and
     /// `continue` target the last entry.
     loop_stack: Vec<LoopBuilder>,
@@ -108,7 +127,8 @@ impl BytecodeGenerator {
         // The top-level script has only the receiver as a parameter.
         let mut generator = BytecodeGenerator {
             builder: BytecodeArrayBuilder::new(1, 0),
-            locals: HashMap::new(),
+            scope_chain: vec![program.scope.clone()],
+            context_registers: Vec::new(),
             loop_stack: Vec::new(),
             functions: Vec::new(),
         };
@@ -124,6 +144,9 @@ impl BytecodeGenerator {
         // registers -- which is why `var x` at the top level is visible as
         // `globalThis.x`.
         generator.builder = BytecodeArrayBuilder::new(1, 0);
+        // The script may itself need a context, if a function captured one
+        // of its top-level variables.
+        generator.build_function_context(&program.scope)?;
         for function in &program.hoisted_functions {
             let index = generator.compile_function(function)?;
             let name = function
@@ -147,8 +170,15 @@ impl BytecodeGenerator {
             _ => generator.visit_statements(&program.body)?,
         }
 
-        let mut declarations = program.hoisted_vars.clone();
-        declarations.dedup();
+        // Top-level variables that stayed unallocated are globals; the ones
+        // a function captured live in the script's context instead.
+        let declarations: Vec<String> = program
+            .scope
+            .variables()
+            .iter()
+            .filter(|variable| variable.location == VariableLocation::Unallocated)
+            .map(|variable| variable.name.clone())
+            .collect();
 
         let data = std::mem::replace(&mut generator.builder, BytecodeArrayBuilder::new(1, 0))
             .to_bytecode_array();
@@ -174,31 +204,20 @@ impl BytecodeGenerator {
             data: BytecodeArrayBuilder::new(1, 0).to_bytecode_array(),
         });
 
-        // Locals: every `var` in the function, plus its nested function
-        // declarations, each in a register.
-        let mut locals = HashMap::new();
-        let mut local_count = 0;
-        for name in function
-            .hoisted_vars
-            .iter()
-            .filter(|name| !function.parameters.contains(name))
-        {
-            locals.insert(name.clone(), Register::new(local_count));
-            local_count += 1;
-        }
-
+        // Scope analysis already decided where everything lives; the
+        // register count is what it left in the frame.
         let parameter_count = function.parameters.len() as i32 + 1;
-        let mut builder = BytecodeArrayBuilder::new(parameter_count, local_count);
-        // Parameters are addressed directly, not copied into locals.
-        for (position, name) in function.parameters.iter().enumerate() {
-            locals.insert(name.clone(), builder.parameter(position as i32));
-        }
+        let builder = BytecodeArrayBuilder::new(parameter_count, function.scope.local_count());
 
         let saved_builder = std::mem::replace(&mut self.builder, builder);
-        let saved_locals = std::mem::replace(&mut self.locals, locals);
         let saved_loops = std::mem::take(&mut self.loop_stack);
+        self.scope_chain.push(function.scope.clone());
 
         let result = (|| -> Result<()> {
+            // If anything captured one of this function's variables, the
+            // context has to exist before the first statement runs.
+            self.build_function_context(&function.scope)?;
+
             // Nested function declarations are created on entry, before any
             // statement runs -- that is what hoisting means.
             let nested: Vec<FunctionLiteral> = function.hoisted_functions.clone();
@@ -211,8 +230,9 @@ impl BytecodeGenerator {
             self.visit_statements(&function.body)
         })();
 
-        builder = std::mem::replace(&mut self.builder, saved_builder);
-        self.locals = saved_locals;
+        let builder = std::mem::replace(&mut self.builder, saved_builder);
+        self.scope_chain.pop();
+        self.context_registers.pop();
         self.loop_stack = saved_loops;
         result?;
 
@@ -493,15 +513,90 @@ impl BytecodeGenerator {
     // Variables
     // -----------------------------------------------------------------------
 
+    /// `Scope::LookupRecursively`, with the depth counted.
+    ///
+    /// Depth counts only the scopes that *have* a context: a function that
+    /// captured nothing allocates none, and a closure created in it keeps
+    /// using the context it was created in. Counting scope levels instead of
+    /// contexts would walk one link too many.
+    fn resolve(&self, name: &str) -> Resolution {
+        let mut context_depth = 0;
+        for (level, scope) in self.scope_chain.iter().rev().enumerate() {
+            if let Some(variable) = scope.lookup_local(name) {
+                return match variable.location {
+                    VariableLocation::Context => Resolution::Context {
+                        depth: context_depth,
+                        slot: variable.index,
+                    },
+                    VariableLocation::Local => {
+                        debug_assert_eq!(
+                            level, 0,
+                            "a register in an enclosing frame should have been \
+                             promoted to a context slot by scope analysis"
+                        );
+                        Resolution::Local(Register::new(variable.index))
+                    }
+                    VariableLocation::Parameter => {
+                        debug_assert_eq!(level, 0, "likewise for a parameter");
+                        // Parameter 0 is the receiver, so a declared
+                        // parameter is one further along.
+                        Resolution::Parameter(Register::from_parameter_index(variable.index + 1))
+                    }
+                    VariableLocation::Unallocated => Resolution::Global,
+                };
+            }
+            if scope.needs_context() {
+                context_depth += 1;
+            }
+        }
+        Resolution::Global
+    }
+
+    /// `BytecodeGenerator::BuildFunctionContext`: allocate this scope's
+    /// context, if it needs one, and copy the captured parameters in.
+    fn build_function_context(&mut self, scope: &Scope) -> Result<()> {
+        if !scope.needs_context() {
+            self.context_registers.push(None);
+            return Ok(());
+        }
+
+        let names = scope.context_local_names();
+        self.builder
+            .create_function_context(&names, scope.context_slot_count());
+        // `PushContext` saves the context we were called in and installs the
+        // new one. The saved one is what the new context's `previous` points
+        // at, so the chain is built by the act of pushing.
+        let saved = self.builder.register_allocator().new_register();
+        self.builder.push_context(saved);
+        self.context_registers.push(Some(saved));
+
+        // A captured parameter arrives in the frame but has to be read from
+        // the context from now on, so it is copied once at entry.
+        for (parameter_index, slot) in scope.context_allocated_parameters() {
+            let register = self.builder.parameter(parameter_index);
+            self.builder.load_accumulator_with_register(register);
+            self.builder.store_current_context_slot(slot);
+        }
+        Ok(())
+    }
+
     /// `BytecodeGenerator::BuildVariableLoad`
     fn build_variable_load(&mut self, name: &str) {
-        match self.locals.get(name).copied() {
-            Some(register) => {
+        match self.resolve(name) {
+            Resolution::Local(register) | Resolution::Parameter(register) => {
                 self.builder.load_accumulator_with_register(register);
             }
-            // Not a local: it must be a global, and the lookup is deferred to
-            // run time with a feedback slot to cache it.
-            None => {
+            // The depth-zero case gets its own bytecode because it is the
+            // overwhelmingly common one.
+            Resolution::Context { depth: 0, slot } => {
+                self.builder.load_current_context_slot(slot);
+            }
+            Resolution::Context { depth, slot } => {
+                self.builder.load_context_slot(slot, depth);
+            }
+            // Not declared anywhere on the chain: a global, deferred to run
+            // time with a feedback slot to cache it.
+            Resolution::Global => {
                 self.builder.load_global(name);
             }
         }
@@ -509,11 +604,17 @@ impl BytecodeGenerator {
 
     /// `BytecodeGenerator::BuildVariableAssignment`: stores the accumulator.
     fn build_variable_assignment(&mut self, name: &str) {
-        match self.locals.get(name).copied() {
-            Some(register) => {
+        match self.resolve(name) {
+            Resolution::Local(register) | Resolution::Parameter(register) => {
                 self.builder.store_accumulator_in_register(register);
             }
-            None => {
+            Resolution::Context { depth: 0, slot } => {
+                self.builder.store_current_context_slot(slot);
+            }
+            Resolution::Context { depth, slot } => {
+                self.builder.store_context_slot(slot, depth);
+            }
+            Resolution::Global => {
                 self.builder.store_global(name);
             }
         }
@@ -594,10 +695,14 @@ impl BytecodeGenerator {
     /// its left-hand side.
     fn visit_for_register_value(&mut self, expression: &Expression) -> Result<Register> {
         // A variable already in a register needs no copy -- the peephole
-        // that saves a Star on every `a + b`.
+        // that saves a Star on every `a + b`. A context variable is *not* in
+        // a register, so it does not qualify.
         if let Expression::VariableProxy { name, .. } = expression {
-            if let Some(register) = self.locals.get(name).copied() {
-                return Ok(register);
+            match self.resolve(name) {
+                Resolution::Local(register) | Resolution::Parameter(register) => {
+                    return Ok(register)
+                }
+                _ => {}
             }
         }
         self.visit_for_accumulator_value(expression)?;

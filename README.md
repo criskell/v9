@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 462 tests
+$ cargo test        # 488 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -90,14 +90,22 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
   and an evicted entry demoted to the secondary table rather than dropped.
   Going megamorphic promotes everything the site had learned into it, so the
   knowledge survives the site forgetting it.
+* **Closures.** A variable an inner function references is moved out of the
+  frame and into a `Context`, so it outlives the call that declared it. One
+  context per *invocation*: two closures made in the same call share the
+  variable and see each other's writes, two calls do not. A scope that
+  captures nothing allocates no context at all, and a reference is compiled
+  to a `(depth, slot)` pair -- a pointer walk of known length, never a
+  search.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
-  functions, recursion, objects, property access, method calls, `typeof`.
+  functions, recursion, closures, objects, property access, method calls, `typeof`.
 
 ## What does not
 
-No closures over enclosing locals (no contexts), no classes, no
-`try`/`catch`, no generators or `async`, no real arrays, no `for...in`. Inline caches cover named property access and globals; prototype loads,
+No classes, no `try`/`catch`, no generators or `async`, no real arrays, no
+`for...in`. Contexts are function contexts only: no `with`, no `catch`
+scope, no per-iteration `let` binding in a loop. Inline caches cover named property access and globals; prototype loads,
 transitioning stores and `globalThis.x` still do the full lookup.
 
 [`PORTING.md`](PORTING.md) is the ledger — what is ported, at what fidelity,

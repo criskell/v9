@@ -5,6 +5,7 @@
 pub mod object_macros;
 
 pub mod bytecode_array;
+pub mod contexts;
 pub mod descriptor_array;
 pub mod feedback_vector;
 pub mod fixed_array;
@@ -21,6 +22,7 @@ pub mod objects;
 pub mod oddball;
 pub mod property_cell;
 pub mod property_details;
+pub mod scope_info;
 pub mod shared_function_info;
 pub mod smi;
 pub mod string;
