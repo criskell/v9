@@ -421,11 +421,25 @@ impl Isolate {
                     let value = self.get_keyed_property(object, self.accumulator(frame))?;
                     self.set_accumulator(frame, value);
                 }
-                Bytecode::SetNamedProperty | Bytecode::DefineNamedOwnProperty => {
+                Bytecode::SetNamedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let name = self.constant_name(bytecode_array, operand(self, 1));
                     let slot = operand(self, 2);
                     self.store_named_property_ic(
+                        frame,
+                        object,
+                        name,
+                        self.accumulator(frame),
+                        slot,
+                    )?;
+                    let value = self.undefined_value();
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::DefineNamedOwnProperty => {
+                    let object = self.read_register(frame, register_operand(self, 0));
+                    let name = self.constant_name(bytecode_array, operand(self, 1));
+                    let slot = operand(self, 2);
+                    self.define_named_own_ic(
                         frame,
                         object,
                         name,
@@ -681,6 +695,21 @@ impl Isolate {
                 }
 
                 // -- for...in ---------------------------------------------
+                Bytecode::CallRuntime => {
+                    let function_id = operand(self, 0) as u16;
+                    let first_argument = register_operand(self, 1);
+                    let argument_count = operand(self, 2);
+
+                    let mut arguments = Vec::with_capacity(argument_count as usize);
+                    for index in 0..argument_count {
+                        let register = Register::new(first_argument.index() + index);
+                        arguments.push(self.read_register(frame, register));
+                    }
+
+                    let value = self.call_runtime(function_id, &arguments)?;
+                    self.set_accumulator(frame, value);
+                }
+
                 Bytecode::ForInEnumerate => {
                     let receiver = self.read_register(frame, register_operand(self, 0));
                     let value = self.for_in_enumerate(receiver)?;
@@ -971,6 +1000,13 @@ impl Isolate {
         let Some(vector) = self.frame_feedback_vector(frame) else {
             return self.load_property(object, name);
         };
+        if let Some(receiver) = object.to_strong_heap_object() {
+            if crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver))
+                && self.has_accessor(JSObject::unchecked_cast(receiver), name)
+            {
+                return self.load_property(object, name);
+            }
+        }
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(
@@ -981,6 +1017,26 @@ impl Isolate {
             }
             _ => self.load_property(object, name),
         }
+    }
+
+    /// `DefineNamedOwnIC`
+    fn define_named_own_ic(
+        &mut self,
+        frame: &InterpreterFrame,
+        object: Tagged,
+        name: Tagged,
+        value: Tagged,
+        slot: i32,
+    ) -> ExecutionResult {
+        if let Some(receiver) = object.to_strong_heap_object() {
+            if crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver))
+                && self.has_accessor(JSObject::unchecked_cast(receiver), name)
+            {
+                self.define_own_property(JSObject::unchecked_cast(receiver), name, value);
+                return Ok(value);
+            }
+        }
+        self.store_named_property_ic(frame, object, name, value, slot)
     }
 
     /// `StoreIC`
@@ -995,6 +1051,13 @@ impl Isolate {
         let Some(vector) = self.frame_feedback_vector(frame) else {
             return self.store_property(object, name, value);
         };
+        if let Some(receiver) = object.to_strong_heap_object() {
+            if crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver))
+                && self.has_accessor(JSObject::unchecked_cast(receiver), name)
+            {
+                return self.store_property(object, name, value);
+            }
+        }
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(
@@ -1024,7 +1087,7 @@ impl Isolate {
                     self.heap.instance_type(receiver),
                 ) =>
             {
-                Ok(self.get_property(JSObject::unchecked_cast(receiver), name))
+                self.get_property_with_accessors(JSObject::unchecked_cast(receiver), name)
             }
             _ => self.load_property_from_primitive(object, name),
         }
@@ -1081,13 +1144,12 @@ impl Isolate {
                     self.heap.instance_type(receiver),
                 ) =>
             {
-                self.set_property_with_origin(
+                self.set_property_with_accessors(
                     JSObject::unchecked_cast(receiver),
                     name,
                     value,
                     store_origin,
-                );
-                Ok(value)
+                )
             }
             _ => {
                 let object_text = self.to_string(object);

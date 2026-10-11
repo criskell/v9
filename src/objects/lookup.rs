@@ -13,6 +13,8 @@ pub struct PropertyLocationInfo {
     pub holder: JSObject,
     pub details: PropertyDetails,
     pub dictionary_entry: i32,
+    /// `LookupIterator::descriptor_number`
+    pub descriptor_index: i32,
 }
 
 impl Isolate {
@@ -41,14 +43,22 @@ impl Isolate {
                 holder: object,
                 details: dictionary.details_at(&self.heap, entry),
                 dictionary_entry: entry,
+                descriptor_index: K_NOT_FOUND,
             });
         }
-        let details = map.find_property_details(&self.heap, name)?;
+        let descriptor_index = map.find_descriptor(&self.heap, name);
+        if descriptor_index == crate::objects::descriptor_array::K_NOT_FOUND {
+            return None;
+        }
+        let details = map
+            .instance_descriptors(&self.heap)
+            .get_details(&self.heap, descriptor_index);
         Some(PropertyLocationInfo {
             holder_map: map,
             holder: object,
             details,
             dictionary_entry: K_NOT_FOUND,
+            descriptor_index,
         })
     }
 
@@ -80,6 +90,94 @@ impl Isolate {
         }
     }
 
+    /// `Object::GetPropertyWithAccessor`
+    pub(crate) fn get_property_with_accessors(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::objects::property_details::PropertyKind;
+        let Some(found) = self.lookup_property(object, name) else {
+            return Ok(self.undefined_value());
+        };
+        if found.details.kind() != PropertyKind::Accessor {
+            let value = self.property_value_at(&found);
+            return Ok(self.unwrap_cell(object, value));
+        }
+        let pair = self.property_value_at(&found);
+        let getter = self.accessor_component(pair, true);
+        self.call_accessor(getter, object.tagged(), &[])
+    }
+
+    /// `Object::SetPropertyWithAccessor`
+    pub(crate) fn set_property_with_accessors(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+        store_origin: StoreOrigin,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::objects::property_details::PropertyKind;
+        if let Some(found) = self.lookup_property(object, name) {
+            if found.details.kind() == PropertyKind::Accessor {
+                let pair = self.property_value_at(&found);
+                let setter = self.accessor_component(pair, false);
+                self.call_accessor(setter, object.tagged(), &[value])?;
+                return Ok(value);
+            }
+        }
+        self.set_property_with_origin(object, name, value, store_origin);
+        Ok(value)
+    }
+
+    pub(crate) fn has_accessor(&self, object: JSObject, name: Tagged) -> bool {
+        match self.lookup_property(object, name) {
+            Some(found) => {
+                found.details.kind() == crate::objects::property_details::PropertyKind::Accessor
+            }
+            None => false,
+        }
+    }
+
+    /// `AccessorPair::GetComponent`
+    fn accessor_component(&self, pair: Tagged, getter: bool) -> Tagged {
+        use crate::objects::r#struct::AccessorPair;
+        match pair.to_strong_heap_object() {
+            Some(object)
+                if self.heap.instance_type(object)
+                    == crate::objects::instance_type::ACCESSOR_PAIR_TYPE =>
+            {
+                let pair = AccessorPair::unchecked_cast(object);
+                let accessor = if getter {
+                    pair.getter(&self.heap)
+                } else {
+                    pair.setter(&self.heap)
+                };
+                if self.heap.is_null(accessor) {
+                    return self.undefined_value();
+                }
+                accessor
+            }
+            _ => self.undefined_value(),
+        }
+    }
+
+    fn call_accessor(
+        &mut self,
+        accessor: Tagged,
+        receiver: Tagged,
+        args: &[Tagged],
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let Some(callable) = accessor.to_strong_heap_object() else {
+            return Ok(self.undefined_value());
+        };
+        if !crate::objects::instance_type::is_callable(self.heap.instance_type(callable)) {
+            return Ok(self.undefined_value());
+        }
+        let function = crate::objects::js_function::JSFunction::unchecked_cast(callable);
+        self.execute(function, receiver, args)
+    }
+
     pub fn get_own_property(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
         let value = self.get_own_property_raw(object, name)?;
         Some(self.unwrap_cell(object, value))
@@ -95,7 +193,116 @@ impl Isolate {
         Some(self.property_value_at(&found))
     }
 
-    /// `LookupIterator::GetDataValue`
+    /// `JSObject::DefineOwnAccessorIgnoreAttributes`
+    /// `LookupIterator::TransitionToAccessorProperty`
+    pub(crate) fn define_accessor(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        getter: Tagged,
+        setter: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+    ) {
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let name_handle = self.create_handle(name);
+        let getter_handle = self.create_handle(getter);
+        let setter_handle = self.create_handle(setter);
+
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let name = name_handle.get(self);
+        let existing = self.existing_accessor_pair(object, name);
+        let pair = match existing {
+            Some(pair) => {
+                let getter = getter_handle.get(self);
+                let setter = setter_handle.get(self);
+                if pair.equals(&self.heap, getter, setter) {
+                    let found = self.lookup_own_property(object, name).expect("the accessor");
+                    if found.details.attributes() == attributes {
+                        self.close_handle_scope(scope);
+                        return;
+                    }
+                    pair
+                } else {
+                    let copy = self.accessor_pair_copy(pair);
+                    let getter = getter_handle.get(self);
+                    let setter = setter_handle.get(self);
+                    copy.set_components(&mut self.heap, getter, setter);
+                    copy
+                }
+            }
+            None => {
+                let fresh = self.new_accessor_pair();
+                let getter = getter_handle.get(self);
+                let setter = setter_handle.get(self);
+                fresh.set_components(&mut self.heap, getter, setter);
+                fresh
+            }
+        };
+        let pair_handle = self.create_object_handle(pair.object());
+
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let map = object.map(&self.heap);
+        let name = name_handle.get(self);
+        let pair_value = pair_handle.get(self);
+        let new_map = self.transition_to_accessor_property(map, name, pair_value, attributes);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        self.heap.set_map(object.object(), new_map.object());
+        self.close_handle_scope(scope);
+    }
+
+    fn existing_accessor_pair(
+        &self,
+        object: JSObject,
+        name: Tagged,
+    ) -> Option<crate::objects::r#struct::AccessorPair> {
+        let found = self.lookup_own_property(object, name)?;
+        if found.details.kind() != crate::objects::property_details::PropertyKind::Accessor {
+            return None;
+        }
+        let value = self.property_value_at(&found);
+        Some(crate::objects::r#struct::AccessorPair::unchecked_cast(
+            value.to_strong_heap_object()?,
+        ))
+    }
+
+    /// `Factory::NewAccessorPair`
+    fn new_accessor_pair(&mut self) -> crate::objects::r#struct::AccessorPair {
+        use crate::objects::r#struct::AccessorPair;
+        let map = self
+            .roots
+            .accessor_pair_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.allocate_raw_with_retry_or_fail(
+            AccessorPair::K_SIZE as usize,
+            crate::heap::heap::AllocationType::Old,
+        );
+        self.heap.set_map(object, map);
+        let pair = AccessorPair::unchecked_cast(object);
+        let null = self.null_value();
+        pair.set_getter(&mut self.heap, null);
+        pair.set_setter(&mut self.heap, null);
+        pair
+    }
+
+    /// `AccessorPair::Copy`
+    fn accessor_pair_copy(
+        &mut self,
+        pair: crate::objects::r#struct::AccessorPair,
+    ) -> crate::objects::r#struct::AccessorPair {
+        let scope = self.handle_scope();
+        let pair_handle = self.create_object_handle(pair.object());
+        let copy = self.new_accessor_pair();
+        let pair = crate::objects::r#struct::AccessorPair::unchecked_cast(pair_handle.object(self));
+        let getter = pair.getter(&self.heap);
+        let setter = pair.setter(&self.heap);
+        copy.set_getter(&mut self.heap, getter);
+        copy.set_setter(&mut self.heap, setter);
+        self.close_handle_scope(scope);
+        copy
+    }
+
     #[inline]
     pub(crate) fn property_value_at(&self, found: &PropertyLocationInfo) -> Tagged {
         if found.dictionary_entry != K_NOT_FOUND {
@@ -103,6 +310,13 @@ impl Isolate {
                 .holder
                 .property_dictionary(&self.heap)
                 .value_at(&self.heap, found.dictionary_entry);
+        }
+        if found.details.location() == crate::objects::property_details::PropertyLocation::Descriptor
+        {
+            return found
+                .holder_map
+                .instance_descriptors(&self.heap)
+                .get_value(&self.heap, found.descriptor_index);
         }
         found
             .holder
@@ -333,6 +547,37 @@ impl Isolate {
         let updated = self.name_dictionary_delete(dictionary, entry).tagged();
         object.set_raw_properties_or_hash(&mut self.heap, updated);
         true
+    }
+
+    /// `JSObject::DefineOwnPropertyIgnoreAttributes`
+    pub(crate) fn define_own_property(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+    ) -> bool {
+        use crate::objects::property_details::PropertyKind;
+        if let Some(found) = self.lookup_own_property(object, name) {
+            if found.details.kind() == PropertyKind::Accessor {
+                let scope = self.handle_scope();
+                let object_handle = self.create_object_handle(object.object());
+                let name_handle = self.create_handle(name);
+                let value_handle = self.create_handle(value);
+                self.delete_property(object, name);
+                let object = JSObject::unchecked_cast(object_handle.object(self));
+                let name = name_handle.get(self);
+                let value = value_handle.get(self);
+                let result = self.add_property_with_attributes(
+                    object,
+                    name,
+                    value,
+                    crate::objects::property_details::NONE,
+                );
+                self.close_handle_scope(scope);
+                return result;
+            }
+        }
+        self.set_property_with_origin(object, name, value, StoreOrigin::Named)
     }
 
     /// `JSObject::AddProperty`

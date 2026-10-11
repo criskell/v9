@@ -546,6 +546,60 @@ impl Isolate {
         new_map
     }
 
+    /// `Map::TransitionToAccessorProperty`
+    pub(crate) fn transition_to_accessor_property(
+        &mut self,
+        map: Map,
+        name: Tagged,
+        pair: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+    ) -> Map {
+        use crate::objects::property_details::accessor_constant;
+
+        let number_of_own = map.number_of_own_descriptors(&self.heap);
+        let details = accessor_constant(attributes);
+
+        let scope = self.handle_scope();
+        let map_handle = self.create_object_handle(map.object());
+        let name_handle = self.create_handle(name);
+        let pair_handle = self.create_handle(pair);
+
+        let capacity = number_of_own + 1 + K_DESCRIPTOR_ARRAY_SLACK;
+        let fresh = self.new_descriptor_array(capacity);
+        let fresh_handle = self.create_object_handle(fresh.object());
+        let map = Map::unchecked_cast(map_handle.object(self));
+        let descriptors = map.instance_descriptors(&self.heap);
+        for index in 0..number_of_own {
+            let key = descriptors.get_key(&self.heap, index);
+            let entry_details = descriptors.get_details(&self.heap, index);
+            let value = descriptors.get_value(&self.heap, index);
+            let fresh = DescriptorArray::unchecked_cast(fresh_handle.object(self));
+            fresh.append(&mut self.heap, key, entry_details, value);
+        }
+        let name = name_handle.get(self);
+        let pair = pair_handle.get(self);
+        let fresh = DescriptorArray::unchecked_cast(fresh_handle.object(self));
+        let existing = fresh.search(&self.heap, name);
+        if existing == crate::objects::descriptor_array::K_NOT_FOUND {
+            fresh.append(&mut self.heap, name, details, pair);
+        } else {
+            fresh.set(&mut self.heap, existing, name, details, pair);
+        }
+
+        let map = Map::unchecked_cast(map_handle.object(self));
+        let new_map = self.copy_map_shell(map);
+        let fresh = fresh_handle.get(self);
+        new_map.set_instance_descriptors(&mut self.heap, fresh);
+        let fresh = DescriptorArray::unchecked_cast(fresh_handle.object(self));
+        let number_of_descriptors = fresh.number_of_descriptors(&self.heap);
+        new_map.set_number_of_own_descriptors(&mut self.heap, number_of_descriptors);
+        new_map.set_owns_descriptors(&mut self.heap, true);
+        let map = Map::unchecked_cast(map_handle.object(self));
+        new_map.set_constructor_or_back_pointer(&mut self.heap, map.tagged());
+        self.close_handle_scope(scope);
+        new_map
+    }
+
     /// `Map::TooManyFastProperties`
     pub(crate) fn too_many_fast_properties(&self, map: Map, store_origin: StoreOrigin) -> bool {
         if store_origin != StoreOrigin::MaybeKeyed {

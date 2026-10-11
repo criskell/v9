@@ -70,6 +70,7 @@ pub const FIXED_DOUBLE_ARRAY_TYPE: InstanceType = 144;
 pub const NUMBER_DICTIONARY_TYPE: InstanceType = 145;
 pub const NAME_DICTIONARY_TYPE: InstanceType = 146;
 pub const ENUM_CACHE_TYPE: InstanceType = 147;
+pub const ACCESSOR_PAIR_TYPE: InstanceType = 148;
 pub const PROPERTY_ARRAY_TYPE: InstanceType = 133;
 pub const DESCRIPTOR_ARRAY_TYPE: InstanceType = 134;
 pub const TRANSITION_ARRAY_TYPE: InstanceType = 135;
@@ -193,6 +194,7 @@ pub fn instance_type_name(t: InstanceType) -> &'static str {
         NUMBER_DICTIONARY_TYPE => "NUMBER_DICTIONARY",
         NAME_DICTIONARY_TYPE => "NAME_DICTIONARY",
         ENUM_CACHE_TYPE => "ENUM_CACHE",
+        ACCESSOR_PAIR_TYPE => "ACCESSOR_PAIR",
         PROPERTY_ARRAY_TYPE => "PROPERTY_ARRAY",
         DESCRIPTOR_ARRAY_TYPE => "DESCRIPTOR_ARRAY",
         TRANSITION_ARRAY_TYPE => "TRANSITION_ARRAY",
@@ -253,6 +255,7 @@ mod tests {
             NUMBER_DICTIONARY_TYPE,
             NAME_DICTIONARY_TYPE,
             ENUM_CACHE_TYPE,
+            ACCESSOR_PAIR_TYPE,
             JS_OBJECT_TYPE,
             JS_ARRAY_TYPE,
             JS_FUNCTION_TYPE,

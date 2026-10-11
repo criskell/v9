@@ -159,6 +159,7 @@ impl Isolate {
         if let Some(found) = found {
             if found.holder == receiver
                 && found.dictionary_entry == crate::objects::hash_table::K_NOT_FOUND
+                && found.details.kind() == crate::objects::property_details::PropertyKind::Data
                 && found.details.location() == PropertyLocation::Field
             {
                 let handler = self.handler_for_field(map, found.details);

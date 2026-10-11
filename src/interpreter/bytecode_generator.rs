@@ -1212,8 +1212,69 @@ impl BytecodeGenerator {
         let object = self.builder.register_allocator().new_register();
         self.builder.store_accumulator_in_register(object);
 
+        let mut accessor_table: Vec<(String, Option<Expression>, Option<Expression>)> = Vec::new();
+        for property in properties {
+            let PropertyKey::Name(name) = &property.key else {
+                continue;
+            };
+            if property.kind == ObjectLiteralPropertyKind::Computed {
+                continue;
+            }
+            let entry = match accessor_table.iter().position(|(key, ..)| key == name) {
+                Some(index) => &mut accessor_table[index],
+                None => {
+                    accessor_table.push((name.clone(), None, None));
+                    accessor_table.last_mut().expect("the new entry")
+                }
+            };
+            if property.kind == ObjectLiteralPropertyKind::Getter {
+                entry.1 = Some(property.value.clone());
+            } else {
+                entry.2 = Some(property.value.clone());
+            }
+        }
+        let mut defined: Vec<&str> = Vec::new();
+
         for property in properties {
             match &property.key {
+                PropertyKey::Name(name) if property.kind != ObjectLiteralPropertyKind::Computed => {
+                    if defined.iter().any(|key| *key == name.as_str()) {
+                        continue;
+                    }
+                    defined.push(name);
+                    let (_, getter, setter) = accessor_table
+                        .iter()
+                        .find(|(key, ..)| key == name)
+                        .expect("the accessor table entry");
+                    let getter = getter.clone();
+                    let setter = setter.clone();
+
+                    let inner = self.builder.register_allocator().next_register_index();
+                    let args = self.builder.register_allocator().new_register_list(5);
+                    self.builder.move_register(object, args.first_register());
+                    self.builder.load_literal_name(name);
+                    self.builder.store_accumulator_in_register(Register::new(
+                        args.first_register().index() + 1,
+                    ));
+                    self.visit_literal_accessor(
+                        getter.as_ref(),
+                        Register::new(args.first_register().index() + 2),
+                    )?;
+                    self.visit_literal_accessor(
+                        setter.as_ref(),
+                        Register::new(args.first_register().index() + 3),
+                    )?;
+                    self.builder
+                        .load_literal_smi(crate::objects::property_details::NONE as i32);
+                    self.builder.store_accumulator_in_register(Register::new(
+                        args.first_register().index() + 4,
+                    ));
+                    self.builder.call_runtime(
+                        crate::runtime::runtime::FunctionId::DefineAccessorPropertyUnchecked,
+                        args,
+                    );
+                    self.builder.register_allocator().release_registers(inner);
+                }
                 PropertyKey::Name(name) => {
                     let name = name.clone();
                     self.visit_for_accumulator_value(&property.value)?;
@@ -1233,6 +1294,24 @@ impl BytecodeGenerator {
 
         self.builder.load_accumulator_with_register(object);
         self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::VisitLiteralAccessor`
+    fn visit_literal_accessor(
+        &mut self,
+        property: Option<&Expression>,
+        value_out: Register,
+    ) -> Result<()> {
+        match property {
+            Some(property) => {
+                self.visit_for_accumulator_value(property)?;
+                self.builder.store_accumulator_in_register(value_out);
+            }
+            None => {
+                self.builder.load_null().store_accumulator_in_register(value_out);
+            }
+        }
         Ok(())
     }
 

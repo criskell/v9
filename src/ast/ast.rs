@@ -44,6 +44,14 @@ pub struct VariableDeclaration {
 pub struct ObjectLiteralProperty {
     pub key: PropertyKey,
     pub value: Expression,
+    pub kind: ObjectLiteralPropertyKind,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ObjectLiteralPropertyKind {
+    Computed,
+    Getter,
+    Setter,
 }
 
 #[derive(Clone, Debug)]

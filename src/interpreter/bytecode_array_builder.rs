@@ -132,6 +132,11 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::LdaConstant, &[index])
     }
 
+    pub fn load_literal_name(&mut self, value: &str) -> &mut Self {
+        let index = self.insert_name(value);
+        self.output(Bytecode::LdaConstant, &[index])
+    }
+
     pub fn load_undefined(&mut self) -> &mut Self {
         self.output(Bytecode::LdaUndefined, &[])
     }
@@ -512,6 +517,23 @@ impl BytecodeArrayBuilder {
                 args.first_register().to_operand(),
                 args.register_count(),
                 slot,
+            ],
+        )
+    }
+
+    /// `BytecodeArrayBuilder::CallRuntime`
+    pub fn call_runtime(
+        &mut self,
+        function_id: crate::runtime::runtime::FunctionId,
+        args: RegisterList,
+    ) -> &mut Self {
+        debug_assert_eq!(function_id.function().nargs, args.register_count());
+        self.output(
+            Bytecode::CallRuntime,
+            &[
+                function_id.to_u16() as i32,
+                args.first_register().to_operand(),
+                args.register_count(),
             ],
         )
     }

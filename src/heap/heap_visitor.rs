@@ -51,6 +51,13 @@ impl Isolate {
                 }
             }
 
+            it::ACCESSOR_PAIR_TYPE => {
+                use crate::objects::r#struct::AccessorPair;
+                let pair = AccessorPair::unchecked_cast(object);
+                visit(pair.getter_address());
+                visit(pair.setter_address());
+            }
+
             it::ENUM_CACHE_TYPE => {
                 use crate::objects::descriptor_array::EnumCache;
                 let cache = EnumCache::unchecked_cast(object);

@@ -30,6 +30,12 @@ impl Isolate {
         self.roots.fixed_double_array_map = self.new_bare_map(FIXED_DOUBLE_ARRAY_TYPE, 0).tagged();
         self.roots.number_dictionary_map = self.new_bare_map(NUMBER_DICTIONARY_TYPE, 0).tagged();
         self.roots.name_dictionary_map = self.new_bare_map(NAME_DICTIONARY_TYPE, 0).tagged();
+        self.roots.accessor_pair_map = self
+            .new_bare_map(
+                ACCESSOR_PAIR_TYPE,
+                crate::objects::r#struct::AccessorPair::K_SIZE,
+            )
+            .tagged();
         self.roots.enum_cache_map = self
             .new_bare_map(
                 ENUM_CACHE_TYPE,
@@ -121,6 +127,7 @@ impl Isolate {
             .tagged();
         self.heap.the_hole_value = self.roots.the_hole_value;
         self.heap.undefined_value = self.roots.undefined_value;
+        self.heap.null_value = self.roots.null_value;
         self.roots.uninitialized_value = self
             .new_oddball(
                 OddballKind::Uninitialized,

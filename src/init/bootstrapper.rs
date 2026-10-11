@@ -227,6 +227,12 @@ impl Isolate {
         let object_constructor = self.new_js_object();
         let object_constructor = self.create_object_handle(object_constructor.object());
         self.install_builtin(object_constructor, "keys", Builtin::ObjectKeys, 1);
+        self.install_builtin(
+            object_constructor,
+            "defineProperty",
+            Builtin::ObjectDefineProperty,
+            3,
+        );
         let object_constructor_value = object_constructor.get(self);
         self.set_property_by_str(self.global_object(), "Object", object_constructor_value);
 

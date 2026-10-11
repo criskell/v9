@@ -30,6 +30,7 @@ pub enum Builtin {
     ObjectPrototypeToString = 19,
     ObjectKeys = 20,
     FunctionPrototypeCall = 21,
+    ObjectDefineProperty = 22,
 }
 
 impl Builtin {
@@ -57,6 +58,7 @@ impl Builtin {
             18 => ObjectPrototypeHasOwnProperty,
             19 => ObjectPrototypeToString,
             20 => ObjectKeys,
+            22 => ObjectDefineProperty,
             21 => FunctionPrototypeCall,
             _ => return None,
         })
@@ -213,6 +215,9 @@ impl Isolate {
                 Ok(self.new_string(&text).tagged())
             }
             Builtin::ObjectKeys => self.object_keys(argument(0)),
+            Builtin::ObjectDefineProperty => {
+                self.object_define_property(argument(0), argument(1), argument(2))
+            }
 
             Builtin::FunctionPrototypeCall => {
                 let this_argument = argument(0).unwrap_or(self.undefined_value());
@@ -341,6 +346,56 @@ impl Isolate {
             }
         }
         Ok(Smi::from_int(-1))
+    }
+
+    /// `Builtins::ObjectDefineProperty`
+    fn object_define_property(
+        &mut self,
+        target: Option<Tagged>,
+        key: Option<Tagged>,
+        attributes: Option<Tagged>,
+    ) -> ExecutionResult {
+        use crate::objects::js_objects::JSObject;
+        let target = target.unwrap_or(self.undefined_value());
+        let key = key.unwrap_or(self.undefined_value());
+        let attributes = attributes.unwrap_or(self.undefined_value());
+
+        let Some(object) = target.to_strong_heap_object() else {
+            let message = self
+                .new_string("Object.defineProperty called on non-object")
+                .tagged();
+            return Err(Thrown(message));
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(object)) {
+            let message = self
+                .new_string("Object.defineProperty called on non-object")
+                .tagged();
+            return Err(Thrown(message));
+        }
+
+        let scope = self.handle_scope();
+        let target_handle = self.create_object_handle(object);
+        let key_text = self.to_string(key);
+        let name = self.internalize_string(&key_text).tagged();
+        let name_handle = self.create_handle(name);
+
+        let descriptor = self.to_property_descriptor(attributes)?;
+        let property_attributes = descriptor.to_attributes();
+
+        let object = JSObject::unchecked_cast(target_handle.object(self));
+        let name = name_handle.get(self);
+        if descriptor.is_accessor_descriptor() {
+            let null = self.null_value();
+            let getter = descriptor.get().unwrap_or(null);
+            let setter = descriptor.set().unwrap_or(null);
+            self.define_accessor(object, name, getter, setter, property_attributes);
+        } else {
+            let value = descriptor.value().unwrap_or(self.undefined_value());
+            self.add_property_with_attributes(object, name, value, property_attributes);
+        }
+        let result = target_handle.get(self);
+        self.close_handle_scope(scope);
+        Ok(result)
     }
 
     /// `Builtins::ObjectKeys`

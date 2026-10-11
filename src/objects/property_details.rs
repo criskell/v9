@@ -195,6 +195,31 @@ impl PropertyDetails {
         )
     }
 
+    pub fn new_descriptor(
+        kind: PropertyKind,
+        attributes: PropertyAttributes,
+    ) -> PropertyDetails {
+        PropertyDetails(
+            encode(kind as u32, KIND_SHIFT, KIND_BITS)
+                | encode(
+                    PropertyConstness::Const as u32,
+                    CONSTNESS_SHIFT,
+                    CONSTNESS_BITS,
+                )
+                | encode(attributes, ATTRIBUTES_SHIFT, ATTRIBUTES_BITS)
+                | encode(
+                    PropertyLocation::Descriptor as u32,
+                    LOCATION_SHIFT,
+                    LOCATION_BITS,
+                )
+                | encode(
+                    Representation::Tagged as u32,
+                    REPRESENTATION_SHIFT,
+                    REPRESENTATION_BITS,
+                ),
+        )
+    }
+
     #[inline]
     pub const fn from_raw(value: u32) -> PropertyDetails {
         PropertyDetails(value)
@@ -347,6 +372,11 @@ impl std::fmt::Debug for PropertyDetails {
             if self.is_configurable() { "-" } else { "D" },
         )
     }
+}
+
+/// `Descriptor::AccessorConstant`
+pub fn accessor_constant(attributes: PropertyAttributes) -> PropertyDetails {
+    PropertyDetails::new_descriptor(PropertyKind::Accessor, attributes)
 }
 
 pub fn default_data_field(field_index: u32, representation: Representation) -> PropertyDetails {

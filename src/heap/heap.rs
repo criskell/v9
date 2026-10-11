@@ -50,6 +50,8 @@ pub struct Heap {
     pub(crate) the_hole_value: Tagged,
     /// `ReadOnlyRoots::undefined_value`
     pub(crate) undefined_value: Tagged,
+    /// `ReadOnlyRoots::null_value`
+    pub(crate) null_value: Tagged,
 }
 
 impl Heap {
@@ -87,6 +89,7 @@ impl Heap {
             bytes_evacuated: 0,
             the_hole_value: Tagged::ZERO,
             undefined_value: Tagged::ZERO,
+            null_value: Tagged::ZERO,
         }
     }
 
@@ -224,6 +227,11 @@ impl Heap {
     /// `ReadOnlyRoots::the_hole_value`
     pub fn is_the_hole(&self, value: Tagged) -> bool {
         self.the_hole_value != Tagged::ZERO && value == self.the_hole_value
+    }
+
+    /// `ReadOnlyRoots::null_value`
+    pub fn is_null(&self, value: Tagged) -> bool {
+        self.null_value != Tagged::ZERO && value == self.null_value
     }
 
     pub fn contains(&self, address: Address) -> bool {

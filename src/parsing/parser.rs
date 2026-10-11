@@ -1148,26 +1148,10 @@ impl Parser {
         })
     }
 
-    fn parse_object_property(&mut self) -> Result<ObjectLiteralProperty> {
-        if self.peek() == Token::Ellipsis {
-            return Err(self.unexpected_token_with_hint("spread is not implemented"));
-        }
-
-        if self.peek() == Token::LeftBracket {
-            self.consume(Token::LeftBracket);
-            let key = self.parse_assignment_expression()?;
-            self.expect(Token::RightBracket)?;
-            self.expect(Token::Colon)?;
-            let value = self.parse_assignment_expression()?;
-            return Ok(ObjectLiteralProperty {
-                key: PropertyKey::Computed(key),
-                value,
-            });
-        }
-
+    /// `ParserBase::ParsePropertyName`
+    fn parse_property_name(&mut self) -> Result<String> {
         let token = self.peek();
-        let position = self.peek_position();
-        let name = match token {
+        Ok(match token {
             Token::String => {
                 self.next();
                 self.scanner.current_literal().to_string()
@@ -1185,7 +1169,54 @@ impl Parser {
                 self.property_name_text(token)
             }
             _ => return Err(self.unexpected_token_with_hint("expected a property name")),
-        };
+        })
+    }
+
+    fn parse_object_property(&mut self) -> Result<ObjectLiteralProperty> {
+        if self.peek() == Token::Ellipsis {
+            return Err(self.unexpected_token_with_hint("spread is not implemented"));
+        }
+
+        if self.peek() == Token::LeftBracket {
+            self.consume(Token::LeftBracket);
+            let key = self.parse_assignment_expression()?;
+            self.expect(Token::RightBracket)?;
+            self.expect(Token::Colon)?;
+            let value = self.parse_assignment_expression()?;
+            return Ok(ObjectLiteralProperty {
+                key: PropertyKey::Computed(key),
+                value,
+                kind: ObjectLiteralPropertyKind::Computed,
+            });
+        }
+
+        if matches!(self.peek(), Token::Get | Token::Set)
+            && !matches!(
+                self.peek_ahead(),
+                Token::Colon | Token::Comma | Token::RightBrace | Token::Assign | Token::LeftParen
+            )
+        {
+            let token = self.next();
+            let position = self.peek_position();
+            let name = self.parse_property_name()?;
+            let function = self.parse_function_literal(Some(name.clone()), position)?;
+            return Ok(ObjectLiteralProperty {
+                key: PropertyKey::Name(name),
+                value: Expression::FunctionLiteral {
+                    function: Box::new(function),
+                    position,
+                },
+                kind: if token == Token::Get {
+                    ObjectLiteralPropertyKind::Getter
+                } else {
+                    ObjectLiteralPropertyKind::Setter
+                },
+            });
+        }
+
+        let token = self.peek();
+        let position = self.peek_position();
+        let name = self.parse_property_name()?;
 
         if self.peek() == Token::LeftParen {
             return Err(self.unexpected_token_with_hint("method shorthand is not implemented"));
@@ -1202,6 +1233,7 @@ impl Parser {
             return Ok(ObjectLiteralProperty {
                 key: PropertyKey::Name(name.clone()),
                 value: Expression::VariableProxy { name, position },
+                kind: ObjectLiteralPropertyKind::Computed,
             });
         }
 
@@ -1210,6 +1242,7 @@ impl Parser {
         Ok(ObjectLiteralProperty {
             key: PropertyKey::Name(name),
             value,
+            kind: ObjectLiteralPropertyKind::Computed,
         })
     }
 
