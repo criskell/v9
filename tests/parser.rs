@@ -158,6 +158,15 @@ fn shape(expression: &Expression) -> String {
         Expression::SuperCallReference { .. } => "super".to_string(),
         Expression::SuperCallForwardArgs { .. } => "super(...arguments)".to_string(),
         Expression::SuperPropertyReference { .. } => "super".to_string(),
+        Expression::TemplateLiteral { template, .. } => format!(
+            "`{}`",
+            template
+                .string_parts
+                .iter()
+                .map(|part| part.as_str())
+                .collect::<Vec<_>>()
+                .join("${}")
+        ),
         Expression::ClassLiteral { class, .. } => format!(
             "class {}({})",
             class.name.as_deref().unwrap_or(""),
@@ -565,7 +574,7 @@ fn lexical_errors_are_reported_and_not_swallowed() {
     // An unterminated string must not parse as whatever follows it.
     assert!(parse_error("var a = 'oops;").contains("unterminated string"));
     assert!(parse_error("var a = 1 /* oops").contains("unterminated comment"));
-    assert!(parse_error("var a = `x`;").contains("template literals"));
+    assert!(parse_error("var a = `x;").contains("unterminated template"));
 }
 
 #[test]
@@ -580,6 +589,7 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
         ("function* f() {}", "generators"),
         ("f(...a)", "spread"),
         ("a?.b", "optional chaining"),
+        ("tag`a`", "tagged templates"),
         ("function f(a = 1) {}", "default parameters"),
         ("x\n=> x", "no newline before `=>`"),
         ("(a, ...b) => a", "rest parameters"),

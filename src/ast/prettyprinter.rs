@@ -339,6 +339,16 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
             }
         }
         Expression::SuperCallReference { .. } => out.push_str("SUPER CALL REFERENCE\n"),
+        Expression::TemplateLiteral { template, .. } => {
+            out.push_str("TEMPLATE LITERAL\n");
+            for (index, part) in template.string_parts.iter().enumerate() {
+                indent(out, depth + 1);
+                out.push_str(&format!("PART {part:?}\n"));
+                if let Some(substitution) = template.substitutions.get(index) {
+                    print_expression(out, substitution, depth + 1);
+                }
+            }
+        }
         Expression::SuperPropertyReference { is_static, .. } => {
             let kind = if *is_static { "STATIC " } else { "" };
             out.push_str(&format!("{kind}SUPER PROPERTY REFERENCE\n"))

@@ -60,6 +60,12 @@ pub enum PropertyKey {
 }
 
 #[derive(Clone, Debug)]
+pub struct TemplateLiteral {
+    pub string_parts: Vec<String>,
+    pub substitutions: Vec<Expression>,
+}
+
+#[derive(Clone, Debug)]
 pub struct CaseClause {
     pub label: Option<Expression>,
     pub statements: Vec<Statement>,
@@ -216,6 +222,11 @@ pub enum Expression {
         position: Position,
     },
 
+    TemplateLiteral {
+        template: Box<TemplateLiteral>,
+        position: Position,
+    },
+
     Sequence {
         expressions: Vec<Expression>,
         position: Position,
@@ -251,6 +262,7 @@ impl Expression {
             | Expression::SuperCallReference { position }
             | Expression::SuperCallForwardArgs { position }
             | Expression::SuperPropertyReference { position, .. }
+            | Expression::TemplateLiteral { position, .. }
             | Expression::Sequence { position, .. } => *position,
         }
     }

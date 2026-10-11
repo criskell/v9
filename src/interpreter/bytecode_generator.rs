@@ -696,6 +696,9 @@ impl BytecodeGenerator {
             } => self.visit_call(callee, arguments),
             Expression::ObjectLiteral { properties, .. } => self.visit_object_literal(properties),
             Expression::ClassLiteral { class, .. } => self.visit_class_literal(class),
+            Expression::TemplateLiteral { template, .. } => {
+                self.visit_template_literal(template)
+            }
             Expression::SuperCallReference { .. } => {
                 self.unsupported("`super` outside a call")
             }
@@ -1383,6 +1386,50 @@ impl BytecodeGenerator {
         self.builder.call_property(constructor, args);
         self.builder
             .load_accumulator_with_register(Register::receiver());
+        Ok(())
+    }
+
+    fn visit_template_literal(&mut self, template: &TemplateLiteral) -> Result<()> {
+        let parts = &template.string_parts;
+        let substitutions = &template.substitutions;
+        debug_assert!(!substitutions.is_empty());
+        debug_assert_eq!(parts.len(), substitutions.len() + 1);
+
+        let mark = self.builder.register_allocator().next_register_index();
+        let last_part = self.builder.register_allocator().new_register();
+        let mut last_part_valid = false;
+
+        for (index, substitution) in substitutions.iter().enumerate() {
+            if index != 0 {
+                self.builder.store_accumulator_in_register(last_part);
+                last_part_valid = true;
+            }
+
+            if !parts[index].is_empty() {
+                self.builder.load_literal_string(&parts[index]);
+                if last_part_valid {
+                    self.builder.binary_operation(Token::Add, last_part);
+                }
+                self.builder.store_accumulator_in_register(last_part);
+                last_part_valid = true;
+            }
+
+            self.visit_for_accumulator_value(substitution)?;
+            self.builder.to_string();
+            if last_part_valid {
+                self.builder.binary_operation(Token::Add, last_part);
+            }
+            last_part_valid = false;
+        }
+
+        if let Some(tail) = parts.last() {
+            if !tail.is_empty() {
+                self.builder.store_accumulator_in_register(last_part);
+                self.builder.load_literal_string(tail);
+                self.builder.binary_operation(Token::Add, last_part);
+            }
+        }
+        self.builder.register_allocator().release_registers(mark);
         Ok(())
     }
 

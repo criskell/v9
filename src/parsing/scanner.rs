@@ -517,11 +517,7 @@ impl Scanner {
 
             '`' => {
                 self.advance();
-                self.report_error(
-                    "template literals are not implemented",
-                    Location::new(beg_pos, self.position()),
-                );
-                self.make(Token::Illegal, beg_pos)
+                self.scan_template_span(beg_pos)
             }
 
             c if Self::is_identifier_start(c) => self.scan_identifier_or_keyword(beg_pos),
@@ -604,6 +600,55 @@ impl Scanner {
             smi_value: 0,
             number_value: 0.0,
         }
+    }
+
+    fn scan_template_span(&mut self, beg_pos: usize) -> TokenDesc {
+        // A TemplateLiteral is made up of 0 or more kTemplateSpan tokens
+        // (literal text followed by a substitution expression), finalized by a
+        // single kTemplateTail.
+        let mut literal = String::new();
+        let token = loop {
+            let Some(c) = self.c0 else {
+                self.report_error(
+                    "unterminated template literal",
+                    Location::new(beg_pos, self.position()),
+                );
+                return self.make(Token::Illegal, beg_pos);
+            };
+            if c == '`' {
+                self.advance();
+                break Token::TemplateTail;
+            }
+            if c == '$' && self.peek_char() == Some('{') {
+                self.advance();
+                self.advance();
+                break Token::TemplateSpan;
+            }
+            if c == '\\' {
+                self.advance();
+                self.scan_escape(&mut literal, beg_pos);
+                continue;
+            }
+            literal.push(c);
+            self.advance();
+        };
+        TokenDesc {
+            token,
+            location: Location::new(beg_pos, self.position()),
+            literal,
+            smi_value: 0,
+            number_value: 0.0,
+        }
+    }
+
+    pub fn scan_template_continuation(&mut self) -> Token {
+        debug_assert_eq!(self.next.token, Token::RightBrace);
+        let beg_pos = self.next.location.beg_pos;
+        self.cursor = beg_pos + 1;
+        self.advance();
+        self.next = self.scan_template_span(beg_pos);
+        self.next_next = TokenDesc::default();
+        self.next.token
     }
 
     fn scan_escape(&mut self, out: &mut String, beg_pos: usize) {
@@ -1257,9 +1302,9 @@ mod tests {
 
     #[test]
     fn unimplemented_syntax_reports_an_error_rather_than_mis_scanning() {
-        let (_, error) = Scanner::tokenize_all("`template`");
+        let (_, error) = Scanner::tokenize_all("`unterminated");
         assert!(error.is_some());
-        assert!(error.unwrap().message.contains("template literals"));
+        assert!(error.unwrap().message.contains("unterminated template"));
 
         let (_, error) = Scanner::tokenize_all("a @ b");
         assert!(error.is_some());

@@ -893,6 +893,11 @@ impl Parser {
                         position,
                     };
                 }
+                Token::TemplateSpan | Token::TemplateTail => {
+                    return Err(
+                        self.unexpected_token_with_hint("tagged templates are not implemented")
+                    );
+                }
                 token if token.is_property() => {
                     expression = self.parse_property_access(expression)?;
                 }
@@ -1062,6 +1067,7 @@ impl Parser {
                 self.expect(Token::RightParen)?;
                 Ok(expression)
             }
+            Token::TemplateSpan | Token::TemplateTail => self.parse_template_literal(position),
             Token::LeftBracket => self.parse_array_literal(),
             Token::LeftBrace => self.parse_object_literal(),
             Token::Function => {
@@ -1501,6 +1507,57 @@ impl Parser {
             body,
             scope,
             hoisted_functions: state.hoisted_functions,
+            position,
+        })
+    }
+
+    #[inline(never)]
+    fn parse_template_literal(&mut self, position: Position) -> Result<Expression> {
+        // A TemplateLiteral is made up of 0 or more kTemplateSpan tokens
+        // (literal text followed by a substitution expression), finalized by a
+        // single kTemplateTail.
+        debug_assert!(matches!(
+            self.peek(),
+            Token::TemplateSpan | Token::TemplateTail
+        ));
+
+        // If we reach a kTemplateTail first, we are parsing a
+        // NoSubstitutionTemplate.
+        if self.peek() == Token::TemplateTail {
+            self.next();
+            let value = self.scanner.current_literal().to_string();
+            return Ok(Expression::Literal {
+                value: Literal::String(value),
+                position,
+            });
+        }
+
+        self.next();
+        let mut string_parts = vec![self.scanner.current_literal().to_string()];
+        let mut substitutions = Vec::new();
+        loop {
+            let saved = self.accept_in;
+            self.accept_in = true;
+            let expression = self.parse_expression();
+            self.accept_in = saved;
+            substitutions.push(expression?);
+
+            if self.peek() != Token::RightBrace {
+                return Err(self.unexpected_token_with_hint("unterminated template expression"));
+            }
+            let next = self.scanner.scan_template_continuation();
+            self.next();
+            string_parts.push(self.scanner.current_literal().to_string());
+            if next != Token::TemplateSpan {
+                break;
+            }
+        }
+
+        Ok(Expression::TemplateLiteral {
+            template: Box::new(TemplateLiteral {
+                string_parts,
+                substitutions,
+            }),
             position,
         })
     }
