@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Reports comments in src/ that do not appear in the V8 source.
 
-Rule 4 in PORTING.md: a comment in the Rust source is kept only where V8 has
-one. This finds the ones that are not V8's, by normalising each comment line
+A comment in the Rust source is kept only where V8 has one. This finds the
+ones that are not V8's, by normalising each comment line
 and looking for it in the V8 files the module maps to (and, failing that,
 anywhere in V8's src/, since a comment may have moved).
 

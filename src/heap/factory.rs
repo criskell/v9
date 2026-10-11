@@ -377,6 +377,8 @@ impl Isolate {
     ) -> crate::objects::contexts::Context {
         use crate::objects::contexts::Context;
         let length = Context::MIN_CONTEXT_SLOTS + slots;
+        let scope = self.handle_scope();
+        let previous = self.create_handle(previous);
         let map = self
             .roots
             .function_context_map
@@ -386,6 +388,8 @@ impl Isolate {
             Context::size_for(length) as usize,
             AllocationType::Young,
         );
+        let previous = previous.get(self);
+        self.close_handle_scope(scope);
         self.heap.set_map(object, map);
         let context = Context::unchecked_cast(object);
         context.set_length(&mut self.heap, length);
@@ -541,16 +545,26 @@ impl Isolate {
             self.roots.js_function_map
         };
         let map = Map::unchecked_cast(map.to_strong_heap_object().unwrap());
+        let scope = self.handle_scope();
+        let shared_handle = self.create_object_handle(shared.object());
         let object = self.new_js_object_from_map(map);
-        let function = JSFunction::unchecked_cast(object.object());
-        function.set_shared_function_info(&mut self.heap, shared.tagged());
+        let function_handle = self.create_object_handle(object.object());
+        let function = JSFunction::unchecked_cast(function_handle.object(self));
+        let shared_value = shared_handle.get(self);
+        function.set_shared_function_info(&mut self.heap, shared_value);
         function.set_context(&mut self.heap, self.roots.undefined_value);
         if is_native {
             function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
         } else {
-            let vector = self.new_feedback_vector(shared);
-            function.set_feedback_vector(&mut self.heap, vector.tagged());
+            let shared = crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
+                shared_handle.object(self),
+            );
+            let vector = self.new_feedback_vector(shared).tagged();
+            let function = JSFunction::unchecked_cast(function_handle.object(self));
+            function.set_feedback_vector(&mut self.heap, vector);
         }
+        let function = JSFunction::unchecked_cast(function_handle.object(self));
+        self.close_handle_scope(scope);
         function
     }
 

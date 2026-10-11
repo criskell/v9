@@ -90,13 +90,21 @@ impl Isolate {
     }
 
     pub(crate) fn closure_for_with_context(&mut self, index: usize, context: Tagged) -> Tagged {
+        let scope = self.handle_scope();
+        let context = self.create_handle(context);
         let shared = self.shared_function_infos[index];
         let shared = crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
             shared.to_strong_heap_object().expect("a compiled function"),
         );
         let function = self.new_js_function(shared);
+        let function_handle = self.create_object_handle(function.object());
+        let context = context.get(self);
+        let function =
+            crate::objects::js_function::JSFunction::unchecked_cast(function_handle.object(self));
         function.set_context(&mut self.heap, context);
-        function.tagged()
+        let result = function.tagged();
+        self.close_handle_scope(scope);
+        result
     }
 
     pub fn script_feedback_vector(

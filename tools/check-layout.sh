@@ -36,6 +36,6 @@ done
 if [ $status -ne 0 ]; then
   echo
   echo "Some files have no V8 counterpart. Either rename them, or record the" >&2
-  echo "deviation in PORTING.md and add them to the allowlist here." >&2
+  echo "deviation and add them to the allowlist here." >&2
 fi
 exit $status

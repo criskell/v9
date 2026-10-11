@@ -5,8 +5,9 @@ const K_FEEDBACK_VECTOR_REGISTER_INDEX: i32 = -1;
 const K_BYTECODE_ARRAY_REGISTER_INDEX: i32 = -2;
 const K_CURRENT_CONTEXT_REGISTER_INDEX: i32 = -3;
 const K_FUNCTION_CLOSURE_REGISTER_INDEX: i32 = -4;
-const K_ARGUMENT_COUNT_REGISTER_INDEX: i32 = -5;
-const K_FIRST_PARAM_REGISTER_INDEX: i32 = -6;
+const K_CALLER_PC_OFFSET_REGISTER_INDEX: i32 = -5;
+const K_ARGUMENT_COUNT_REGISTER_INDEX: i32 = -6;
+const K_FIRST_PARAM_REGISTER_INDEX: i32 = -7;
 
 /// `Register::kInvalidIndex`
 const K_INVALID_INDEX: i32 = i32::MAX;
@@ -91,6 +92,12 @@ impl Register {
         Register(K_FEEDBACK_VECTOR_REGISTER_INDEX)
     }
 
+    /// `Register::virtual_accumulator`
+    #[inline]
+    pub const fn virtual_accumulator() -> Register {
+        Register(K_CALLER_PC_OFFSET_REGISTER_INDEX)
+    }
+
     /// `Register::argument_count`
     #[inline]
     pub const fn argument_count() -> Register {
@@ -138,6 +145,7 @@ impl std::fmt::Debug for Register {
             K_BYTECODE_ARRAY_REGISTER_INDEX => write!(f, "<bytecode_array>"),
             K_CURRENT_CONTEXT_REGISTER_INDEX => write!(f, "<context>"),
             K_FUNCTION_CLOSURE_REGISTER_INDEX => write!(f, "<closure>"),
+            K_CALLER_PC_OFFSET_REGISTER_INDEX => write!(f, "<accumulator>"),
             K_ARGUMENT_COUNT_REGISTER_INDEX => write!(f, "<argc>"),
             index if index < 0 => {
                 let parameter = self.to_parameter_index();
@@ -329,11 +337,11 @@ mod tests {
 
         assert_eq!(Register::receiver().size_of_operand(), OperandSize::Byte);
         assert_eq!(
-            Register::from_parameter_index(121).size_of_operand(),
+            Register::from_parameter_index(120).size_of_operand(),
             OperandSize::Byte
         );
         assert_eq!(
-            Register::from_parameter_index(122).size_of_operand(),
+            Register::from_parameter_index(121).size_of_operand(),
             OperandSize::Short
         );
     }

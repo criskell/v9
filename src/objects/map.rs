@@ -1,5 +1,6 @@
 use crate::common::globals::{StoreOrigin, K_TAGGED_SIZE, K_TAGGED_SIZE_LOG2};
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
 use crate::heap::heap::Heap;
 use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
@@ -588,14 +589,22 @@ impl Isolate {
             descriptors
         } else {
             let capacity = number_of_own + 1 + K_DESCRIPTOR_ARRAY_SLACK;
+            let scope = self.handle_scope();
+            let old_handle = self.create_object_handle(descriptors.object());
+            let name_handle = self.create_handle(name);
+            let hole_handle = self.create_handle(hole);
             let fresh = self.new_descriptor_array(capacity);
+            let descriptors = DescriptorArray::unchecked_cast(old_handle.object(self));
             for i in 0..number_of_own {
                 let key = descriptors.get_key(&self.heap, i);
                 let entry_details = descriptors.get_details(&self.heap, i);
                 let value = descriptors.get_value(&self.heap, i);
                 fresh.append(&mut self.heap, key, entry_details, value);
             }
+            let name = name_handle.get(self);
+            let hole = hole_handle.get(self);
             fresh.append(&mut self.heap, name, details, hole);
+            self.close_handle_scope(scope);
             fresh
         };
 

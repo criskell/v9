@@ -1,4 +1,5 @@
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::heap::heap::Heap;
 use crate::objects::fixed_array::FixedArray;
 use crate::objects::hash_table::{HashTableBase, HashTableShape, K_NOT_FOUND};
@@ -275,11 +276,16 @@ impl Isolate {
         debug_assert_eq!(dictionary.find_entry(&self.heap, key), K_NOT_FOUND);
 
         // Check whether the dictionary should be extended.
+        let scope = self.handle_scope();
+        let value_handle = self.create_handle(value);
         let dictionary = self.dictionary_ensure_capacity(dictionary, 1);
+        let dictionary_handle = self.create_object_handle(dictionary.object());
 
         let hash = NumberDictionary::hash(key);
         let entry = dictionary.find_insertion_entry(&self.heap, hash);
         let key_object = self.new_number(key as f64);
+        let dictionary = NumberDictionary::unchecked_cast(dictionary_handle.object(self));
+        let value = value_handle.get(self);
         dictionary.as_hash_table().set_key_at(
             &mut self.heap,
             NUMBER_DICTIONARY_SHAPE,
@@ -290,6 +296,7 @@ impl Isolate {
         dictionary.details_at_put(&mut self.heap, entry, details);
         dictionary.as_hash_table().element_added(&mut self.heap);
         dictionary.update_max_number_key(&mut self.heap, key);
+        self.close_handle_scope(scope);
         dictionary
     }
 
@@ -597,7 +604,13 @@ impl Isolate {
     ) -> NameDictionary {
         debug_assert_eq!(dictionary.find_entry(&self.heap, key), K_NOT_FOUND);
 
+        let scope = self.handle_scope();
+        let key_handle = self.create_handle(key);
+        let value_handle = self.create_handle(value);
         let dictionary = self.name_dictionary_ensure_capacity(dictionary, 1);
+        let key = key_handle.get(self);
+        let value = value_handle.get(self);
+        self.close_handle_scope(scope);
 
         let index = dictionary.next_enumeration_index(&self.heap);
         let details = details.set_dictionary_index(index as u32);

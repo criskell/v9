@@ -243,23 +243,37 @@ impl Isolate {
             return;
         }
         let number_of_own = map.number_of_own_descriptors(&self.heap);
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let map_handle = self.create_object_handle(map.object());
         let mut dictionary = self.new_name_dictionary(number_of_own as u32);
-        let descriptors = map.instance_descriptors(&self.heap);
         for index in 0..number_of_own {
+            let map = Map::unchecked_cast(map_handle.object(self));
+            let descriptors = map.instance_descriptors(&self.heap);
             let key = descriptors.get_key(&self.heap, index);
             let details = descriptors.get_details(&self.heap, index);
+            let object = JSObject::unchecked_cast(object_handle.object(self));
             let value = object.fast_property_at(&self.heap, details.field_index() as i32);
+            let dictionary_handle = self.create_object_handle(dictionary.object());
             let slow_details = PropertyDetails::new_dictionary(
                 details.kind(),
                 details.attributes(),
                 crate::objects::property_details::PropertyConstness::Mutable,
                 0,
             );
-            dictionary = self.name_dictionary_add(dictionary, key, value, slow_details);
+            let dictionary_now = crate::objects::dictionary::NameDictionary::unchecked_cast(
+                dictionary_handle.object(self),
+            );
+            dictionary = self.name_dictionary_add(dictionary_now, key, value, slow_details);
         }
+        let dictionary_handle = self.create_object_handle(dictionary.object());
+        let map = Map::unchecked_cast(map_handle.object(self));
         let new_map = self.normalize_map(map);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
         self.heap.set_map(object.object(), new_map.object());
-        object.set_raw_properties_or_hash(&mut self.heap, dictionary.tagged());
+        let dictionary = dictionary_handle.get(self);
+        object.set_raw_properties_or_hash(&mut self.heap, dictionary);
+        self.close_handle_scope(scope);
     }
 
     pub(crate) fn set_dictionary_property(
@@ -286,8 +300,14 @@ impl Isolate {
             crate::objects::property_details::PropertyConstness::Mutable,
             0,
         );
-        let updated = self.name_dictionary_add(dictionary, name, value, details);
-        object.set_raw_properties_or_hash(&mut self.heap, updated.tagged());
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let updated = self
+            .name_dictionary_add(dictionary, name, value, details)
+            .tagged();
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        object.set_raw_properties_or_hash(&mut self.heap, updated);
+        self.close_handle_scope(scope);
         true
     }
 
@@ -296,7 +316,13 @@ impl Isolate {
         if self.lookup_own_property(object, name).is_none() {
             return true;
         }
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let name_handle = self.create_handle(name);
         self.normalize_properties(object);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let name = name_handle.get(self);
+        self.close_handle_scope(scope);
         let dictionary = object.property_dictionary(&self.heap);
         let entry = dictionary.find_entry(&self.heap, name);
         if entry == K_NOT_FOUND {
@@ -305,8 +331,8 @@ impl Isolate {
         if !dictionary.details_at(&self.heap, entry).is_configurable() {
             return false;
         }
-        let updated = self.name_dictionary_delete(dictionary, entry);
-        object.set_raw_properties_or_hash(&mut self.heap, updated.tagged());
+        let updated = self.name_dictionary_delete(dictionary, entry).tagged();
+        object.set_raw_properties_or_hash(&mut self.heap, updated);
         true
     }
 

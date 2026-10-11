@@ -18,7 +18,7 @@ pub type ExecutionResult = Result<Tagged, Thrown>;
 
 const K_MAX_CALL_DEPTH: usize = 180;
 
-const K_FIXED_SLOT_COUNT: usize = 5;
+const K_FIXED_SLOT_COUNT: usize = 6;
 
 struct InterpreterFrame {
     params_base: usize,
@@ -129,6 +129,16 @@ impl Isolate {
 
     #[inline]
     fn write_register(&mut self, frame: &InterpreterFrame, register: Register, value: Tagged) {
+        if let Some(o) = value.to_strong_heap_object() {
+            if crate::objects::map_word::MapWord::from_raw(self.heap.read_u64(o.address()))
+                .is_forwarding_address()
+            {
+                panic!(
+                    "writing an evacuated value 0x{:x} into {register:?}",
+                    o.address()
+                );
+            }
+        }
         let slot = self.register_slot(frame, register);
         self.stack[slot] = value;
     }
@@ -155,9 +165,20 @@ impl Isolate {
             .map(crate::objects::feedback_vector::FeedbackVector::unchecked_cast)
     }
 
+    #[inline]
+    fn accumulator(&self, frame: &InterpreterFrame) -> Tagged {
+        self.read_register(frame, Register::virtual_accumulator())
+    }
+
+    #[inline]
+    fn set_accumulator(&mut self, frame: &InterpreterFrame, value: Tagged) {
+        self.write_register(frame, Register::virtual_accumulator(), value);
+    }
+
     fn dispatch(&mut self, frame: &InterpreterFrame) -> ExecutionResult {
         let length = self.frame_bytecode_array(frame).length(&self.heap);
-        let mut accumulator = self.undefined_value();
+        let undefined = self.undefined_value();
+        self.set_accumulator(frame, undefined);
         let mut offset: i32 = 0;
 
         while offset < length {
@@ -196,26 +217,49 @@ impl Isolate {
 
             match bytecode {
                 // -- loads ------------------------------------------------
-                Bytecode::LdaZero => accumulator = Smi::from_int(0),
-                Bytecode::LdaSmi => accumulator = Smi::from_int(operand(self, 0)),
-                Bytecode::LdaUndefined => accumulator = self.undefined_value(),
-                Bytecode::LdaNull => accumulator = self.null_value(),
-                Bytecode::LdaTheHole => accumulator = self.the_hole_value(),
-                Bytecode::LdaTrue => accumulator = self.true_value(),
-                Bytecode::LdaFalse => accumulator = self.false_value(),
+                Bytecode::LdaZero => {
+                    let value = Smi::from_int(0);
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::LdaSmi => {
+                    let value = Smi::from_int(operand(self, 0));
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::LdaUndefined => {
+                    let value = self.undefined_value();
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::LdaNull => {
+                    let value = self.null_value();
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::LdaTheHole => {
+                    let value = self.the_hole_value();
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::LdaTrue => {
+                    let value = self.true_value();
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::LdaFalse => {
+                    let value = self.false_value();
+                    self.set_accumulator(frame, value);
+                }
                 Bytecode::LdaConstant => {
                     let index = operand(self, 0);
-                    accumulator = bytecode_array
+                    let value = bytecode_array
                         .constant_pool(&self.heap)
                         .get(&self.heap, index);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::Ldar => {
                     let register = register_operand(self, 0);
-                    accumulator = self.read_register(frame, register);
+                    let value = self.read_register(frame, register);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::Star => {
                     let register = register_operand(self, 0);
-                    self.write_register(frame, register, accumulator);
+                    self.write_register(frame, register, self.accumulator(frame));
                 }
                 Bytecode::Mov => {
                     let from = register_operand(self, 0);
@@ -232,15 +276,24 @@ impl Isolate {
                         .constant_pool(&self.heap)
                         .get(&self.heap, index);
                     let previous = self.read_register(frame, Register::current_context());
+                    let scope = self.handle_scope();
+                    let scope_info = self.create_handle(scope_info);
                     let context = self.new_function_context(slots, previous);
+                    let scope_info = scope_info.get(self);
                     context.set_scope_info(&mut self.heap, scope_info);
-                    accumulator = context.tagged();
+                    let value = context.tagged();
+                    self.set_accumulator(frame, value);
+                    self.close_handle_scope(scope);
                 }
                 Bytecode::PushContext => {
                     let register = register_operand(self, 0);
                     let current = self.read_register(frame, Register::current_context());
                     self.write_register(frame, register, current);
-                    self.write_register(frame, Register::current_context(), accumulator);
+                    self.write_register(
+                        frame,
+                        Register::current_context(),
+                        self.accumulator(frame),
+                    );
                 }
                 Bytecode::PopContext => {
                     let register = register_operand(self, 0);
@@ -249,13 +302,15 @@ impl Isolate {
                 }
                 Bytecode::LdaCurrentContextSlot => {
                     let slot = operand(self, 0);
-                    accumulator = self.context_slot(frame, Register::current_context(), 0, slot)?;
+                    let value = self.context_slot(frame, Register::current_context(), 0, slot)?;
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::LdaContextSlot => {
                     let base = register_operand(self, 0);
                     let slot = operand(self, 1);
                     let depth = operand(self, 2);
-                    accumulator = self.context_slot(frame, base, depth, slot)?;
+                    let value = self.context_slot(frame, base, depth, slot)?;
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::StaCurrentContextSlot => {
                     let slot = operand(self, 0);
@@ -264,14 +319,14 @@ impl Isolate {
                         Register::current_context(),
                         0,
                         slot,
-                        accumulator,
+                        self.accumulator(frame),
                     )?;
                 }
                 Bytecode::StaContextSlot => {
                     let base = register_operand(self, 0);
                     let slot = operand(self, 1);
                     let depth = operand(self, 2);
-                    self.set_context_slot(frame, base, depth, slot, accumulator)?;
+                    self.set_context_slot(frame, base, depth, slot, self.accumulator(frame))?;
                 }
 
                 // -- globals ----------------------------------------------
@@ -282,7 +337,7 @@ impl Isolate {
                         Some(vector) => self.load_global_ic(name, vector, slot),
                         None => self.load_global(name),
                     };
-                    accumulator = match value {
+                    let value = match value {
                         Some(value) => value,
                         None => {
                             let text = self.to_string(name);
@@ -291,13 +346,16 @@ impl Isolate {
                             return Err(Thrown(message));
                         }
                     };
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::StaGlobal => {
                     let name = self.constant_name(bytecode_array, operand(self, 0));
                     let slot = operand(self, 1);
                     match self.frame_feedback_vector(frame) {
-                        Some(vector) => self.store_global_ic(name, accumulator, vector, slot),
-                        None => self.store_global(name, accumulator),
+                        Some(vector) => {
+                            self.store_global_ic(name, self.accumulator(frame), vector, slot)
+                        }
+                        None => self.store_global(name, self.accumulator(frame)),
                     }
                 }
 
@@ -306,24 +364,34 @@ impl Isolate {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let name = self.constant_name(bytecode_array, operand(self, 1));
                     let slot = operand(self, 2);
-                    accumulator = self.load_named_property_ic(frame, object, name, slot)?;
+                    let value = self.load_named_property_ic(frame, object, name, slot)?;
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::GetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
-                    accumulator = self.get_keyed_property(object, accumulator)?;
+                    let value = self.get_keyed_property(object, self.accumulator(frame))?;
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::SetNamedProperty | Bytecode::DefineNamedOwnProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let name = self.constant_name(bytecode_array, operand(self, 1));
                     let slot = operand(self, 2);
-                    self.store_named_property_ic(frame, object, name, accumulator, slot)?;
-                    accumulator = self.undefined_value();
+                    self.store_named_property_ic(
+                        frame,
+                        object,
+                        name,
+                        self.accumulator(frame),
+                        slot,
+                    )?;
+                    let value = self.undefined_value();
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::SetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let key = self.read_register(frame, register_operand(self, 1));
-                    self.set_keyed_property(object, key, accumulator)?;
-                    accumulator = self.undefined_value();
+                    self.set_keyed_property(object, key, self.accumulator(frame))?;
+                    let value = self.undefined_value();
+                    self.set_accumulator(frame, value);
                 }
 
                 // -- binary operators -------------------------------------
@@ -340,7 +408,8 @@ impl Isolate {
                 | Bytecode::ShiftRight
                 | Bytecode::ShiftRightLogical => {
                     let left = self.read_register(frame, register_operand(self, 0));
-                    accumulator = self.apply_binary_op(bytecode, left, accumulator);
+                    let value = self.apply_binary_op(bytecode, left, self.accumulator(frame));
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::AddSmi
                 | Bytecode::SubSmi
@@ -348,53 +417,72 @@ impl Isolate {
                 | Bytecode::DivSmi
                 | Bytecode::ModSmi => {
                     let right = Smi::from_int(operand(self, 0));
-                    accumulator = self.apply_binary_op(bytecode, accumulator, right);
+                    let value = self.apply_binary_op(bytecode, self.accumulator(frame), right);
+                    self.set_accumulator(frame, value);
                 }
 
                 // -- unary operators --------------------------------------
                 Bytecode::Inc => {
                     let one = Smi::from_int(1);
-                    accumulator = self.add(accumulator, one);
+                    let value = self.add(self.accumulator(frame), one);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::Dec => {
                     let one = Smi::from_int(1);
-                    accumulator = self.subtract(accumulator, one);
+                    let value = self.subtract(self.accumulator(frame), one);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::Negate => {
-                    let value = self.to_number(accumulator);
-                    accumulator = self.new_number(-value);
+                    let value = self.to_number(self.accumulator(frame));
+                    let value = self.new_number(-value);
+                    self.set_accumulator(frame, value);
                 }
-                Bytecode::BitwiseNot => accumulator = self.bitwise_not(accumulator),
+                Bytecode::BitwiseNot => {
+                    let value = self.bitwise_not(self.accumulator(frame));
+                    self.set_accumulator(frame, value);
+                }
                 Bytecode::ToBooleanLogicalNot => {
-                    let truthy = self.to_boolean(accumulator);
-                    accumulator = self.boolean_value(!truthy);
+                    let truthy = self.to_boolean(self.accumulator(frame));
+                    let value = self.boolean_value(!truthy);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::LogicalNot => {
-                    accumulator = self.boolean_value(accumulator != self.true_value());
+                    let value = self.boolean_value(self.accumulator(frame) != self.true_value());
+                    self.set_accumulator(frame, value);
                 }
-                Bytecode::TypeOf => accumulator = self.type_of(accumulator),
+                Bytecode::TypeOf => {
+                    let value = self.type_of(self.accumulator(frame));
+                    self.set_accumulator(frame, value);
+                }
 
                 Bytecode::DeletePropertyStrict | Bytecode::DeletePropertySloppy => {
                     let object = self.read_register(frame, register_operand(self, 0));
-                    let key = self.key_to_name(accumulator);
+                    let key = self.key_to_name(self.accumulator(frame));
                     let deleted = self.delete_property_or_element(object, key)?;
-                    accumulator = self.boolean_value(deleted);
+                    let value = self.boolean_value(deleted);
+                    self.set_accumulator(frame, value);
                 }
 
                 // -- conversions ------------------------------------------
                 Bytecode::ToBoolean => {
-                    let truthy = self.to_boolean(accumulator);
-                    accumulator = self.boolean_value(truthy);
+                    let truthy = self.to_boolean(self.accumulator(frame));
+                    let value = self.boolean_value(truthy);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::ToNumber => {
-                    let value = self.to_number(accumulator);
-                    accumulator = self.new_number(value);
+                    let value = self.to_number(self.accumulator(frame));
+                    let value = self.new_number(value);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::ToString => {
-                    let text = self.to_string(accumulator);
-                    accumulator = self.new_string(&text).tagged();
+                    let text = self.to_string(self.accumulator(frame));
+                    let value = self.new_string(&text).tagged();
+                    self.set_accumulator(frame, value);
                 }
-                Bytecode::ToName => accumulator = self.key_to_name(accumulator),
+                Bytecode::ToName => {
+                    let value = self.key_to_name(self.accumulator(frame));
+                    self.set_accumulator(frame, value);
+                }
 
                 // -- comparisons ------------------------------------------
                 Bytecode::TestEqual
@@ -405,26 +493,31 @@ impl Isolate {
                 | Bytecode::TestGreaterThanOrEqual
                 | Bytecode::TestIn => {
                     let left = self.read_register(frame, register_operand(self, 0));
-                    let result = self.apply_comparison(bytecode, left, accumulator);
-                    accumulator = self.boolean_value(result);
+                    let result = self.apply_comparison(bytecode, left, self.accumulator(frame));
+                    let value = self.boolean_value(result);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::TestReferenceEqual => {
                     let left = self.read_register(frame, register_operand(self, 0));
-                    accumulator = self.boolean_value(left == accumulator);
+                    let value = self.boolean_value(left == self.accumulator(frame));
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::TestUndetectable => {
                     let null = self.null_value();
                     let undefined = self.undefined_value();
-                    accumulator =
-                        self.boolean_value(accumulator == null || accumulator == undefined);
+                    let current = self.accumulator(frame);
+                    let value = self.boolean_value(current == null || current == undefined);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::TestNull => {
                     let null = self.null_value();
-                    accumulator = self.boolean_value(accumulator == null);
+                    let value = self.boolean_value(self.accumulator(frame) == null);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::TestUndefined => {
                     let undefined = self.undefined_value();
-                    accumulator = self.boolean_value(accumulator == undefined);
+                    let value = self.boolean_value(self.accumulator(frame) == undefined);
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::TestInstanceOf => {
                     let message = self.new_string("`instanceof` is not implemented").tagged();
@@ -433,10 +526,12 @@ impl Isolate {
 
                 // -- literals ---------------------------------------------
                 Bytecode::CreateEmptyObjectLiteral => {
-                    accumulator = self.new_js_object().tagged();
+                    let value = self.new_js_object().tagged();
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::CreateEmptyArrayLiteral => {
-                    accumulator = self.new_js_array(0).tagged();
+                    let value = self.new_js_array(0).tagged();
+                    self.set_accumulator(frame, value);
                 }
                 Bytecode::CreateClosure => {
                     let index = operand(self, 0);
@@ -444,8 +539,9 @@ impl Isolate {
                         .constant_pool(&self.heap)
                         .get(&self.heap, index);
                     let context = self.read_register(frame, Register::current_context());
-                    accumulator =
+                    let value =
                         self.closure_for_with_context(Smi::to_int(shared_index) as usize, context);
+                    self.set_accumulator(frame, value);
                 }
 
                 // -- calls ------------------------------------------------
@@ -478,7 +574,8 @@ impl Isolate {
                         return Err(Thrown(message));
                     }
                     let callee_function = JSFunction::unchecked_cast(callee_object);
-                    accumulator = self.execute(callee_function, receiver, &arguments)?;
+                    let value = self.execute(callee_function, receiver, &arguments)?;
+                    self.set_accumulator(frame, value);
                 }
 
                 // -- control flow -----------------------------------------
@@ -512,7 +609,7 @@ impl Isolate {
                     } else {
                         operand(self, 0)
                     };
-                    if self.jump_condition_holds(bytecode, accumulator) {
+                    if self.jump_condition_holds(bytecode, self.accumulator(frame)) {
                         next_offset = opcode_offset + delta;
                     }
                 }
@@ -521,8 +618,8 @@ impl Isolate {
                     next_offset = opcode_offset - delta;
                 }
 
-                Bytecode::Return => return Ok(accumulator),
-                Bytecode::Throw | Bytecode::ReThrow => return Err(Thrown(accumulator)),
+                Bytecode::Return => return Ok(self.accumulator(frame)),
+                Bytecode::Throw | Bytecode::ReThrow => return Err(Thrown(self.accumulator(frame))),
 
                 Bytecode::Wide | Bytecode::ExtraWide => {
                     unreachable!("a prefix should have been consumed above")

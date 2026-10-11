@@ -48,7 +48,6 @@ fn main() {
             eprintln!("  ic <file.js>");
             eprintln!("          run a file and report its inline caches");
             eprintln!();
-            eprintln!("See PORTING.md for what vx does and does not support.");
             std::process::exit(2);
         }
     }
