@@ -14,6 +14,7 @@ pub mod ast;
 pub mod common;
 pub mod execution;
 pub mod heap;
+pub mod interpreter;
 pub mod numbers;
 pub mod objects;
 pub mod parsing;
