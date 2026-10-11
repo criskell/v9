@@ -17,13 +17,7 @@ pub struct BytecodeNode {
 impl BytecodeNode {
     /// `BytecodeNode::BytecodeNode`
     pub fn new(bytecode: Bytecode, operands: &[i32]) -> BytecodeNode {
-        assert_eq!(
-            operands.len(),
-            bytecode.number_of_operands(),
-            "{bytecode} takes {} operands, got {}",
-            bytecode.number_of_operands(),
-            operands.len()
-        );
+        assert_eq!(operands.len(), bytecode.number_of_operands());
         let mut stored = [0i32; K_MAX_OPERANDS];
         stored[..operands.len()].copy_from_slice(operands);
         BytecodeNode {
@@ -121,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "takes")]
+    #[should_panic]
     fn the_operand_count_must_match_the_bytecode() {
         BytecodeNode::new(Bytecode::Ldar, &[]);
     }

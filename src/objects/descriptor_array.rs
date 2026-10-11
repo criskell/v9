@@ -156,10 +156,7 @@ impl DescriptorArray {
         value: Tagged,
     ) -> i32 {
         let index = self.number_of_descriptors(heap);
-        assert!(
-            index < self.number_of_all_descriptors(heap),
-            "no slack left in the descriptor array; allocate a larger one"
-        );
+        assert!(index < self.number_of_all_descriptors(heap));
         self.set(heap, index, key, details, value);
         self.set_number_of_descriptors(heap, index + 1);
         index
@@ -337,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "no slack left")]
+    #[should_panic(expected = "number_of_all_descriptors")]
     fn appending_past_capacity_is_refused() {
         let mut heap = Heap::new();
         let array = raw_descriptor_array(&mut heap, 1);

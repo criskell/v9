@@ -1,7 +1,6 @@
 use crate::builtins::builtins::Builtin;
 use crate::common::globals::StoreOrigin;
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::interpreter::bytecode_operands::OperandScale;
 use crate::interpreter::bytecode_register::Register;
 use crate::interpreter::bytecodes::Bytecode;
@@ -111,14 +110,11 @@ impl Isolate {
         }
         let parameter = register.to_parameter_index();
         if parameter >= 0 {
-            debug_assert!(
-                (parameter as usize) < frame.params_count,
-                "parameter {parameter} out of range"
-            );
+            debug_assert!((parameter as usize) < frame.params_count);
             return frame.params_base + parameter as usize;
         }
         let fixed = (-index - 1) as usize;
-        debug_assert!(fixed < K_FIXED_SLOT_COUNT, "unknown fixed slot {index}");
+        debug_assert!(fixed < K_FIXED_SLOT_COUNT);
         frame.fixed_base + fixed
     }
 

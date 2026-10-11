@@ -59,6 +59,53 @@ def is_v8s(key):
         return key in blob
     return all(shingle in haystack for shingle in shingles(words))
 
+ASSERT_MACRO = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
+
+def assert_messages(path):
+    """Production assertion macros carrying a message string.
+
+    V8's DCHECK takes no message: the macro prints the expression and the
+    values. A message is authored text, so it is held to the same rule as a
+    comment. The three guards in heap.rs are deliberate FATAL-class
+    diagnostics and are allowed to print the address they caught.
+    """
+    body = open(path).read().partition("#[cfg(test)]")[0]
+    found = []
+    position = 0
+    while True:
+        match = ASSERT_MACRO.search(body, position)
+        if not match:
+            return found
+        depth = 0
+        in_string = escaped = False
+        commas = []
+        index = match.end()
+        while index < len(body):
+            char = body[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char in "([{":
+                depth += 1
+            elif char in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                commas.append(index)
+            index += 1
+        keep = 1 if match.group(0).startswith(("debug_assert_eq", "debug_assert_ne",
+                                               "assert_eq", "assert_ne")) else 0
+        if len(commas) > keep and body[commas[keep] + 1 :].lstrip().startswith('"'):
+            found.append(body[: match.start()].count("\n") + 1)
+        position = index + 1
+
 total = flagged = 0
 for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
                                   capture_output=True, text=True).stdout.split()):
@@ -79,7 +126,12 @@ for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
             continue
         report.append((number, stripped))
         flagged += 1
+    messages = [] if path.endswith("heap/heap.rs") else assert_messages(path)
+    for number in messages:
+        report.append((number, "<assertion message>"))
+        flagged += 1
     if report:
+        report.sort()
         print(f"\n{path}  ({len(report)} not in V8)")
         for number, text in report[:200]:
             print(f"  {number:5d}  {text}")

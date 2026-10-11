@@ -22,7 +22,7 @@ impl BytecodeLoopHeader {
 
     /// `BytecodeLoopHeader::bind_to`
     pub(crate) fn bind_to(&mut self, offset: usize) {
-        debug_assert!(self.offset.is_none(), "a loop header binds once");
+        debug_assert!(self.offset.is_none());
         self.offset = Some(offset);
     }
 }
@@ -68,17 +68,14 @@ impl BytecodeLabel {
 
     /// `BytecodeLabel::bind`
     pub(crate) fn bind(&mut self) {
-        debug_assert!(!self.bound, "a label binds once");
+        debug_assert!(!self.bound);
         self.bound = true;
     }
 
     /// `BytecodeLabel::set_referrer`
     pub(crate) fn set_referrer(&mut self, offset: usize) {
-        debug_assert!(!self.bound, "cannot jump to an already bound label");
-        debug_assert!(
-            !self.has_referrer_jump(),
-            "a label takes one jump; use BytecodeLabels for several"
-        );
+        debug_assert!(!self.bound);
+        debug_assert!(!self.has_referrer_jump());
         self.jump_offset = offset;
     }
 }
@@ -95,7 +92,7 @@ impl BytecodeLabels {
     }
 
     pub fn new_label(&mut self) -> usize {
-        debug_assert!(!self.is_bound, "cannot add a jump to a bound label set");
+        debug_assert!(!self.is_bound);
         self.labels.push(BytecodeLabel::new());
         self.labels.len() - 1
     }
@@ -159,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "takes one jump")]
+    #[should_panic(expected = "has_referrer_jump")]
     fn a_label_refuses_a_second_jump() {
         let mut label = BytecodeLabel::new();
         label.set_referrer(1);
@@ -167,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "binds once")]
+    #[should_panic(expected = "self.bound")]
     fn a_label_refuses_a_second_bind() {
         let mut label = BytecodeLabel::new();
         label.bind();

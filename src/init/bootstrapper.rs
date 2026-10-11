@@ -163,7 +163,7 @@ impl Isolate {
         self.setup_global_object();
 
         let base = self.shared_function_infos.len();
-        assert_eq!(base, 0, "one script per isolate for now");
+        assert_eq!(base, 0);
         for function in &compiled.functions {
             let scope = self.handle_scope();
             let bytecode = self.new_bytecode_array(&function.data);

@@ -39,10 +39,7 @@ impl Context {
     /// `Context::get`
     #[inline]
     pub fn get(self, heap: &Heap, index: i32) -> Tagged {
-        debug_assert!(
-            index >= 0 && index < self.length(heap),
-            "context slot {index} out of range"
-        );
+        debug_assert!(index >= 0 && index < self.length(heap));
         heap.read_tagged(self.slot_address(index))
     }
 

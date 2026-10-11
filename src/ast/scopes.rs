@@ -110,7 +110,7 @@ impl Scope {
 
     #[inline]
     pub fn needs_context(&self) -> bool {
-        debug_assert!(self.allocated, "ask after allocation");
+        debug_assert!(self.allocated);
         self.needs_context
     }
 

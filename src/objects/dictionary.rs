@@ -1,5 +1,4 @@
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::heap::heap::Heap;
 use crate::objects::fixed_array::FixedArray;
 use crate::objects::hash_table::{HashTableBase, HashTableShape, K_NOT_FOUND};

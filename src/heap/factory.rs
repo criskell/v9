@@ -1,6 +1,5 @@
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::heap::heap::AllocationType;
 use crate::objects::descriptor_array::DescriptorArray;
 use crate::objects::elements_kind::{self, ElementsKind};

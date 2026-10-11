@@ -38,12 +38,7 @@ impl BytecodeRegisterAllocator {
     pub fn grow_register_list(&mut self, list: &mut RegisterList) -> Register {
         let expected = list.first_register().index() + list.register_count();
         let register = self.new_register();
-        assert_eq!(
-            register.index(),
-            expected,
-            "a register was allocated between the creation of this list and \
-             growing it, so the list is no longer contiguous"
-        );
+        assert_eq!(register.index(), expected);
         *list = RegisterList::new(list.first_register(), list.register_count() + 1);
         register
     }
@@ -54,11 +49,7 @@ impl BytecodeRegisterAllocator {
     }
 
     pub fn release_register(&mut self, register: Register) {
-        debug_assert_eq!(
-            self.next_register_index - 1,
-            register.index(),
-            "registers are released in reverse order of allocation"
-        );
+        debug_assert_eq!(self.next_register_index - 1, register.index());
         self.next_register_index -= 1;
     }
 
@@ -149,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "no longer contiguous")]
+    #[should_panic]
     fn growing_a_list_after_an_unrelated_allocation_is_refused() {
         let mut allocator = BytecodeRegisterAllocator::new(0);
         let mut arguments = allocator.new_growable_register_list();

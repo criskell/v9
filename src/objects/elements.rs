@@ -1,5 +1,4 @@
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::heap::heap::Heap;
 use crate::objects::dictionary::NumberDictionary;
 use crate::objects::elements_kind::{self, ElementsKind};

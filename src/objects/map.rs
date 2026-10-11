@@ -1,6 +1,5 @@
 use crate::common::globals::{StoreOrigin, K_TAGGED_SIZE, K_TAGGED_SIZE_LOG2};
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
 use crate::heap::heap::Heap;
 use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
@@ -97,10 +96,7 @@ impl Map {
     pub fn set_instance_size(self, heap: &mut Heap, size_in_bytes: i32) {
         debug_assert!(size_in_bytes % K_TAGGED_SIZE == 0);
         let words = size_in_bytes >> K_TAGGED_SIZE_LOG2;
-        debug_assert!(
-            words <= u8::MAX as i32,
-            "instance size {size_in_bytes} too large"
-        );
+        debug_assert!(words <= u8::MAX as i32);
         heap.write_u8(
             self.field(Self::K_INSTANCE_SIZE_IN_WORDS_OFFSET),
             words as u8,
@@ -449,7 +445,7 @@ impl Map {
 
     pub fn last_added(self, heap: &Heap) -> i32 {
         let number = self.number_of_own_descriptors(heap);
-        debug_assert!(number > 0, "a root map added nothing");
+        debug_assert!(number > 0);
         number - 1
     }
 
@@ -515,15 +511,10 @@ impl Isolate {
         name: Tagged,
         representation: Representation,
     ) -> Map {
-        debug_assert!(
-            instance_type::is_name(self.heap.instance_type_of(name).unwrap()),
-            "a property key must be a Name"
-        );
-        debug_assert_eq!(
-            map.find_descriptor(&self.heap, name),
-            K_NOT_FOUND,
-            "the property is already on this map"
-        );
+        debug_assert!(instance_type::is_name(
+            self.heap.instance_type_of(name).unwrap()
+        ));
+        debug_assert_eq!(map.find_descriptor(&self.heap, name), K_NOT_FOUND);
 
         use crate::objects::transitions::TransitionsAccessor;
         if let Some(target) = TransitionsAccessor::search_transition(&self.heap, map, name) {

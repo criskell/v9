@@ -1,9 +1,7 @@
 use crate::common::globals::K_TAGGED_SIZE;
-use crate::handles::handles::*;
 use crate::heap::heap::Heap;
 use crate::objects::elements_kind::ElementsKind;
 use crate::objects::fixed_array::PropertyArray;
-use crate::objects::js_array::JSArray;
 use crate::objects::map::Map;
 use crate::objects::tagged::{Address, Tagged};
 

@@ -64,10 +64,7 @@ impl String {
     pub fn get(self, heap: &Heap, index: i32) -> u16 {
         debug_assert!(index >= 0 && index < self.length(heap));
         let instance_type = self.instance_type(heap);
-        assert!(
-            !instance_type::is_indirect_string(instance_type),
-            "vx has no indirect string representations yet"
-        );
+        assert!(!instance_type::is_indirect_string(instance_type));
         if instance_type::is_one_byte_string(instance_type) {
             heap.read_u8(self.field(Self::K_HEADER_SIZE + index)) as u16
         } else {

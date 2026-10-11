@@ -218,10 +218,7 @@ impl ConstantArrayBuilder {
     pub fn commit_reserved_entry(&mut self, operand_size: OperandSize, value: i32) -> usize {
         self.discard_reserved_entry(operand_size);
         let index = self.insert_smi(value);
-        debug_assert!(
-            index <= self.slice_for(operand_size).max_index(),
-            "a committed reservation must fit the operand it was reserved for"
-        );
+        debug_assert!(index <= self.slice_for(operand_size).max_index());
         index
     }
 

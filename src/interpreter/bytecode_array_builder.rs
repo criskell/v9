@@ -172,7 +172,7 @@ impl BytecodeArrayBuilder {
 
     /// `BytecodeArrayBuilder::MoveRegister`
     pub fn move_register(&mut self, from: Register, to: Register) -> &mut Self {
-        debug_assert_ne!(from, to, "a move to itself is not emitted");
+        debug_assert_ne!(from, to);
         self.output(Bytecode::Mov, &[from.to_operand(), to.to_operand()])
     }
 
@@ -453,10 +453,7 @@ impl BytecodeArrayBuilder {
     }
 
     pub fn call_property(&mut self, callee: Register, args: RegisterList) -> &mut Self {
-        debug_assert!(
-            args.register_count() >= 1,
-            "a property call passes at least the receiver"
-        );
+        debug_assert!(args.register_count() >= 1);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
         self.output(
             Bytecode::CallProperty,

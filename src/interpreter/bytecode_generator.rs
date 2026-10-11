@@ -425,15 +425,11 @@ impl BytecodeGenerator {
                         slot: variable.index,
                     },
                     VariableLocation::Local => {
-                        debug_assert_eq!(
-                            level, 0,
-                            "a register in an enclosing frame should have been \
-                             promoted to a context slot by scope analysis"
-                        );
+                        debug_assert_eq!(level, 0);
                         Resolution::Local(Register::new(variable.index))
                     }
                     VariableLocation::Parameter => {
-                        debug_assert_eq!(level, 0, "likewise for a parameter");
+                        debug_assert_eq!(level, 0);
                         Resolution::Parameter(Register::from_parameter_index(variable.index + 1))
                     }
                     VariableLocation::Unallocated => Resolution::Global,

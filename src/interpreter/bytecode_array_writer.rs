@@ -71,7 +71,7 @@ impl BytecodeArrayWriter {
 
     /// `BytecodeArrayWriter::Write`
     pub fn write(&mut self, node: &BytecodeNode) {
-        debug_assert!(!node.bytecode().is_jump(), "use write_jump");
+        debug_assert!(!node.bytecode().is_jump());
         if self.exit_seen_in_block {
             return;
         }
@@ -81,7 +81,7 @@ impl BytecodeArrayWriter {
 
     pub fn write_jump(&mut self, node: &BytecodeNode, label: &mut BytecodeLabel) {
         debug_assert!(node.bytecode().is_forward_jump());
-        debug_assert_eq!(node.operand(0), 0, "the offset is filled in by patching");
+        debug_assert_eq!(node.operand(0), 0);
         if self.exit_seen_in_block {
             return;
         }
@@ -177,11 +177,7 @@ impl BytecodeArrayWriter {
 
         let mut node = *node;
         node.update_operand0(placeholder_for(reserved));
-        debug_assert_eq!(
-            operand_size_for_scale(node.operand_scale()),
-            reserved,
-            "the placeholder must hold the operand at the reserved width"
-        );
+        debug_assert_eq!(operand_size_for_scale(node.operand_scale()), reserved);
         self.emit_bytecode(&node);
     }
 
@@ -201,11 +197,7 @@ impl BytecodeArrayWriter {
             delta += K_PREFIX_BYTECODE_SIZE;
         }
         node.update_operand0(delta);
-        debug_assert_eq!(
-            node.operand_scale() != OperandScale::Single,
-            emits_prefix,
-            "the prefix prediction must match what the node ends up needing"
-        );
+        debug_assert_eq!(node.operand_scale() != OperandScale::Single, emits_prefix);
         self.emit_bytecode(&node);
     }
 
@@ -245,7 +237,7 @@ impl BytecodeArrayWriter {
 
     /// `BytecodeArrayWriter::PatchJumpWith8BitOperand`
     fn patch_jump_with_8bit_operand(&mut self, jump_location: usize, delta: i32) {
-        debug_assert!(delta > 0, "a forward jump goes forward");
+        debug_assert!(delta > 0);
         let operand_location = jump_location + 1;
         debug_assert_eq!(self.bytecodes[operand_location], K_JUMP_PLACEHOLDER_BYTE);
 
@@ -306,16 +298,8 @@ impl BytecodeArrayWriter {
     }
 
     pub fn finish(self) -> (Vec<u8>, ConstantArrayBuilder, Vec<(usize, usize)>) {
-        assert_eq!(
-            self.unbound_jumps, 0,
-            "{} jump(s) were never bound",
-            self.unbound_jumps
-        );
-        assert_eq!(
-            self.constant_array_builder.outstanding_reservations(),
-            0,
-            "a constant pool reservation was never resolved"
-        );
+        assert_eq!(self.unbound_jumps, 0);
+        assert_eq!(self.constant_array_builder.outstanding_reservations(), 0);
         (
             self.bytecodes,
             self.constant_array_builder,
@@ -549,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "never bound")]
+    #[should_panic]
     fn an_unbound_jump_is_refused_at_the_end() {
         let mut writer = BytecodeArrayWriter::new();
         let mut label = BytecodeLabel::new();

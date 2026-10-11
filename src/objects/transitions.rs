@@ -151,8 +151,7 @@ impl TransitionsAccessor {
             .expect("transitions field holds a strong reference here");
         debug_assert_eq!(
             heap.instance_type(object),
-            instance_type::TRANSITION_ARRAY_TYPE,
-            "unexpected object in the transitions field"
+            instance_type::TRANSITION_ARRAY_TYPE
         );
         Encoding::FullTransitionArray
     }
@@ -239,10 +238,7 @@ impl TransitionsAccessor {
         target: Map,
         transition_array_map: Map,
     ) -> bool {
-        debug_assert!(
-            Self::search_transition(heap, map, name).is_none(),
-            "transition already recorded"
-        );
+        debug_assert!(Self::search_transition(heap, map, name).is_none());
 
         match Self::encoding(heap, map) {
             Encoding::Uninitialized => {

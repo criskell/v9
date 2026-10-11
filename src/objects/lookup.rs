@@ -1,6 +1,5 @@
 use crate::common::globals::StoreOrigin;
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::objects::hash_table::K_NOT_FOUND;
 use crate::objects::instance_type;
 use crate::objects::js_objects::JSObject;

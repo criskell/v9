@@ -417,11 +417,7 @@ impl Token {
     }
 
     pub fn binary_op_for_assignment(self) -> Token {
-        debug_assert!(
-            self.in_range(AssignNullish, AssignSub),
-            "{} is not a compound assignment",
-            self.name()
-        );
+        debug_assert!(self.in_range(AssignNullish, AssignSub));
         let offset = self as u8 - AssignNullish as u8;
         Token::ALL[Nullish as usize + offset as usize]
     }

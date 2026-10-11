@@ -1,6 +1,5 @@
 use crate::common::globals::{InlineCacheState, K_MAX_POLYMORPHIC_MAP_COUNT, K_TAGGED_SIZE};
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::ic::handler_configuration::{Handler, HandlerKind};
 use crate::objects::feedback_vector::{
     FeedbackNexus, FeedbackSlotKind, FeedbackVector, MapAndHandler,
@@ -442,8 +441,7 @@ impl Isolate {
         let hash = name.raw_hash_field(&self.heap);
         debug_assert!(
             self.heap.in_read_only_space(map.object())
-                && self.heap.in_read_only_space(name.object()),
-            "the shared table compares by identity, so its keys must not move"
+                && self.heap.in_read_only_space(name.object())
         );
         self.stub_cache.set(name, hash, map, handler);
     }
