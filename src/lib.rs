@@ -10,8 +10,10 @@
 //! address an offset into a heap arena, reachable only through the `Heap`
 //! that owns it. Nothing in `vx` needs `unsafe`.
 
+pub mod ast;
 pub mod common;
 pub mod execution;
 pub mod heap;
 pub mod objects;
+pub mod parsing;
 pub mod roots;

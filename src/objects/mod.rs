@@ -4,6 +4,7 @@
 #[macro_use]
 pub mod object_macros;
 
+pub mod conversions;
 pub mod descriptor_array;
 pub mod fixed_array;
 pub mod heap_number;

@@ -32,40 +32,75 @@ Reference checkout: `~/devel/v8` at `a74948bb81a5` (2026-10-10).
 | `V8_MAP_PACKING` | off |
 | Smi | `SmiTagging<8>`: full `i32`, in the upper half of the word |
 
+## Fidelity
+
+"Ported" does not mean the same thing in every row below, and the difference
+matters when judging whether `vx` can be trusted to behave like V8. Three
+levels, marked in the status table:
+
+**[T] transcribed** — the constants, bit encodings, layouts and orderings are
+V8's values, read out of the V8 source. These are not reconstructions: the
+numbers *are* the specification, and inventing them produces something that
+is merely plausible. Reading the source rather than working from memory is
+what caught `kHeapObjectTagSize` being 2 bits rather than 1, and a forwarding
+address being tag `00` rather than `11`.
+
+**[A] algorithm ported** — V8's method was read and its logic reproduced, with
+V8's method names, but not line by line. Signatures gain a heap parameter,
+out-parameters become `Option`, errors become `Result`. Behaviour should
+match; the code does not.
+
+**[R] reconstructed** — written against the language specification and V8's
+*structure* (method names, call chain) rather than its code, with only
+targeted parts of the original read. These are the rows to distrust: V8's
+corner cases are not in them unless they happen to coincide. `parser.rs` is
+the clearest case — `parser-base.h` is 7,000 lines and most of that length
+*is* corner cases.
+
+A reconstruction is not automatically wrong, but it is reliably worse at the
+edges. Writing `ParseLogicalExpression` from the grammar gave a version that
+parsed the head at precedence 4 and then checked explicitly for an illegal
+`??` mixture. V8 parses the head at precedence 6, and the mixture then
+becomes unparseable on its own — no check, and correct in cases the explicit
+check got wrong. Reading the original replaced worse code with better code,
+which is the argument for reading it.
+
 ## Status
 
 | V8 | `vx` | State |
 | --- | --- | --- |
-| `include/v8-internal.h`, `src/common/globals.h` | `src/common/globals.rs` | tagging, alignment, sizes |
-| `src/objects/tagged-impl.h`, `tagged.h`, `heap-object.h` | `src/objects/tagged.rs` | `Tagged`, `HeapObject`, strong/weak predicates |
-| `src/objects/smi.h` | `src/objects/smi.rs` | done |
-| `src/objects/map-word.h`, `map-word-inl.h` | `src/objects/map_word.rs` | done |
-| `src/objects/instance-type.h` | `src/objects/instance_type.rs` | string bits exact; non-string types renumbered |
-| `src/objects/property-details.h` | `src/objects/property_details.rs` | bit layout exact; `Representation` tracked, not exploited |
-| `src/objects/fixed-array.h` | `src/objects/fixed_array.rs` | `FixedArray`, `PropertyArray`, `WeakFixedArray` |
-| `src/objects/descriptor-array.h` | `src/objects/descriptor_array.rs` | linear search, no enum cache |
-| `src/objects/map.h`, `map.tq`, `map-inl.h` | `src/objects/map.rs` | layout + `bit_field`/`bit_field3` |
-| `src/objects/transitions.h`, `transitions.cc` | `src/objects/transitions.rs` | `Uninitialized` / `WeakRef` / `FullTransitionArray` |
-| `src/objects/name.h`, `string.h`, `string-hasher-inl.h` | `src/objects/string.rs` | sequential one/two-byte only |
-| `src/objects/heap-number.h` | `src/objects/heap_number.rs` | done |
-| `src/objects/oddball.h` | `src/objects/oddball.rs` | done |
-| `src/objects/js-objects.h` | `src/objects/js_objects.rs` | `JSObject`; `JSFunction` is a placeholder |
-| `src/objects/lookup.cc`, transition half of `map.cc` | `src/objects/lookup.rs` | data properties on the prototype chain |
-| `src/roots/roots.h` | `src/roots/roots.rs` | the roots `vx` needs |
-| `src/execution/isolate.h` | `src/execution/isolate.rs` | heap + roots + string table + bootstrap |
-| `src/heap/spaces.h`, `new-spaces.h`, `paged-spaces.h` | `src/heap/spaces.rs` | bump allocation, no pages |
-| `src/heap/heap.h`, `heap.cc` | `src/heap/heap.rs` | arena, spaces, raw access |
-| `src/heap/factory.h`, `factory.cc` | `src/heap/factory.rs` | the objects `vx` can build |
-| `src/heap/heap-visitor.h` | `src/heap/visitor.rs` | switches on instance type, not `visitor_id` |
-| `src/heap/scavenger.h`, `scavenger.cc` | `src/heap/scavenger.rs` | Cheney copying collector with `age_mark` promotion |
+| `include/v8-internal.h`, `src/common/globals.h` | `src/common/globals.rs` | [T] tagging, alignment, sizes |
+| `src/objects/tagged-impl.h`, `tagged.h`, `heap-object.h` | `src/objects/tagged.rs` | [T] `Tagged`, `HeapObject`, strong/weak predicates |
+| `src/objects/smi.h` | `src/objects/smi.rs` | [T] done |
+| `src/objects/map-word.h`, `map-word-inl.h` | `src/objects/map_word.rs` | [T] done |
+| `src/objects/instance-type.h` | `src/objects/instance_type.rs` | [T] string bits exact; non-string types renumbered |
+| `src/objects/property-details.h` | `src/objects/property_details.rs` | [T] bit layout exact; `Representation` tracked, not exploited |
+| `src/objects/fixed-array.h` | `src/objects/fixed_array.rs` | [T] `FixedArray`, `PropertyArray`, `WeakFixedArray` |
+| `src/objects/descriptor-array.h` | `src/objects/descriptor_array.rs` | [T] layout; [R] linear search, no enum cache |
+| `src/objects/map.h`, `map.tq`, `map-inl.h` | `src/objects/map.rs` | [T] layout + `bit_field`/`bit_field3` |
+| `src/objects/transitions.h`, `transitions.cc` | `src/objects/transitions.rs` | [A] `Uninitialized` / `WeakRef` / `FullTransitionArray` |
+| `src/objects/name.h`, `string.h`, `string-hasher-inl.h` | `src/objects/string.rs` | [T] layout + hasher; sequential strings only |
+| `src/objects/heap-number.h` | `src/objects/heap_number.rs` | [T] done |
+| `src/objects/oddball.h` | `src/objects/oddball.rs` | [T] done |
+| `src/objects/js-objects.h` | `src/objects/js_objects.rs` | [T] `JSObject` layout; `JSFunction` is a placeholder |
+| `src/objects/lookup.cc`, transition half of `map.cc` | `src/objects/lookup.rs` | [A] data properties on the prototype chain |
+| `src/roots/roots.h` | `src/roots/roots.rs` | [A] the roots `vx` needs |
+| `src/execution/isolate.h` | `src/execution/isolate.rs` | [A] heap + roots + string table + bootstrap |
+| `src/heap/spaces.h`, `new-spaces.h`, `paged-spaces.h` | `src/heap/spaces.rs` | [A] bump allocation, no pages |
+| `src/heap/heap.h`, `heap.cc` | `src/heap/heap.rs` | [A] arena, spaces, raw access |
+| `src/heap/factory.h`, `factory.cc` | `src/heap/factory.rs` | [A] the objects `vx` can build |
+| `src/heap/heap-visitor.h` | `src/heap/visitor.rs` | [A] switches on instance type, not `visitor_id` |
+| `src/heap/scavenger.h`, `scavenger.cc` | `src/heap/scavenger.rs` | [A] Cheney copying collector with `age_mark` promotion |
+| `src/numbers/conversions.cc` | `src/objects/conversions.rs` | [A] `Number::toString` per ECMA-262 §6.1.6.1.20 |
+| `src/parsing/token.h` | `src/parsing/token.rs` | [T] full token list, precedences and enum order |
+| `src/parsing/scanner.h`, `scanner.cc` | `src/parsing/scanner.rs` | [A] `c0_`, two-token lookahead, ASI line tracking |
+| `src/ast/ast.h` | `src/ast/ast.rs` | [R] node kinds follow `AST_NODE_LIST`; enums replace the class hierarchy |
+| `src/parsing/parser-base.h`, `parser.cc` | `src/parsing/parser.rs` | **[R]** method chain and names are V8's; the bodies are written from the grammar |
 
 ### Not started
 
 | V8 | Would become | Notes |
 | --- | --- | --- |
-| `src/parsing/token.h`, `scanner.cc` | `src/parsing/` | the next step |
-| `src/ast/ast.h`, `scopes.cc` | `src/ast/` | |
-| `src/parsing/parser-base.h`, `parser.cc` | `src/parsing/parser.rs` | 11k lines in V8; the single biggest chunk |
 | `src/interpreter/bytecodes.h` | `src/interpreter/bytecodes.rs` | the opcode table |
 | `src/interpreter/bytecode-array-builder.cc` | `src/interpreter/` | register allocation, jump patching |
 | `src/interpreter/bytecode-generator.cc` | `src/interpreter/` | 9k lines: AST → bytecode |
