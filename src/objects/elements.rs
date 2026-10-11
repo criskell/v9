@@ -32,7 +32,6 @@ impl ElementsAccessor {
         self.kind
     }
 
-    /// `ElementsAccessorBase::GetCapacityImpl`
     pub fn get_capacity(self, heap: &Heap, backing_store: Tagged) -> u32 {
         let Some(store) = backing_store.to_strong_heap_object() else {
             return 0;
@@ -46,7 +45,6 @@ impl ElementsAccessor {
         }
     }
 
-    /// `ElementsAccessorBase::HasEntryImpl`
     pub fn has_entry(self, heap: &Heap, backing_store: Tagged, index: u32) -> bool {
         if elements_kind::is_dictionary_elements_kind(self.kind) {
             let Some(store) = backing_store.to_strong_heap_object() else {
@@ -66,12 +64,10 @@ impl ElementsAccessor {
         }
     }
 
-    /// `ElementsAccessorBase::HasElementImpl`
     pub fn has_element(self, heap: &Heap, holder: JSObject, index: u32) -> bool {
         self.has_entry(heap, holder.elements(heap), index)
     }
 
-    /// `ElementsAccessorBase::GetImpl`
     pub fn get(self, isolate: &mut Isolate, holder: JSObject, index: u32) -> Option<Tagged> {
         let backing_store = holder.elements(&isolate.heap);
         if !self.has_entry(&isolate.heap, backing_store, index) {
@@ -92,7 +88,6 @@ impl ElementsAccessor {
         }
     }
 
-    /// `ElementsAccessorBase::SetImpl`
     pub fn set(self, isolate: &mut Isolate, holder: JSObject, index: u32, value: Tagged) {
         let store = holder
             .elements(&isolate.heap)
@@ -114,7 +109,6 @@ impl ElementsAccessor {
         }
     }
 
-    /// `ElementsAccessorBase::NumberOfElementsImpl`
     pub fn number_of_elements(self, heap: &Heap, receiver: JSObject) -> u32 {
         let backing_store = receiver.elements(heap);
         if elements_kind::is_dictionary_elements_kind(self.kind) {
@@ -131,7 +125,6 @@ impl ElementsAccessor {
 }
 
 impl Isolate {
-    /// `ElementsAccessor::ConvertElementsWithCapacity`
     pub(crate) fn convert_elements_with_capacity(
         &mut self,
         object: JSObject,
@@ -204,7 +197,6 @@ impl Isolate {
         }
     }
 
-    /// `ElementsAccessorBase::BasicGrowCapacityAndConvertImpl`
     pub(crate) fn basic_grow_capacity_and_convert(
         &mut self,
         object: JSObject,
@@ -228,7 +220,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    /// `ElementsAccessorBase::GrowCapacityAndConvertImpl`
     pub(crate) fn grow_capacity_and_convert(
         &mut self,
         object: JSObject,
@@ -239,7 +230,6 @@ impl Isolate {
         self.basic_grow_capacity_and_convert(object, from_kind, to_kind, capacity);
     }
 
-    /// `FastElementsAccessor::AddImpl`
     pub(crate) fn add_element(
         &mut self,
         object: JSObject,
@@ -270,7 +260,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    /// `FastElementsAccessor::NormalizeImpl`
     pub(crate) fn normalize_elements_impl(&mut self, object: JSObject) -> NumberDictionary {
         let kind = object.get_elements_kind(&self.heap);
         let accessor = ElementsAccessor::for_kind(kind);
@@ -296,7 +285,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `JSObject::NormalizeElements`
     pub(crate) fn normalize_elements(&mut self, object: JSObject) -> NumberDictionary {
         use crate::objects::elements_kind::ElementsKind::DictionaryElements;
         let elements = object.elements(&self.heap);
@@ -343,7 +331,6 @@ impl Isolate {
         self.fill_elements_with_holes(object, kind, index, index + 1);
     }
 
-    /// `DictionaryElementsAccessor::SetLengthImpl`
     fn set_dictionary_length(&mut self, array: JSArray, length: u32) {
         let object = array.as_js_object();
         let dictionary = NumberDictionary::unchecked_cast(
@@ -386,7 +373,6 @@ impl Isolate {
         array.set_length_value(&mut self.heap, length);
     }
 
-    /// `ElementsAccessorBase::SetLengthImpl`
     pub(crate) fn set_elements_length(&mut self, array: JSArray, length: u32) {
         let object = array.as_js_object();
         let mut kind = object.get_elements_kind(&self.heap);

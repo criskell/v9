@@ -24,7 +24,6 @@ pub struct Isolate {
 
     pub(crate) stub_cache: crate::ic::stub_cache::StubCache,
 
-    /// `Heap::allocator_`
     pub(crate) heap_allocator: crate::heap::heap_allocator::HeapAllocator,
 
     pub trace_ic_enabled: bool,
@@ -148,7 +147,6 @@ impl Isolate {
         )
     }
 
-    // -- the string table ---------------------------------------------------
 }
 
 impl Default for Isolate {

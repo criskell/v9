@@ -4,13 +4,11 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::property_details::PropertyAttributes;
 use crate::objects::tagged::Tagged;
 
-/// `PropertyAttributesFromInt`
 fn property_attributes_from_int(value: i32) -> PropertyAttributes {
     value as PropertyAttributes
 }
 
 impl Isolate {
-    /// `Runtime_DefineAccessorPropertyUnchecked`
     pub(crate) fn runtime_define_accessor_property_unchecked(
         &mut self,
         args: &[Tagged],

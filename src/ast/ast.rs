@@ -39,7 +39,6 @@ pub struct VariableDeclaration {
     pub position: Position,
 }
 
-/// `ObjectLiteralProperty`
 #[derive(Clone, Debug)]
 pub struct ObjectLiteralProperty {
     pub key: PropertyKey,
@@ -60,7 +59,6 @@ pub enum PropertyKey {
     Computed(Expression),
 }
 
-/// `ClassLiteralProperty`
 #[derive(Clone, Debug)]
 pub struct ClassLiteralProperty {
     pub key: PropertyKey,
@@ -76,7 +74,6 @@ pub enum ClassLiteralPropertyKind {
     Setter,
 }
 
-/// `ClassLiteral`
 #[derive(Clone, Debug)]
 pub struct ClassLiteral {
     pub name: Option<String>,
@@ -86,7 +83,6 @@ pub struct ClassLiteral {
     pub position: Position,
 }
 
-/// `FunctionLiteral`
 #[derive(Clone, Debug)]
 pub struct FunctionLiteral {
     pub name: Option<String>,
@@ -97,7 +93,6 @@ pub struct FunctionLiteral {
     pub position: Position,
 }
 
-/// `Expression`
 #[derive(Clone, Debug)]
 pub enum Expression {
     Literal {
@@ -110,7 +105,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `ThisExpression`
     This {
         position: Position,
     },
@@ -122,7 +116,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `BinaryOperation`
     Binary {
         op: Token,
         left: Box<Expression>,
@@ -144,7 +137,6 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `UnaryOperation`
     Unary {
         op: Token,
         expression: Box<Expression>,
@@ -171,27 +163,23 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `CallNew`
     CallNew {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
         position: Position,
     },
 
-    /// `Call`
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
         position: Position,
     },
 
-    /// `ObjectLiteral`
     ObjectLiteral {
         properties: Vec<ObjectLiteralProperty>,
         position: Position,
     },
 
-    /// `ArrayLiteral`
     ArrayLiteral {
         values: Vec<Expression>,
         position: Position,
@@ -202,18 +190,15 @@ pub enum Expression {
         position: Position,
     },
 
-    /// `ClassLiteral`
     ClassLiteral {
         class: Box<ClassLiteral>,
         position: Position,
     },
 
-    /// `SuperCallReference`
     SuperCallReference {
         position: Position,
     },
 
-    /// `SuperCallForwardArgs`
     SuperCallForwardArgs {
         position: Position,
     },
@@ -271,16 +256,13 @@ impl Expression {
     }
 }
 
-/// `Statement`
 #[derive(Clone, Debug)]
 pub enum Statement {
-    /// `Block`
     Block {
         statements: Vec<Statement>,
         position: Position,
     },
 
-    /// `ForInStatement`
     ForIn {
         each: String,
         subject: Expression,
@@ -288,7 +270,6 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `TryCatchStatement`
     TryCatch {
         try_block: Vec<Statement>,
         catch_variable: Option<String>,
@@ -296,20 +277,17 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `TryFinallyStatement`
     TryFinally {
         try_block: Vec<Statement>,
         finally_block: Vec<Statement>,
         position: Position,
     },
 
-    /// `ThrowStatement`
     Throw {
         exception: Expression,
         position: Position,
     },
 
-    /// `ExpressionStatement`
     Expression {
         expression: Expression,
         position: Position,
@@ -325,7 +303,6 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `IfStatement`
     If {
         condition: Expression,
         then_statement: Box<Statement>,
@@ -333,21 +310,18 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `WhileStatement`
     While {
         condition: Expression,
         body: Box<Statement>,
         position: Position,
     },
 
-    /// `DoWhileStatement`
     DoWhile {
         body: Box<Statement>,
         condition: Expression,
         position: Position,
     },
 
-    /// `ForStatement`
     For {
         init: Option<Box<Statement>>,
         condition: Option<Expression>,
@@ -356,18 +330,15 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `ReturnStatement`
     Return {
         value: Option<Expression>,
         position: Position,
     },
 
-    /// `BreakStatement`
     Break {
         position: Position,
     },
 
-    /// `ContinueStatement`
     Continue {
         position: Position,
     },

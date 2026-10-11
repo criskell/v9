@@ -2,7 +2,6 @@ use crate::interpreter::bytecode_operands::{OperandScale, OperandSize, OperandTy
 use crate::interpreter::bytecode_register::Register;
 use crate::interpreter::bytecodes::Bytecode;
 
-/// `BytecodeArrayIterator`
 pub struct BytecodeArrayIterator<'a> {
     bytecodes: &'a [u8],
     offset: usize,
@@ -26,19 +25,16 @@ impl<'a> BytecodeArrayIterator<'a> {
         iterator
     }
 
-    /// `BytecodeArrayIterator::done`
     #[inline]
     pub fn done(&self) -> bool {
         self.offset >= self.bytecodes.len()
     }
 
-    /// `BytecodeArrayIterator::current_bytecode`
     #[inline]
     pub fn current_bytecode(&self) -> Bytecode {
         self.bytecode
     }
 
-    /// `BytecodeArrayIterator::current_offset`
     #[inline]
     pub fn current_offset(&self) -> usize {
         self.offset
@@ -49,7 +45,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         self.opcode_offset
     }
 
-    /// `BytecodeArrayIterator::current_operand_scale`
     #[inline]
     pub fn current_operand_scale(&self) -> OperandScale {
         self.operand_scale
@@ -59,7 +54,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         (self.opcode_offset - self.offset) + self.bytecode.size(self.operand_scale)
     }
 
-    /// `BytecodeArrayIterator::Advance`
     pub fn advance(&mut self) {
         self.offset += self.current_bytecode_size();
         if !self.done() {
@@ -74,7 +68,6 @@ impl<'a> BytecodeArrayIterator<'a> {
         }
     }
 
-    /// `BytecodeArrayIterator::UpdateOperandScale`
     fn update_operand_scale(&mut self) {
         let first = Bytecode::from_byte(self.bytecodes[self.offset]).unwrap_or(Bytecode::Illegal);
         if let Some(scale) = first.prefix_to_operand_scale() {
@@ -97,19 +90,15 @@ impl<'a> BytecodeArrayIterator<'a> {
         read_operand(self.bytecodes, offset, size, unsigned)
     }
 
-    /// `BytecodeArrayIterator::GetRegisterOperand`
     pub fn register_operand(&self, index: usize) -> Register {
         debug_assert!(self.bytecode.operand_type(index).is_register_operand_type());
         Register::from_operand(self.operand(index))
     }
 
-    /// `BytecodeArrayIterator::GetIndexOperand`
     pub fn index_operand(&self, index: usize) -> usize {
         self.operand(index) as usize
     }
 
-    /// `BytecodeArrayIterator::GetJumpTargetOffset`.
-    /// backwards.
     pub fn jump_target_offset(&self) -> usize {
         debug_assert!(self.bytecode.is_jump());
         let delta = self.operand(0);

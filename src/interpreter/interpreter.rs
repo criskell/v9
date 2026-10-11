@@ -147,7 +147,6 @@ impl Isolate {
         self.stack[slot] = value;
     }
 
-    /// `InterpreterFrameConstants::kBytecodeArrayFromFp`
     #[inline]
     fn frame_bytecode_array(&self, frame: &InterpreterFrame) -> BytecodeArray {
         BytecodeArray::unchecked_cast(
@@ -157,7 +156,6 @@ impl Isolate {
         )
     }
 
-    /// `InterpreterFrameConstants::kFeedbackVectorFromFp`
     #[inline]
     fn frame_feedback_vector(
         &self,
@@ -198,7 +196,6 @@ impl Isolate {
         }
     }
 
-    /// `Isolate::UnwindAndFindHandler`
     fn unwind_and_find_handler(&mut self, frame: &InterpreterFrame) -> Option<(i32, Tagged)> {
         use crate::codegen::handler_table::{HandlerTable, K_NO_HANDLER_FOUND};
         use crate::objects::fixed_array::FixedArray;
@@ -273,7 +270,6 @@ impl Isolate {
             let mut next_offset = offset + instruction_size;
 
             match bytecode {
-                // -- loads ------------------------------------------------
                 Bytecode::LdaZero => {
                     let value = Smi::from_int(0);
                     self.set_accumulator(frame, value);
@@ -325,7 +321,6 @@ impl Isolate {
                     self.write_register(frame, to, value);
                 }
 
-                // -- contexts ---------------------------------------------
                 Bytecode::CreateFunctionContext => {
                     let index = operand(self, 0);
                     let slots = operand(self, 1);
@@ -386,7 +381,6 @@ impl Isolate {
                     self.set_context_slot(frame, base, depth, slot, self.accumulator(frame))?;
                 }
 
-                // -- globals ----------------------------------------------
                 Bytecode::LdaGlobal => {
                     let name = self.constant_name(bytecode_array, operand(self, 0));
                     let slot = operand(self, 1);
@@ -416,7 +410,6 @@ impl Isolate {
                     }
                 }
 
-                // -- properties -------------------------------------------
                 Bytecode::GetNamedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let name = self.constant_name(bytecode_array, operand(self, 1));
@@ -465,7 +458,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- binary operators -------------------------------------
                 Bytecode::Add
                 | Bytecode::Sub
                 | Bytecode::Mul
@@ -492,7 +484,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- unary operators --------------------------------------
                 Bytecode::Inc => {
                     let one = Smi::from_int(1);
                     let value = self.add(self.accumulator(frame), one);
@@ -534,7 +525,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- conversions ------------------------------------------
                 Bytecode::ToBoolean => {
                     let truthy = self.to_boolean(self.accumulator(frame));
                     let value = self.boolean_value(truthy);
@@ -555,7 +545,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- comparisons ------------------------------------------
                 Bytecode::TestEqual
                 | Bytecode::TestEqualStrict
                 | Bytecode::TestLessThan
@@ -596,7 +585,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- literals ---------------------------------------------
                 Bytecode::CreateEmptyObjectLiteral => {
                     let value = self.new_js_object().tagged();
                     self.set_accumulator(frame, value);
@@ -616,7 +604,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- calls ------------------------------------------------
                 Bytecode::CallUndefinedReceiver | Bytecode::CallProperty => {
                     let callee = self.read_register(frame, register_operand(self, 0));
                     let first_argument = register_operand(self, 1);
@@ -650,7 +637,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- control flow -----------------------------------------
                 Bytecode::Jump
                 | Bytecode::JumpIfTrue
                 | Bytecode::JumpIfFalse
@@ -703,7 +689,6 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
 
-                // -- for...in ---------------------------------------------
                 Bytecode::CallRuntime => {
                     let function_id = operand(self, 0) as u16;
                     let first_argument = register_operand(self, 1);
@@ -924,7 +909,6 @@ impl Isolate {
         self.internalize_string(&text).tagged()
     }
 
-    /// `KeyedLoadIC::Load`
     fn get_keyed_property(&mut self, object: Tagged, key: Tagged) -> ExecutionResult {
         let index = self
             .to_array_index(key)
@@ -938,7 +922,6 @@ impl Isolate {
         self.load_property(object, name)
     }
 
-    /// `KeyedStoreIC::Store`
     fn set_keyed_property(
         &mut self,
         object: Tagged,
@@ -967,7 +950,6 @@ impl Isolate {
         result
     }
 
-    /// `JSObject::GetElement`
     fn load_element(&mut self, object: Tagged, index: u32) -> Result<Option<Tagged>, Thrown> {
         use crate::objects::elements::ElementsAccessor;
         let Some(receiver) = object.to_strong_heap_object() else {
@@ -986,7 +968,6 @@ impl Isolate {
         }
     }
 
-    /// `JSObject::SetElement`
     fn store_element(&mut self, object: Tagged, index: u32, value: Tagged) -> Result<bool, Thrown> {
         let Some(receiver) = object.to_strong_heap_object() else {
             return Ok(false);
@@ -1002,7 +983,6 @@ impl Isolate {
         Ok(true)
     }
 
-    /// `JSReceiver::DeletePropertyOrElement`
     fn delete_property_or_element(&mut self, object: Tagged, name: Tagged) -> Result<bool, Thrown> {
         let Some(receiver) = object.to_strong_heap_object() else {
             return Ok(true);
@@ -1061,7 +1041,6 @@ impl Isolate {
         }
     }
 
-    /// `DefineNamedOwnIC`
     fn define_named_own_ic(
         &mut self,
         frame: &InterpreterFrame,
@@ -1081,7 +1060,6 @@ impl Isolate {
         self.store_named_property_ic(frame, object, name, value, slot)
     }
 
-    /// `StoreIC`
     fn store_named_property_ic(
         &mut self,
         frame: &InterpreterFrame,
@@ -1135,7 +1113,6 @@ impl Isolate {
         }
     }
 
-    /// `Object::GetProperty`
     fn load_property_from_primitive(&mut self, object: Tagged, name: Tagged) -> ExecutionResult {
         if let Some(string) = crate::objects::string::String::try_cast(&self.heap, object) {
             if self.name_is(name, "length") {

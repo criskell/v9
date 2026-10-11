@@ -62,7 +62,6 @@ impl Space {
         self.limit
     }
 
-    /// `Space::Capacity`
     #[inline]
     pub fn capacity(&self) -> usize {
         (self.limit - self.start) as usize
@@ -82,7 +81,6 @@ impl Space {
         self.allocated_since_reset
     }
 
-    /// `Space::Contains`
     #[inline]
     pub fn contains(&self, address: Address) -> bool {
         address >= self.start && address < self.limit

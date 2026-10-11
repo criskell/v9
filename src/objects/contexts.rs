@@ -4,7 +4,6 @@ use crate::objects::smi::Smi;
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `Context`
     Context
 );
 
@@ -12,7 +11,6 @@ impl Context {
     pub const K_LENGTH_OFFSET: i32 = K_TAGGED_SIZE;
     pub const K_HEADER_SIZE: i32 = Self::K_LENGTH_OFFSET + K_TAGGED_SIZE;
 
-    /// `Context::SCOPE_INFO_INDEX`
     pub const SCOPE_INFO_INDEX: i32 = 0;
     pub const PREVIOUS_INDEX: i32 = 1;
     pub const MIN_CONTEXT_SLOTS: i32 = 2;
@@ -36,14 +34,12 @@ impl Context {
         self.field(Self::K_HEADER_SIZE + index * K_TAGGED_SIZE)
     }
 
-    /// `Context::get`
     #[inline]
     pub fn get(self, heap: &Heap, index: i32) -> Tagged {
         debug_assert!(index >= 0 && index < self.length(heap));
         heap.read_tagged(self.slot_address(index))
     }
 
-    /// `Context::set`
     #[inline]
     pub fn set(self, heap: &mut Heap, index: i32, value: Tagged) {
         debug_assert!(index >= 0 && index < self.length(heap));
@@ -60,7 +56,6 @@ impl Context {
         self.set(heap, Self::SCOPE_INFO_INDEX, value);
     }
 
-    /// `Context::previous`
     #[inline]
     pub fn previous(self, heap: &Heap) -> Tagged {
         self.get(heap, Self::PREVIOUS_INDEX)
@@ -86,12 +81,10 @@ impl Context {
 }
 
 object_type!(
-    /// `NativeContext`
     NativeContext
 );
 
 impl NativeContext {
-    /// `Context::OBJECT_FUNCTION_INDEX`
     pub const OBJECT_FUNCTION_INDEX: i32 = Context::MIN_CONTEXT_SLOTS;
     pub const ARRAY_FUNCTION_INDEX: i32 = Self::OBJECT_FUNCTION_INDEX + 1;
     pub const STRING_FUNCTION_INDEX: i32 = Self::ARRAY_FUNCTION_INDEX + 1;
@@ -99,7 +92,6 @@ impl NativeContext {
     pub const BOOLEAN_FUNCTION_INDEX: i32 = Self::NUMBER_FUNCTION_INDEX + 1;
     pub const FUNCTION_FUNCTION_INDEX: i32 = Self::BOOLEAN_FUNCTION_INDEX + 1;
 
-    /// `Context::INITIAL_OBJECT_PROTOTYPE_INDEX`
     pub const INITIAL_OBJECT_PROTOTYPE_INDEX: i32 = Self::FUNCTION_FUNCTION_INDEX + 1;
     pub const INITIAL_ARRAY_PROTOTYPE_INDEX: i32 = Self::INITIAL_OBJECT_PROTOTYPE_INDEX + 1;
     pub const INITIAL_STRING_PROTOTYPE_INDEX: i32 = Self::INITIAL_ARRAY_PROTOTYPE_INDEX + 1;

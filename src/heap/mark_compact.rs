@@ -16,7 +16,6 @@ pub struct MarkCompactStats {
 }
 
 impl Isolate {
-    /// `MarkCompactCollector::CollectGarbage`
     pub fn collect_all_garbage(&mut self) -> MarkCompactStats {
         self.collect_garbage();
 
@@ -39,14 +38,12 @@ impl Isolate {
         stats
     }
 
-    /// `MarkCompactCollector::MarkLiveObjects`
     fn mark_live_objects(&mut self, bitmap: &mut MarkingBitmap, stats: &mut MarkCompactStats) {
         let mut worklist = MarkingWorklist::new();
         self.mark_roots(bitmap, &mut worklist);
         self.drain_marking_worklist(bitmap, &mut worklist, stats);
     }
 
-    /// `MarkCompactCollector::MarkRoots`
     fn mark_roots(&mut self, bitmap: &mut MarkingBitmap, worklist: &mut MarkingWorklist) {
         let mut roots: Vec<Tagged> = Vec::new();
         self.iterate_roots(&mut |slot| roots.push(*slot));
@@ -61,7 +58,6 @@ impl Isolate {
         }
     }
 
-    /// `MarkCompactCollector::MarkObject`
     fn mark_object(
         &mut self,
         bitmap: &mut MarkingBitmap,
@@ -82,7 +78,6 @@ impl Isolate {
         }
     }
 
-    /// `MarkCompactCollector::DrainMarkingWorklist`
     fn drain_marking_worklist(
         &mut self,
         bitmap: &mut MarkingBitmap,
@@ -121,7 +116,6 @@ impl Isolate {
         }
     }
 
-    /// `MarkCompactCollector::ClearNonLiveReferences`
     fn clear_non_live_references(&mut self, bitmap: &MarkingBitmap, stats: &mut MarkCompactStats) {
         let cleared = Tagged::cleared();
         let mut weak_slots: Vec<Address> = Vec::new();
@@ -149,7 +143,6 @@ impl Isolate {
         }
     }
 
-    /// `MarkingHelper::IsMarkedOrAlwaysLive`
     fn is_marked_or_always_live(&self, bitmap: &MarkingBitmap, object: HeapObject) -> bool {
         if !self.is_in_old_space(object.address()) {
             return true;
@@ -195,7 +188,6 @@ impl Isolate {
         self.heap.set_old_space_top(target);
     }
 
-    /// `MarkCompactCollector::UpdatePointersAfterEvacuation`
     fn update_pointers_after_evacuation(
         &mut self,
         bitmap: &MarkingBitmap,
@@ -203,7 +195,6 @@ impl Isolate {
     ) {
         let lookup = |address: Address| -> Option<Address> { forwarding.get(&address).copied() };
 
-        // Roots.
         let mut root_values: Vec<Tagged> = Vec::new();
         self.iterate_roots(&mut |slot| root_values.push(*slot));
         for value in root_values.iter_mut() {
@@ -239,7 +230,6 @@ impl Isolate {
         !self.is_in_old_space(address)
     }
 
-    /// `MarkCompactCollector::VisitLiveObjects`
     fn for_each_live_object(
         &mut self,
         bitmap: &MarkingBitmap,
@@ -275,7 +265,6 @@ impl Isolate {
     }
 }
 
-/// `UpdateSlot`
 #[inline]
 fn update_reference(value: Tagged, lookup: &impl Fn(Address) -> Option<Address>) -> Tagged {
     if value.is_smi() || value.is_cleared() {

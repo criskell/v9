@@ -61,7 +61,6 @@ impl BytecodeArrayWriter {
     }
 
     #[inline]
-    /// `BytecodeArrayWriter::StartBasicBlock`
     pub fn mark_handler(&mut self) {
         self.exit_seen_in_block = false;
     }
@@ -74,7 +73,6 @@ impl BytecodeArrayWriter {
         self.exit_seen_in_block = false;
     }
 
-    /// `BytecodeArrayWriter::Write`
     pub fn write(&mut self, node: &BytecodeNode) {
         debug_assert!(!node.bytecode().is_jump());
         if self.exit_seen_in_block {
@@ -104,7 +102,6 @@ impl BytecodeArrayWriter {
         self.update_exit_seen_in_block(node.bytecode());
     }
 
-    /// `BytecodeArrayWriter::BindLabel`
     pub fn bind_label(&mut self, label: &mut BytecodeLabel) {
         if !label.has_referrer_jump() {
             label.bind();
@@ -130,7 +127,6 @@ impl BytecodeArrayWriter {
         self.start_basic_block();
     }
 
-    /// `BytecodeArrayWriter::BindLoopHeader`
     pub fn bind_loop_header(&mut self, loop_header: &mut BytecodeLoopHeader) {
         loop_header.bind_to(self.offset());
         if self.exit_seen_in_block {
@@ -139,9 +135,7 @@ impl BytecodeArrayWriter {
         self.start_basic_block();
     }
 
-    // -- emission -----------------------------------------------------------
 
-    /// `BytecodeArrayWriter::EmitBytecode`
     fn emit_bytecode(&mut self, node: &BytecodeNode) {
         debug_assert_ne!(node.bytecode(), Bytecode::Illegal);
         let bytecode = node.bytecode();
@@ -170,7 +164,6 @@ impl BytecodeArrayWriter {
         }
     }
 
-    /// `BytecodeArrayWriter::EmitJump`
     fn emit_jump(&mut self, node: &BytecodeNode, label: &mut BytecodeLabel) {
         let current_offset = self.offset();
         self.unbound_jumps += 1;
@@ -186,7 +179,6 @@ impl BytecodeArrayWriter {
         self.emit_bytecode(&node);
     }
 
-    /// `BytecodeArrayWriter::EmitJumpLoop`
     fn emit_jump_loop(&mut self, node: &BytecodeNode, loop_header: &BytecodeLoopHeader) {
         let current_offset = self.offset();
         let header_offset = loop_header.offset();
@@ -206,7 +198,6 @@ impl BytecodeArrayWriter {
         self.emit_bytecode(&node);
     }
 
-    // -- patching -----------------------------------------------------------
 
     fn patch_jump(&mut self, jump_target: usize, jump_location: usize) {
         let first_byte = Bytecode::from_byte(self.bytecodes[jump_location])
@@ -240,7 +231,6 @@ impl BytecodeArrayWriter {
         }
     }
 
-    /// `BytecodeArrayWriter::PatchJumpWith8BitOperand`
     fn patch_jump_with_8bit_operand(&mut self, jump_location: usize, delta: i32) {
         debug_assert!(delta > 0);
         let operand_location = jump_location + 1;
@@ -263,7 +253,6 @@ impl BytecodeArrayWriter {
         self.bytecodes[operand_location] = entry as u8;
     }
 
-    /// `BytecodeArrayWriter::PatchJumpWith16BitOperand`
     fn patch_jump_with_16bit_operand(&mut self, jump_location: usize, delta: i32) {
         debug_assert!(delta > 0);
         let operand_location = jump_location + 1;
@@ -285,7 +274,6 @@ impl BytecodeArrayWriter {
         self.bytecodes[operand_location..operand_location + 2].copy_from_slice(&bytes);
     }
 
-    /// `BytecodeArrayWriter::PatchJumpWith32BitOperand`
     fn patch_jump_with_32bit_operand(&mut self, jump_location: usize, delta: i32) {
         debug_assert!(delta > 0);
         let operand_location = jump_location + 1;
@@ -295,7 +283,6 @@ impl BytecodeArrayWriter {
             .copy_from_slice(&(delta as u32).to_le_bytes());
     }
 
-    /// `BytecodeArrayWriter::UpdateExitSeenInBlock`
     fn update_exit_seen_in_block(&mut self, bytecode: Bytecode) {
         if bytecode.is_without_fall_through() {
             self.exit_seen_in_block = true;
@@ -337,7 +324,6 @@ fn placeholder_for(size: OperandSize) -> i32 {
     }
 }
 
-/// `Bytecodes::ScaleForUnsignedOperand`
 fn scale_for_unsigned(value: u32) -> OperandScale {
     if value <= u8::MAX as u32 {
         OperandScale::Single

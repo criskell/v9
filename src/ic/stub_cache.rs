@@ -2,14 +2,11 @@ use crate::objects::map::Map;
 use crate::objects::name::Name;
 use crate::objects::tagged::Tagged;
 
-/// `StubCache::kPrimaryTableBits`
 pub const K_PRIMARY_TABLE_BITS: u32 = 12;
 pub const K_PRIMARY_TABLE_SIZE: usize = 1 << K_PRIMARY_TABLE_BITS;
-/// `StubCache::kSecondaryTableBits`
 pub const K_SECONDARY_TABLE_BITS: u32 = 10;
 pub const K_SECONDARY_TABLE_SIZE: usize = 1 << K_SECONDARY_TABLE_BITS;
 
-/// `StubCache::Entry`
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Entry {
     pub key: Tagged,
@@ -24,7 +21,6 @@ impl Entry {
     }
 }
 
-/// `StubCache`
 pub struct StubCache {
     primary: Vec<Entry>,
     secondary: Vec<Entry>,
@@ -52,7 +48,6 @@ impl StubCache {
         }
     }
 
-    /// `StubCache::Clear`
     pub fn clear(&mut self) {
         self.primary
             .iter_mut()

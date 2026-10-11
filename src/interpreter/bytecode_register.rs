@@ -10,10 +10,8 @@ const K_CALLER_PC_OFFSET_REGISTER_INDEX: i32 = -6;
 const K_ARGUMENT_COUNT_REGISTER_INDEX: i32 = -7;
 const K_FIRST_PARAM_REGISTER_INDEX: i32 = -8;
 
-/// `Register::kInvalidIndex`
 const K_INVALID_INDEX: i32 = i32::MAX;
 
-/// `Register`
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Register(i32);
 
@@ -28,19 +26,16 @@ impl Register {
         self.0
     }
 
-    /// `Register::is_parameter`
     #[inline]
     pub const fn is_parameter(self) -> bool {
         self.0 < 0
     }
 
-    /// `Register::is_valid`
     #[inline]
     pub const fn is_valid(self) -> bool {
         self.0 != K_INVALID_INDEX
     }
 
-    /// `Register::invalid_value`
     #[inline]
     pub const fn invalid_value() -> Register {
         Register(K_INVALID_INDEX)
@@ -52,7 +47,6 @@ impl Register {
         Register(K_FIRST_PARAM_REGISTER_INDEX - index)
     }
 
-    /// `Register::ToParameterIndex`
     #[inline]
     pub const fn to_parameter_index(self) -> i32 {
         debug_assert!(self.is_parameter());
@@ -69,43 +63,36 @@ impl Register {
         self.is_parameter() && self.to_parameter_index() == 0
     }
 
-    /// `Register::function_closure`
     #[inline]
     pub const fn function_closure() -> Register {
         Register(K_FUNCTION_CLOSURE_REGISTER_INDEX)
     }
 
-    /// `Register::current_context`
     #[inline]
     pub const fn current_context() -> Register {
         Register(K_CURRENT_CONTEXT_REGISTER_INDEX)
     }
 
-    /// `Register::bytecode_array`
     #[inline]
     pub const fn bytecode_array() -> Register {
         Register(K_BYTECODE_ARRAY_REGISTER_INDEX)
     }
 
-    /// `Register::feedback_vector`
     #[inline]
     pub const fn feedback_vector() -> Register {
         Register(K_FEEDBACK_VECTOR_REGISTER_INDEX)
     }
 
-    /// `Register::bytecode_offset`
     #[inline]
     pub const fn bytecode_offset() -> Register {
         Register(K_BYTECODE_OFFSET_REGISTER_INDEX)
     }
 
-    /// `Register::virtual_accumulator`
     #[inline]
     pub const fn virtual_accumulator() -> Register {
         Register(K_CALLER_PC_OFFSET_REGISTER_INDEX)
     }
 
-    /// `Register::argument_count`
     #[inline]
     pub const fn argument_count() -> Register {
         Register(K_ARGUMENT_COUNT_REGISTER_INDEX)
@@ -116,7 +103,6 @@ impl Register {
         K_REGISTER_FILE_START_INDEX - self.0
     }
 
-    /// `Register::FromOperand`
     #[inline]
     pub const fn from_operand(operand: i32) -> Register {
         Register(K_REGISTER_FILE_START_INDEX - operand)
@@ -214,7 +200,6 @@ impl RegisterList {
         Register::new(self.first_reg_index)
     }
 
-    /// `RegisterList::last_register`
     #[inline]
     pub fn last_register(self) -> Register {
         debug_assert!(self.register_count > 0);
@@ -227,8 +212,6 @@ impl RegisterList {
         Register::new(self.first_reg_index + index)
     }
 
-    /// `RegisterList::Truncate`
-    /// `RegisterList::operator[]`
     pub fn at(self, index: i32) -> Register {
         debug_assert!(index < self.register_count());
         Register::new(self.first_register().index() + index)

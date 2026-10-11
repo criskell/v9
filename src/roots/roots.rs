@@ -114,7 +114,6 @@ impl RootsTable {
 }
 
 impl RootsTable {
-    /// `Context::GetInitialJSArrayMap`
     pub fn get_initial_js_array_map(&self, kind: ElementsKind) -> Tagged {
         debug_assert!(elements_kind::is_fast_elements_kind(kind));
         match kind {

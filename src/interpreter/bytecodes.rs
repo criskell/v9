@@ -4,7 +4,6 @@ use crate::interpreter::bytecode_operands::{
 
 macro_rules! bytecode_list {
     ($($name:ident, $use:expr $(, $operand:ident)* ;)*) => {
-        /// `Bytecode`
         #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
         #[repr(u8)]
         pub enum Bytecode { $($name,)* }
@@ -14,14 +13,12 @@ macro_rules! bytecode_list {
                 match self { $(Bytecode::$name => stringify!($name),)* }
             }
 
-            /// `Bytecodes::GetOperandTypes`
             pub fn operand_types(self) -> &'static [OperandType] {
                 match self {
                     $(Bytecode::$name => &[$(OperandType::$operand),*],)*
                 }
             }
 
-            /// `Bytecodes::GetImplicitRegisterUse`
             pub fn implicit_register_use(self) -> ImplicitRegisterUse {
                 match self { $(Bytecode::$name => $use,)* }
             }
@@ -60,7 +57,6 @@ bytecode_list! {
     TestUndefined,            Use::READ_WRITE_ACCUMULATOR;
     TestTypeOf,               Use::READ_WRITE_ACCUMULATOR, Flag8;
 
-    // -- Globals
     LdaGlobal,                Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot;
     StaGlobal,                Use::READ_AND_CLOBBER_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot;
     StaContextSlot,           Use::READ_ACCUMULATOR, Reg, ContextSlot, UImm;
@@ -92,7 +88,6 @@ bytecode_list! {
     DivSmi,                   Use::READ_WRITE_ACCUMULATOR, Imm, EmbeddedFeedback;
     ModSmi,                   Use::READ_WRITE_ACCUMULATOR, Imm, EmbeddedFeedback;
 
-    // -- Unary operators
     Inc,                      Use::READ_WRITE_ACCUMULATOR, EmbeddedFeedback;
     Dec,                      Use::READ_WRITE_ACCUMULATOR, EmbeddedFeedback;
     Negate,                   Use::READ_WRITE_ACCUMULATOR, EmbeddedFeedback;
@@ -103,7 +98,6 @@ bytecode_list! {
     DeletePropertyStrict,     Use::READ_WRITE_ACCUMULATOR, Reg;
     DeletePropertySloppy,     Use::READ_WRITE_ACCUMULATOR, Reg;
 
-    // -- Calls
     CallAnyReceiver,          Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
     CallProperty,             Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
     CallUndefinedReceiver,    Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
@@ -113,7 +107,6 @@ bytecode_list! {
 
     Construct,                Use::READ_WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
 
-    // -- Comparisons
     TestEqual,                Use::READ_WRITE_ACCUMULATOR, Reg, EmbeddedFeedback;
     TestEqualStrict,          Use::READ_WRITE_ACCUMULATOR, Reg, EmbeddedFeedback;
     TestLessThan,             Use::READ_WRITE_ACCUMULATOR, Reg, EmbeddedFeedback;
@@ -123,13 +116,11 @@ bytecode_list! {
     TestInstanceOf,           Use::READ_WRITE_ACCUMULATOR, Reg, FeedbackSlot;
     TestIn,                   Use::READ_WRITE_ACCUMULATOR, Reg, FeedbackSlot;
 
-    // -- Conversions
     ToName,                   Use::READ_WRITE_ACCUMULATOR;
     ToNumber,                 Use::READ_WRITE_ACCUMULATOR, FeedbackSlot;
     ToString,                 Use::READ_WRITE_ACCUMULATOR;
     ToBoolean,                Use::READ_WRITE_ACCUMULATOR;
 
-    // -- Literals
     CreateArrayLiteral,       Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot, Flag8;
     CreateEmptyArrayLiteral,  Use::WRITE_ACCUMULATOR, FeedbackSlot;
     CreateObjectLiteral,      Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot, Flag8;
@@ -176,49 +167,41 @@ bytecode_list! {
 impl Bytecode {
     pub const LAST: Bytecode = Bytecode::Illegal;
 
-    /// `Bytecodes::ToByte`
     #[inline]
     pub const fn to_byte(self) -> u8 {
         self as u8
     }
 
-    /// `Bytecodes::FromByte`
     #[inline]
     pub fn from_byte(byte: u8) -> Option<Bytecode> {
         Bytecode::ALL.get(byte as usize).copied()
     }
 
-    /// `Bytecodes::NumberOfOperands`
     #[inline]
     pub fn number_of_operands(self) -> usize {
         self.operand_types().len()
     }
 
-    /// `Bytecodes::GetOperandType`
     #[inline]
     pub fn operand_type(self, index: usize) -> OperandType {
         self.operand_types()[index]
     }
 
-    /// `Bytecodes::ReadsAccumulator`
     #[inline]
     pub fn reads_accumulator(self) -> bool {
         self.implicit_register_use().reads_accumulator()
     }
 
-    /// `Bytecodes::WritesAccumulator`
     #[inline]
     pub fn writes_accumulator(self) -> bool {
         self.implicit_register_use().writes_accumulator()
     }
 
-    /// `Bytecodes::ClobbersAccumulator`
     #[inline]
     pub fn clobbers_accumulator(self) -> bool {
         self.implicit_register_use().clobbers_accumulator()
     }
 
-    /// `Bytecodes::GetOperandSize`
     #[inline]
     pub fn operand_size(self, index: usize, scale: OperandScale) -> OperandSize {
         self.operand_type(index).size(scale)
@@ -236,13 +219,11 @@ impl Bytecode {
         self.operand_offset(self.number_of_operands(), scale)
     }
 
-    /// `Bytecodes::IsPrefixScalingBytecode`
     #[inline]
     pub fn is_prefix_scaling_bytecode(self) -> bool {
         matches!(self, Bytecode::Wide | Bytecode::ExtraWide)
     }
 
-    /// `Bytecodes::PrefixBytecodeToOperandScale`
     pub fn prefix_to_operand_scale(self) -> Option<OperandScale> {
         match self {
             Bytecode::Wide => Some(OperandScale::Double),
@@ -251,7 +232,6 @@ impl Bytecode {
         }
     }
 
-    /// `Bytecodes::OperandScaleToPrefixBytecode`
     pub fn operand_scale_to_prefix(scale: OperandScale) -> Option<Bytecode> {
         match scale {
             OperandScale::Single => None,
@@ -260,7 +240,6 @@ impl Bytecode {
         }
     }
 
-    /// `Bytecodes::IsJump`
     #[inline]
     pub fn is_jump(self) -> bool {
         self >= Bytecode::JumpLoop && self <= Bytecode::JumpIfUndefinedOrNull
@@ -271,19 +250,16 @@ impl Bytecode {
         self >= Bytecode::JumpIfNullConstant && self <= Bytecode::JumpIfUndefinedOrNull
     }
 
-    /// `Bytecodes::IsConditionalJumpImmediate`
     #[inline]
     pub fn is_conditional_jump_immediate(self) -> bool {
         self >= Bytecode::JumpIfToBooleanTrue && self <= Bytecode::JumpIfUndefinedOrNull
     }
 
-    /// `Bytecodes::IsConditionalJumpConstant`
     #[inline]
     pub fn is_conditional_jump_constant(self) -> bool {
         self >= Bytecode::JumpIfNullConstant && self <= Bytecode::JumpIfToBooleanFalseConstant
     }
 
-    /// `Bytecodes::IsUnconditionalJump`
     #[inline]
     pub fn is_unconditional_jump(self) -> bool {
         self >= Bytecode::JumpLoop && self <= Bytecode::JumpConstant
@@ -325,13 +301,11 @@ impl Bytecode {
         }
     }
 
-    /// `Bytecodes::Returns`
     #[inline]
     pub fn returns(self) -> bool {
         matches!(self, Bytecode::Return)
     }
 
-    /// `Bytecodes::UnconditionallyThrows`
     #[inline]
     pub fn unconditionally_throws(self) -> bool {
         matches!(self, Bytecode::Throw | Bytecode::ReThrow)
@@ -342,7 +316,6 @@ impl Bytecode {
         self.returns() || self.unconditionally_throws() || self.is_unconditional_jump()
     }
 
-    /// `Bytecodes::IsAccumulatorLoadWithoutEffects`
     #[inline]
     pub fn is_accumulator_load_without_effects(self) -> bool {
         matches!(
@@ -430,7 +403,6 @@ mod tests {
 
         assert_eq!(Bytecode::Add.size(OperandScale::Single), 3);
 
-        // Three operands.
         assert_eq!(Bytecode::GetNamedProperty.size(OperandScale::Single), 4);
     }
 

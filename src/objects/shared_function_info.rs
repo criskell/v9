@@ -4,7 +4,6 @@ use crate::objects::bytecode_array::BytecodeArray;
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `SharedFunctionInfo`
     SharedFunctionInfo
 );
 
@@ -17,10 +16,8 @@ impl SharedFunctionInfo {
     pub const K_LENGTH_OFFSET: i32 = Self::K_FEEDBACK_METADATA_OFFSET + K_TAGGED_SIZE;
     pub const K_FORMAL_PARAMETER_COUNT_OFFSET: i32 = Self::K_LENGTH_OFFSET + 2;
     pub const K_FLAGS_OFFSET: i32 = Self::K_FORMAL_PARAMETER_COUNT_OFFSET + 2;
-    /// `SharedFunctionInfo::kSize`
     pub const K_SIZE: i32 = Self::K_FLAGS_OFFSET + 4;
 
-    /// `SharedFunctionInfo::function_data`
     #[inline]
     pub fn function_data(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_FUNCTION_DATA_OFFSET))
@@ -36,7 +33,6 @@ impl SharedFunctionInfo {
         self.field(Self::K_FUNCTION_DATA_OFFSET)
     }
 
-    /// `SharedFunctionInfo::GetBytecodeArray`
     #[inline]
     pub fn bytecode_array(self, heap: &Heap) -> BytecodeArray {
         BytecodeArray::unchecked_cast(
@@ -46,13 +42,11 @@ impl SharedFunctionInfo {
         )
     }
 
-    /// `SharedFunctionInfo::HasBytecodeArray`
     #[inline]
     pub fn has_bytecode_array(self, heap: &Heap) -> bool {
         !self.is_native(heap) && self.function_data(heap).is_strong()
     }
 
-    /// `SharedFunctionInfo::Name`
     #[inline]
     pub fn name(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_NAME_OFFSET))
@@ -93,7 +87,6 @@ impl SharedFunctionInfo {
         heap.write_u16(self.field(Self::K_LENGTH_OFFSET), value as u16);
     }
 
-    /// `SharedFunctionInfo::internal_formal_parameter_count_with_receiver`
     #[inline]
     pub fn formal_parameter_count(self, heap: &Heap) -> i32 {
         heap.read_u16(self.field(Self::K_FORMAL_PARAMETER_COUNT_OFFSET)) as i32

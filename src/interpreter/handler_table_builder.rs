@@ -1,7 +1,6 @@
 use crate::codegen::handler_table::{CatchPrediction, HandlerTable, HandlerTableEntry};
 use crate::interpreter::bytecode_register::Register;
 
-/// `HandlerTableBuilder`
 #[derive(Default)]
 pub struct HandlerTableBuilder {
     entries: Vec<Entry>,
@@ -22,7 +21,6 @@ impl HandlerTableBuilder {
         HandlerTableBuilder::default()
     }
 
-    /// `HandlerTableBuilder::NewHandlerEntry`
     pub fn new_handler_entry(&mut self) -> i32 {
         let handler_id = self.entries.len() as i32;
         self.entries.push(Entry {
@@ -36,37 +34,30 @@ impl HandlerTableBuilder {
         handler_id
     }
 
-    /// `HandlerTableBuilder::SetTryRegionStart`
     pub fn set_try_region_start(&mut self, handler_id: i32, offset: usize) {
         self.entries[handler_id as usize].offset_start = offset as i32;
     }
 
-    /// `HandlerTableBuilder::SetTryRegionEnd`
     pub fn set_try_region_end(&mut self, handler_id: i32, offset: usize) {
         self.entries[handler_id as usize].offset_end = offset as i32;
     }
 
-    /// `HandlerTableBuilder::SetHandlerTarget`
     pub fn set_handler_target(&mut self, handler_id: i32, offset: usize) {
         self.entries[handler_id as usize].offset_target = offset as i32;
     }
 
-    /// `HandlerTableBuilder::SetPrediction`
     pub fn set_prediction(&mut self, handler_id: i32, prediction: CatchPrediction) {
         self.entries[handler_id as usize].catch_prediction = prediction;
     }
 
-    /// `HandlerTableBuilder::SetContextRegister`
     pub fn set_context_register(&mut self, handler_id: i32, register: Register) {
         self.entries[handler_id as usize].context = register;
     }
 
-    /// `HandlerTableBuilder::DropHandlerEntry`
     pub fn drop_handler_entry(&mut self, handler_id: i32) {
         self.entries[handler_id as usize].dropped = true;
     }
 
-    /// `HandlerTableBuilder::ToHandlerTable`
     pub fn to_handler_table(&self) -> HandlerTable {
         let mut entries: Vec<HandlerTableEntry> = self
             .entries

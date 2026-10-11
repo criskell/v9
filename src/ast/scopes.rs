@@ -7,7 +7,6 @@ pub enum ScopeKind {
     Function,
 }
 
-/// `Variable`
 #[derive(Clone, Debug)]
 pub struct Variable {
     pub name: String,
@@ -32,7 +31,6 @@ impl Variable {
         }
     }
 
-    /// `Variable::IsContextSlot`
     #[inline]
     pub fn is_context_slot(&self) -> bool {
         self.location == VariableLocation::Context
@@ -44,7 +42,6 @@ impl Variable {
     }
 }
 
-/// `Scope`
 #[derive(Clone, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
@@ -77,7 +74,6 @@ impl Scope {
         self.variables.len() - 1
     }
 
-    /// `Scope::DeclareParameter`
     pub fn declare_parameter(&mut self, name: &str, parameter_index: i32) -> usize {
         let index = self.declare(name, VariableMode::Var);
         let variable = &mut self.variables[index];
@@ -95,7 +91,6 @@ impl Scope {
         }
     }
 
-    /// `Scope::LookupLocal`
     pub fn lookup_local(&self, name: &str) -> Option<&Variable> {
         self.variables.iter().find(|v| v.name == name)
     }
@@ -202,7 +197,6 @@ pub fn allocate_variables(scope: &mut Scope) {
 
     for variable in scope.variables.iter_mut() {
         if variable.force_context_allocation {
-            // `Scope::AllocateHeapSlot`
             variable.location = VariableLocation::Context;
             variable.index = crate::objects::contexts::Context::MIN_CONTEXT_SLOTS + context_slots;
             context_slots += 1;
@@ -218,7 +212,6 @@ pub fn allocate_variables(scope: &mut Scope) {
                     variable.location = VariableLocation::Parameter;
                     variable.index = variable.parameter_index;
                 } else {
-                    // `Scope::AllocateStackSlot`
                     variable.location = VariableLocation::Local;
                     variable.index = locals;
                     locals += 1;

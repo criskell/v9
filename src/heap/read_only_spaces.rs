@@ -1,7 +1,6 @@
 use crate::heap::spaces::{AllocationSpace, Space};
 use crate::objects::tagged::Address;
 
-/// `ReadOnlySpace`
 #[derive(Clone, Debug)]
 pub struct ReadOnlySpace {
     space: Space,

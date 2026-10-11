@@ -23,26 +23,22 @@ impl MarkingBitmap {
         }
     }
 
-    /// `MarkingBitmap::AddressToIndex`
     #[inline]
     fn address_to_index(&self, address: Address) -> usize {
         debug_assert!(address >= self.base);
         ((address - self.base) >> crate::common::globals::K_TAGGED_SIZE_LOG2) as usize
     }
 
-    /// `MarkingBitmap::IndexToAddressOffset`
     #[inline]
     fn index_to_address(&self, index: usize) -> Address {
         self.base + ((index as Address) << crate::common::globals::K_TAGGED_SIZE_LOG2)
     }
 
-    /// `MarkingBitmap::IndexToCell`
     #[inline]
     fn index_to_cell(index: usize) -> usize {
         index >> Self::K_BITS_PER_CELL_LOG2
     }
 
-    /// `MarkingBitmap::IndexInCellMask`
     #[inline]
     fn index_in_cell_mask(index: usize) -> CellType {
         1 << (index as u32 & Self::K_BIT_INDEX_MASK)
@@ -70,7 +66,6 @@ impl MarkingBitmap {
         true
     }
 
-    /// `MarkBit::Get`
     #[inline]
     pub fn get(&self, address: Address) -> bool {
         if !self.covers(address) {
@@ -81,12 +76,10 @@ impl MarkingBitmap {
         (self.cells[Self::index_to_cell(index)] & mask) != 0
     }
 
-    /// `MarkingBitmap::Clear`
     pub fn clear(&mut self) {
         self.cells.fill(0);
     }
 
-    /// `MarkingBitmap::IsClean`
     pub fn is_clean(&self) -> bool {
         self.cells.iter().all(|cell| *cell == 0)
     }

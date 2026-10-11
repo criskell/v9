@@ -5,23 +5,19 @@ use crate::objects::name::Name;
 use crate::objects::tagged::{HeapObject, Tagged};
 
 object_type!(
-    /// `String`
     String
 );
 
 impl String {
     pub const K_RAW_HASH_FIELD_OFFSET: i32 = Name::K_RAW_HASH_FIELD_OFFSET;
     pub const K_LENGTH_OFFSET: i32 = Self::K_RAW_HASH_FIELD_OFFSET + 4;
-    /// `SeqString::kHeaderSize`
     pub const K_HEADER_SIZE: i32 = Self::K_LENGTH_OFFSET + 4;
 
-    /// `SeqOneByteString::SizeFor`
     #[inline]
     pub fn size_for_one_byte(length: i32) -> i32 {
         object_pointer_align((Self::K_HEADER_SIZE + length) as u64) as i32
     }
 
-    /// `SeqTwoByteString::SizeFor`
     #[inline]
     pub fn size_for_two_byte(length: i32) -> i32 {
         object_pointer_align((Self::K_HEADER_SIZE + length * 2) as u64) as i32
@@ -32,7 +28,6 @@ impl String {
         Name::unchecked_cast(self.object())
     }
 
-    /// `String::length`
     #[inline]
     pub fn length(self, heap: &Heap) -> i32 {
         heap.read_u32(self.field(Self::K_LENGTH_OFFSET)) as i32
@@ -49,13 +44,11 @@ impl String {
         heap.instance_type(self.object())
     }
 
-    /// `String::IsOneByteRepresentation`
     #[inline]
     pub fn is_one_byte(self, heap: &Heap) -> bool {
         instance_type::is_one_byte_string(self.instance_type(heap))
     }
 
-    /// `String::IsInternalizedString`
     #[inline]
     pub fn is_internalized(self, heap: &Heap) -> bool {
         instance_type::is_internalized_string(self.instance_type(heap))

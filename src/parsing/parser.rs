@@ -66,7 +66,6 @@ impl Parser {
         }
     }
 
-    /// `Parser::ParseProgram`
     pub fn parse_program(source: &str) -> Result<Program> {
         let mut parser = Parser::new(source);
         let body = parser.parse_statement_list(Token::Eos)?;
@@ -116,7 +115,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::Expect`
     fn expect(&mut self, token: Token) -> Result<()> {
         if self.peek() != token {
             return Err(self.unexpected_token_with_hint(&format!("expected `{token}`")));
@@ -202,11 +200,7 @@ impl Parser {
         self.scope_chain.current().record_reference(name);
     }
 
-    // -----------------------------------------------------------------------
-    // Statements
-    // -----------------------------------------------------------------------
 
-    /// `ParserBase::ParseStatementList`
     fn parse_statement_list(&mut self, end: Token) -> Result<Vec<Statement>> {
         let mut statements = Vec::new();
         while self.peek() != end {
@@ -235,7 +229,6 @@ impl Parser {
         ahead.is_any_identifier() || ahead == Token::LeftBracket || ahead == Token::LeftBrace
     }
 
-    /// `ParserBase::ParseStatement`
     fn parse_statement(&mut self) -> Result<Statement> {
         self.enter_recursion()?;
         let result = self.parse_statement_inner();
@@ -290,7 +283,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseThrowStatement`
     fn parse_throw_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::Throw);
@@ -305,7 +297,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseTryStatement`
     fn parse_try_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::Try);
@@ -352,7 +343,6 @@ impl Parser {
         Ok(inner)
     }
 
-    /// `ParserBase::ParseBlock`
     fn parse_block_body(&mut self) -> Result<Vec<Statement>> {
         self.expect(Token::LeftBrace)?;
         let statements = self.parse_statement_list(Token::RightBrace)?;
@@ -369,7 +359,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseVariableStatement`
     fn parse_variable_statement(&mut self, mode: VariableMode) -> Result<Statement> {
         let position = self.peek_position();
         self.next(); // var / let / const
@@ -382,7 +371,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseVariableDeclarations`
     fn parse_variable_declarations(
         &mut self,
         mode: VariableMode,
@@ -418,7 +406,6 @@ impl Parser {
         Ok(declarations)
     }
 
-    /// `ParserBase::ParseHoistableDeclaration`
     fn parse_hoistable_declaration(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::Function);
@@ -432,7 +419,6 @@ impl Parser {
         Ok(Statement::Empty { position })
     }
 
-    /// `ParserBase::ParseIfStatement`
     fn parse_if_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::If);
@@ -453,7 +439,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseWhileStatement`
     fn parse_while_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::While);
@@ -468,7 +453,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseDoWhileStatement`
     fn parse_do_while_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::Do);
@@ -485,7 +469,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseForEachStatementWithDeclarations`
     fn for_in_each(&mut self, init: &Statement) -> Option<String> {
         match init {
             Statement::Declaration { declarations, .. } if declarations.len() == 1 => {
@@ -503,7 +486,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseForStatement`
     fn parse_for_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::For);
@@ -598,7 +580,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseReturnStatement`
     fn parse_return_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         self.consume(Token::Return);
@@ -627,9 +608,6 @@ impl Parser {
         })
     }
 
-    // -----------------------------------------------------------------------
-    // Expressions
-    // -----------------------------------------------------------------------
 
     fn parse_expression(&mut self) -> Result<Expression> {
         let position = self.peek_position();
@@ -647,7 +625,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseAssignmentExpression`
     fn parse_assignment_expression(&mut self) -> Result<Expression> {
         self.enter_recursion()?;
         let result = self.parse_assignment_expression_inner();
@@ -679,7 +656,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseConditionalExpression`
     fn parse_conditional_expression(&mut self) -> Result<Expression> {
         let position = self.peek_position();
         let expression = self.parse_logical_expression()?;
@@ -713,12 +689,8 @@ impl Parser {
         Ok(expression)
     }
 
-    /// `ParserBase::ParseCoalesceExpression`
-    /// ```text
-    ///   CoalesceExpression ::
-    ///     CoalesceExpressionHead ?? BitwiseORExpression
-    /// ```
     fn parse_coalesce_expression(&mut self, first: Expression) -> Result<Expression> {
+        //
         let mut expression = first;
         while self.peek() == Token::Nullish {
             let position = self.peek_position();
@@ -793,7 +765,6 @@ impl Parser {
         Ok(left)
     }
 
-    /// `ParserBase::ParseUnaryOrPrefixExpression`
     fn parse_unary_or_prefix_expression(&mut self) -> Result<Expression> {
         let op = self.peek();
         if op.is_unary_op() {
@@ -835,7 +806,6 @@ impl Parser {
         self.parse_postfix_expression()
     }
 
-    /// `ParserBase::ParsePostfixExpression`
     fn parse_postfix_expression(&mut self) -> Result<Expression> {
         let position = self.peek_position();
         let expression = self.parse_left_hand_side_expression()?;
@@ -884,7 +854,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseMemberExpression`
     fn parse_member_expression(&mut self) -> Result<Expression> {
         if self.peek() == Token::New {
             let position = self.peek_position();
@@ -955,7 +924,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseArguments`
     fn parse_arguments(&mut self) -> Result<Vec<Expression>> {
         self.expect(Token::LeftParen)?;
         let mut arguments = Vec::new();
@@ -979,7 +947,6 @@ impl Parser {
         Ok(arguments)
     }
 
-    /// `ParserBase::ParsePrimaryExpression`
     fn parse_primary_expression(&mut self) -> Result<Expression> {
         let position = self.peek_position();
         match self.peek() {
@@ -1103,7 +1070,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseIdentifier`
     fn parse_identifier(&mut self) -> Result<String> {
         let token = self.peek();
         if !token.is_valid_identifier(false, false, false) {
@@ -1118,7 +1084,6 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseArrayLiteral`
     fn parse_array_literal(&mut self) -> Result<Expression> {
         let position = self.peek_position();
         self.expect(Token::LeftBracket)?;
@@ -1144,7 +1109,6 @@ impl Parser {
         Ok(Expression::ArrayLiteral { values, position })
     }
 
-    /// `ParserBase::ParseObjectLiteral`
     fn parse_object_literal(&mut self) -> Result<Expression> {
         let position = self.peek_position();
         self.expect(Token::LeftBrace)?;
@@ -1162,7 +1126,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseClassDeclaration`
     fn parse_class_declaration(&mut self) -> Result<Statement> {
         let position = self.peek_position();
         let class = self.parse_class_literal()?;
@@ -1188,7 +1151,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseClassLiteral`
     fn parse_class_literal(&mut self) -> Result<ClassLiteral> {
         let position = self.peek_position();
         self.expect(Token::Class)?;
@@ -1240,7 +1202,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseClassPropertyDefinition`
     fn parse_class_property_definition(&mut self) -> Result<(ClassLiteralProperty, bool)> {
         let is_static = self.peek() == Token::Static
             && !matches!(
@@ -1286,7 +1247,6 @@ impl Parser {
         Ok((property, is_constructor))
     }
 
-    /// `ParserBase::DefaultConstructor`
     fn default_constructor(
         &mut self,
         name: Option<String>,
@@ -1315,7 +1275,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParsePropertyName`
     fn parse_property_name(&mut self) -> Result<String> {
         let token = self.peek();
         Ok(match token {
@@ -1453,7 +1412,6 @@ impl Parser {
         })
     }
 
-    /// `ParserBase::ParseFormalParameterList`
     fn parse_formal_parameter_list(&mut self) -> Result<Vec<String>> {
         self.expect(Token::LeftParen)?;
         let mut parameters = Vec::new();

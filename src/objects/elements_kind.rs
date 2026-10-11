@@ -1,4 +1,3 @@
-/// `ElementsKind`
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ElementsKind {
@@ -32,83 +31,69 @@ pub const FIRST_FAST_ELEMENTS_KIND: ElementsKind = PackedSmiElements;
 pub const LAST_FAST_ELEMENTS_KIND: ElementsKind = HoleyDoubleElements;
 pub const TERMINAL_FAST_ELEMENTS_KIND: ElementsKind = HoleyElements;
 
-/// `kFastElementsKindCount`
 pub const FAST_ELEMENTS_KIND_COUNT: usize = 6;
 
-/// `GetInitialFastElementsKind`
 #[inline]
 pub fn get_initial_fast_elements_kind() -> ElementsKind {
     PackedSmiElements
 }
 
-/// `IsDictionaryElementsKind`
 #[inline]
 pub fn is_dictionary_elements_kind(kind: ElementsKind) -> bool {
     kind == DictionaryElements
 }
 
-/// `IsTerminalElementsKind`
 #[inline]
 pub fn is_terminal_elements_kind(kind: ElementsKind) -> bool {
     kind == TERMINAL_FAST_ELEMENTS_KIND
 }
 
-/// `IsFastElementsKind`
 #[inline]
 pub fn is_fast_elements_kind(kind: ElementsKind) -> bool {
     debug_assert_eq!(FIRST_FAST_ELEMENTS_KIND as u8, 0);
     kind as u8 <= LAST_FAST_ELEMENTS_KIND as u8
 }
 
-/// `IsSmiElementsKind`
 #[inline]
 pub fn is_smi_elements_kind(kind: ElementsKind) -> bool {
     matches!(kind, PackedSmiElements | HoleySmiElements)
 }
 
-/// `IsObjectElementsKind`
 #[inline]
 pub fn is_object_elements_kind(kind: ElementsKind) -> bool {
     matches!(kind, PackedElements | HoleyElements)
 }
 
-/// `IsDoubleElementsKind`
 #[inline]
 pub fn is_double_elements_kind(kind: ElementsKind) -> bool {
     matches!(kind, PackedDoubleElements | HoleyDoubleElements)
 }
 
-/// `IsSmiOrObjectElementsKind`
 #[inline]
 pub fn is_smi_or_object_elements_kind(kind: ElementsKind) -> bool {
     (PackedSmiElements as u8..=HoleyElements as u8).contains(&(kind as u8))
 }
 
-/// `IsHoleyElementsKindForRead`
 #[inline]
 pub fn is_holey_elements_kind_for_read(kind: ElementsKind) -> bool {
     kind as u8 % 2 == 1 && kind as u8 <= HoleyDoubleElements as u8
 }
 
-/// `IsHoleyElementsKind`
 #[inline]
 pub fn is_holey_elements_kind(kind: ElementsKind) -> bool {
     is_holey_elements_kind_for_read(kind)
 }
 
-/// `IsHoleyOrDictionaryElementsKind`
 #[inline]
 pub fn is_holey_or_dictionary_elements_kind(kind: ElementsKind) -> bool {
     is_holey_elements_kind_for_read(kind) || kind == DictionaryElements
 }
 
-/// `IsFastPackedElementsKind`
 #[inline]
 pub fn is_fast_packed_elements_kind(kind: ElementsKind) -> bool {
     kind as u8 % 2 == 0 && kind as u8 <= PackedDoubleElements as u8
 }
 
-/// `GetPackedElementsKind`
 #[inline]
 pub fn get_packed_elements_kind(holey_kind: ElementsKind) -> ElementsKind {
     match holey_kind {
@@ -119,7 +104,6 @@ pub fn get_packed_elements_kind(holey_kind: ElementsKind) -> ElementsKind {
     }
 }
 
-/// `GetHoleyElementsKind`
 #[inline]
 pub fn get_holey_elements_kind(packed_kind: ElementsKind) -> ElementsKind {
     match packed_kind {
@@ -130,7 +114,6 @@ pub fn get_holey_elements_kind(packed_kind: ElementsKind) -> ElementsKind {
     }
 }
 
-/// `FastSmiToObjectElementsKind`
 #[inline]
 pub fn fast_smi_to_object_elements_kind(from_kind: ElementsKind) -> ElementsKind {
     debug_assert!(is_smi_elements_kind(from_kind));
@@ -141,14 +124,12 @@ pub fn fast_smi_to_object_elements_kind(from_kind: ElementsKind) -> ElementsKind
     }
 }
 
-/// `IsSimpleMapChangeTransition`
 #[inline]
 pub fn is_simple_map_change_transition(from_kind: ElementsKind, to_kind: ElementsKind) -> bool {
     get_holey_elements_kind(from_kind) == to_kind
         || (is_smi_elements_kind(from_kind) && is_object_elements_kind(to_kind))
 }
 
-/// `IsMoreGeneralElementsKindTransition`
 pub fn is_more_general_elements_kind_transition(
     from_kind: ElementsKind,
     to_kind: ElementsKind,
@@ -174,7 +155,6 @@ pub fn is_more_general_elements_kind_transition(
     }
 }
 
-/// `GetMoreGeneralElementsKind`
 #[inline]
 pub fn get_more_general_elements_kind(
     from_kind: ElementsKind,
@@ -187,13 +167,11 @@ pub fn get_more_general_elements_kind(
     }
 }
 
-/// `IsTransitionableFastElementsKind`
 #[inline]
 pub fn is_transitionable_fast_elements_kind(from_kind: ElementsKind) -> bool {
     is_fast_elements_kind(from_kind) && from_kind != TERMINAL_FAST_ELEMENTS_KIND
 }
 
-/// `kFastElementsKindSequence`
 pub const FAST_ELEMENTS_KIND_SEQUENCE: [ElementsKind; FAST_ELEMENTS_KIND_COUNT] = [
     PackedSmiElements,
     HoleySmiElements,
@@ -203,7 +181,6 @@ pub const FAST_ELEMENTS_KIND_SEQUENCE: [ElementsKind; FAST_ELEMENTS_KIND_COUNT] 
     HoleyElements,
 ];
 
-/// `GetSequenceIndexFromFastElementsKind`
 pub fn get_sequence_index_from_fast_elements_kind(kind: ElementsKind) -> usize {
     FAST_ELEMENTS_KIND_SEQUENCE
         .iter()
@@ -211,19 +188,16 @@ pub fn get_sequence_index_from_fast_elements_kind(kind: ElementsKind) -> usize {
         .expect("a fast elements kind")
 }
 
-/// `GetFastElementsKindFromSequenceIndex`
 pub fn get_fast_elements_kind_from_sequence_index(index: usize) -> ElementsKind {
     FAST_ELEMENTS_KIND_SEQUENCE[index]
 }
 
-/// `GetNextTransitionElementsKind`
 pub fn get_next_transition_elements_kind(kind: ElementsKind) -> ElementsKind {
     let index = get_sequence_index_from_fast_elements_kind(kind);
     debug_assert!(index + 1 < FAST_ELEMENTS_KIND_COUNT);
     get_fast_elements_kind_from_sequence_index(index + 1)
 }
 
-/// `Object::OptimalElementsKind`
 pub fn optimal_elements_kind(
     heap: &crate::heap::heap::Heap,
     value: crate::objects::tagged::Tagged,
@@ -238,7 +212,6 @@ pub fn optimal_elements_kind(
 }
 
 impl ElementsKind {
-    /// `ElementsKindToString`
     pub fn to_string(self) -> &'static str {
         match self {
             PackedSmiElements => "PACKED_SMI_ELEMENTS",

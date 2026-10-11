@@ -5,7 +5,6 @@ use crate::objects::smi::Smi;
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `BytecodeArray`
     BytecodeArray
 );
 
@@ -17,16 +16,13 @@ impl BytecodeArray {
     pub const K_FRAME_SIZE_OFFSET: i32 = Self::K_CONSTANT_POOL_OFFSET + K_TAGGED_SIZE;
     pub const K_PARAMETER_COUNT_OFFSET: i32 = Self::K_FRAME_SIZE_OFFSET + 4;
     pub const K_MAX_ARGUMENTS_OFFSET: i32 = Self::K_PARAMETER_COUNT_OFFSET + 2;
-    /// `BytecodeArray::kHeaderSize`
     pub const K_HEADER_SIZE: i32 = Self::K_MAX_ARGUMENTS_OFFSET + 2;
 
-    /// `BytecodeArray::SizeFor`
     #[inline]
     pub fn size_for(length: i32) -> i32 {
         object_pointer_align((Self::K_HEADER_SIZE + length) as u64) as i32
     }
 
-    /// `BytecodeArray::length`
     #[inline]
     pub fn length(self, heap: &Heap) -> i32 {
         Smi::to_int(heap.read_tagged(self.field(Self::K_LENGTH_OFFSET)))
@@ -38,7 +34,6 @@ impl BytecodeArray {
     }
 
     #[inline]
-    /// `BytecodeArray::handler_table`
     pub fn handler_table(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_HANDLER_TABLE_OFFSET))
     }
@@ -67,7 +62,6 @@ impl BytecodeArray {
         self.field(Self::K_SOURCE_POSITION_TABLE_OFFSET)
     }
 
-    /// `BytecodeArray::constant_pool`
     #[inline]
     pub fn constant_pool(self, heap: &Heap) -> FixedArray {
         FixedArray::unchecked_cast(
@@ -97,7 +91,6 @@ impl BytecodeArray {
         heap.write_u32(self.field(Self::K_FRAME_SIZE_OFFSET), value as u32);
     }
 
-    /// `BytecodeArray::register_count`
     #[inline]
     pub fn register_count(self, heap: &Heap) -> i32 {
         self.frame_size(heap) / K_TAGGED_SIZE
@@ -117,7 +110,6 @@ impl BytecodeArray {
         heap.write_u16(self.field(Self::K_PARAMETER_COUNT_OFFSET), value as u16);
     }
 
-    /// `BytecodeArray::parameter_count_without_receiver`
     #[inline]
     pub fn parameter_count_without_receiver(self, heap: &Heap) -> i32 {
         self.parameter_count(heap) - 1
@@ -133,13 +125,11 @@ impl BytecodeArray {
         heap.write_u16(self.field(Self::K_MAX_ARGUMENTS_OFFSET), value as u16);
     }
 
-    /// `BytecodeArray::GetFirstBytecodeAddress`
     #[inline]
     pub fn first_bytecode_address(self) -> Address {
         self.field(Self::K_HEADER_SIZE)
     }
 
-    /// `BytecodeArray::get`
     #[inline]
     pub fn get(self, heap: &Heap, offset: i32) -> u8 {
         debug_assert!(offset >= 0 && offset < self.length(heap));

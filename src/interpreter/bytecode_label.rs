@@ -1,4 +1,3 @@
-/// `BytecodeLabel::kInvalidOffset`
 const K_INVALID_OFFSET: usize = usize::MAX;
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -11,7 +10,6 @@ impl BytecodeLoopHeader {
         BytecodeLoopHeader { offset: None }
     }
 
-    /// `BytecodeLoopHeader::offset`
     pub fn offset(&self) -> usize {
         self.offset.expect("the loop header has not been bound")
     }
@@ -20,7 +18,6 @@ impl BytecodeLoopHeader {
         self.offset.is_some()
     }
 
-    /// `BytecodeLoopHeader::bind_to`
     pub(crate) fn bind_to(&mut self, offset: usize) {
         debug_assert!(self.offset.is_none());
         self.offset = Some(offset);
@@ -47,32 +44,27 @@ impl BytecodeLabel {
         }
     }
 
-    /// `BytecodeLabel::is_bound`
     #[inline]
     pub fn is_bound(&self) -> bool {
         self.bound
     }
 
-    /// `BytecodeLabel::jump_offset`
     #[inline]
     pub fn jump_offset(&self) -> usize {
         debug_assert!(self.has_referrer_jump());
         self.jump_offset
     }
 
-    /// `BytecodeLabel::has_referrer_jump`
     #[inline]
     pub fn has_referrer_jump(&self) -> bool {
         self.jump_offset != K_INVALID_OFFSET
     }
 
-    /// `BytecodeLabel::bind`
     pub(crate) fn bind(&mut self) {
         debug_assert!(!self.bound);
         self.bound = true;
     }
 
-    /// `BytecodeLabel::set_referrer`
     pub(crate) fn set_referrer(&mut self, offset: usize) {
         debug_assert!(!self.bound);
         debug_assert!(!self.has_referrer_jump());
@@ -97,7 +89,6 @@ impl BytecodeLabels {
         self.labels.len() - 1
     }
 
-    /// `BytecodeLabels::labels`
     pub fn append(&mut self, other: &mut BytecodeLabels) {
         self.labels.append(&mut other.labels);
     }
@@ -110,12 +101,10 @@ impl BytecodeLabels {
         &self.labels[index]
     }
 
-    /// `BytecodeLabels::is_bound`
     pub fn is_bound(&self) -> bool {
         self.is_bound
     }
 
-    /// `BytecodeLabels::empty`
     pub fn is_empty(&self) -> bool {
         self.labels.is_empty()
     }

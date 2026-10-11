@@ -12,13 +12,11 @@ impl FixedDoubleArray {
     pub const K_LENGTH_OFFSET: i32 = K_TAGGED_SIZE;
     pub const K_HEADER_SIZE: i32 = Self::K_LENGTH_OFFSET + K_TAGGED_SIZE;
 
-    /// `FixedDoubleArray::SizeFor`
     #[inline]
     pub const fn size_for(length: i32) -> i32 {
         Self::K_HEADER_SIZE + length * K_DOUBLE_SIZE
     }
 
-    /// `FixedDoubleArray::OffsetOfElementAt`
     #[inline]
     pub const fn offset_of_element_at(index: i32) -> i32 {
         Self::K_HEADER_SIZE + index * K_DOUBLE_SIZE
@@ -44,21 +42,18 @@ impl FixedDoubleArray {
         index >= 0 && index < self.length(heap)
     }
 
-    /// `FixedDoubleArray::get_representation`
     #[inline]
     pub fn get_representation(self, heap: &Heap, index: i32) -> u64 {
         debug_assert!(self.in_bounds(heap, index));
         heap.read_u64(self.element_address(index))
     }
 
-    /// `FixedDoubleArray::get_scalar`
     #[inline]
     pub fn get_scalar(self, heap: &Heap, index: i32) -> f64 {
         debug_assert!(!self.is_the_hole(heap, index));
         heap.read_f64(self.element_address(index))
     }
 
-    /// `FixedDoubleArray::set`
     #[inline]
     pub fn set(self, heap: &mut Heap, index: i32, value: f64) {
         debug_assert!(self.in_bounds(heap, index));
@@ -69,27 +64,23 @@ impl FixedDoubleArray {
         }
     }
 
-    /// `FixedDoubleArray::set_the_hole`
     #[inline]
     pub fn set_the_hole(self, heap: &mut Heap, index: i32) {
         debug_assert!(self.in_bounds(heap, index));
         heap.write_u64(self.element_address(index), K_HOLE_NAN_INT64);
     }
 
-    /// `FixedDoubleArray::is_the_hole`
     #[inline]
     pub fn is_the_hole(self, heap: &Heap, index: i32) -> bool {
         self.get_representation(heap, index) == K_HOLE_NAN_INT64
     }
 
-    /// `FixedDoubleArray::FillWithHoles`
     pub fn fill_with_holes(self, heap: &mut Heap, from: i32, to: i32) {
         for index in from..to {
             self.set_the_hole(heap, index);
         }
     }
 
-    /// `FixedDoubleArray::MoveElements`
     pub fn move_elements(self, heap: &mut Heap, dst_index: i32, src_index: i32, len: i32) {
         if dst_index <= src_index {
             for offset in 0..len {

@@ -6,7 +6,6 @@ use crate::objects::name::K_EMPTY_HASH_FIELD;
 use crate::objects::string::String as VxString;
 use crate::objects::tagged::Tagged;
 
-/// `StringTable`
 #[derive(Default)]
 pub struct StringTable {
     entries: HashMap<std::string::String, Tagged>,
@@ -17,7 +16,6 @@ impl StringTable {
         StringTable::default()
     }
 
-    /// `StringTable::NumberOfElements`
     pub fn number_of_elements(&self) -> usize {
         self.entries.len()
     }
@@ -62,7 +60,6 @@ impl Isolate {
         self.string_table.contains(s)
     }
 
-    /// `StringTable::NumberOfElements`
     pub fn string_table_size(&self) -> usize {
         self.string_table.number_of_elements()
     }

@@ -1,10 +1,8 @@
 use crate::interpreter::bytecode_operands::OperandScale;
 use crate::interpreter::bytecodes::Bytecode;
 
-/// `BytecodeNode::kMaxOperands`
 pub const K_MAX_OPERANDS: usize = 5;
 
-/// `BytecodeNode`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct BytecodeNode {
     bytecode: Bytecode,
@@ -15,7 +13,6 @@ pub struct BytecodeNode {
 }
 
 impl BytecodeNode {
-    /// `BytecodeNode::BytecodeNode`
     pub fn new(bytecode: Bytecode, operands: &[i32]) -> BytecodeNode {
         assert_eq!(operands.len(), bytecode.number_of_operands());
         let mut stored = [0i32; K_MAX_OPERANDS];

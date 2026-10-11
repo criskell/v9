@@ -1,21 +1,18 @@
 pub const K_RAPIDHASH_SECRET1: u64 = 0x2d358dccaa6c78a5;
 pub const K_RAPIDHASH_SECRET2: u64 = 0x8bb84b93962eacc9;
 
-/// `rapid_mul128`
 #[inline]
 fn rapid_mul128(a: u64, b: u64) -> (u64, u64) {
     let product = (a as u128) * (b as u128);
     ((product >> 64) as u64, product as u64)
 }
 
-/// `rapid_mix`
 #[inline]
 pub fn rapid_mix(a: u64, b: u64) -> u64 {
     let (a, b) = rapid_mul128(a, b);
     a ^ b
 }
 
-/// `base::hash64`
 // Canonical integer hash. Uses the rapidhash "mum" mixer
 // ((key ^ s1) * (key ^ s2) -> high64 ^ low64) on 64-bit targets.
 #[inline]

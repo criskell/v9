@@ -15,15 +15,12 @@ impl Tagged {
         self.0
     }
 
-    // -- Smi ---------------------------------------------------------------
 
-    /// `TaggedImpl::IsSmi`
     #[inline]
     pub const fn is_smi(self) -> bool {
         self.0 & K_SMI_TAG_MASK == K_SMI_TAG
     }
 
-    // -- Strong / weak -------------------------------------------------------
 
     #[inline]
     pub const fn is_strong(self) -> bool {
@@ -40,7 +37,6 @@ impl Tagged {
         !self.is_weak_or_cleared()
     }
 
-    /// `TaggedImpl::IsStrongOrSmi`
     #[inline]
     pub const fn is_strong_or_smi(self) -> bool {
         self.0 & K_HEAP_OBJECT_TAG_MASK != K_WEAK_HEAP_OBJECT_TAG
@@ -56,25 +52,21 @@ impl Tagged {
         self.0 & K_HEAP_OBJECT_TAG_MASK == K_WEAK_HEAP_OBJECT_TAG && !self.is_cleared()
     }
 
-    /// `TaggedImpl::IsCleared`
     #[inline]
     pub const fn is_cleared(self) -> bool {
         self.0 as u32 == K_CLEARED_WEAK_HEAP_OBJECT_LOWER32
     }
 
-    /// `TaggedImpl::IsWeakOrCleared`
     #[inline]
     pub const fn is_weak_or_cleared(self) -> bool {
         self.0 & K_HEAP_OBJECT_TAG_MASK == K_WEAK_HEAP_OBJECT_TAG
     }
 
-    /// `ClearedValue`
     #[inline]
     pub const fn cleared() -> Tagged {
         Tagged(K_CLEARED_WEAK_HEAP_OBJECT_LOWER32 as u64)
     }
 
-    // -- Conversions --------------------------------------------------------
 
     #[inline]
     pub const fn to_heap_object(self) -> Option<HeapObject> {
@@ -85,7 +77,6 @@ impl Tagged {
         }
     }
 
-    /// `TaggedImpl::GetHeapObjectIfStrong`
     #[inline]
     pub const fn to_strong_heap_object(self) -> Option<HeapObject> {
         if self.is_strong() {
@@ -119,14 +110,12 @@ impl std::fmt::Debug for Tagged {
 pub struct HeapObject(Address);
 
 impl HeapObject {
-    /// `HeapObject::FromAddress`
     #[inline]
     pub const fn from_address(address: Address) -> HeapObject {
         debug_assert!(is_aligned(address, K_OBJECT_ALIGNMENT));
         HeapObject(address)
     }
 
-    /// `HeapObject::address`
     #[inline]
     pub const fn address(self) -> Address {
         self.0

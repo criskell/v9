@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Reports comments in src/ that do not appear in the V8 source.
 
-A comment in the Rust source is kept only where V8 has one. This finds the
-ones that are not V8's, by normalising each comment line
-and looking for it in the V8 files the module maps to (and, failing that,
-anywhere in V8's src/, since a comment may have moved).
+A comment in the Rust source is kept only where V8 has one, copied as
+written. This finds the ones that are not V8's.
+
+Judging is per contiguous comment block, not per line, because the same
+comment reflows to different line breaks in Rust: a block of seven words or
+more matches on word shingles, so reflow is invisible, and a shorter block
+has to appear verbatim as one of V8's own comment blocks or lines. Matching a
+short comment against all of V8's comment text instead would pass anything
+whose words occur somewhere, which is how section banners survived.
 
   tools/check-comments.py [v8-checkout]
 """
@@ -24,11 +29,21 @@ def shingles(words):
         return [" ".join(words)]
     return [" ".join(words[i:i + SHINGLE]) for i in range(len(words) - SHINGLE + 1)]
 
-# Every comment in V8's src/, as word shingles. Shingles rather than whole
-# lines because the same comment reflows to different line breaks in Rust,
-# and a line-by-line match would call that a difference.
+def collect(run):
+    """One contiguous run of V8 comment lines.
+
+    The run goes in whole, so a vx comment that reflowed it matches on
+    shingles, and every line of it goes in on its own, so a vx comment that
+    copied one line of it matches exactly.
+    """
+    text = normalise(" ".join(run))
+    haystack.update(shingles(text.split()))
+    exact.add(text)
+    for line in run:
+        exact.add(normalise(line))
+
 haystack = set()
-blob = []
+exact = set()
 for root, _, files in os.walk(os.path.join(V8, "src")):
     for name in files:
         if not name.endswith((".h", ".cc", ".tq")):
@@ -52,22 +67,21 @@ for root, _, files in os.walk(os.path.join(V8, "src")):
                     run.append(block.group(1).strip())
                     continue
                 if run:
-                    text = normalise(" ".join(run))
-                    haystack.update(shingles(text.split()))
-                    blob.append(text)
+                    collect(run)
                     run = []
         if run:
-            text = normalise(" ".join(run))
-            haystack.update(shingles(text.split()))
-            blob.append(text)
+            collect(run)
 
-# A comment too short to shingle is looked for in the text itself.
-blob = " | ".join(blob)
+# A block of one or two words carries no evidence of having been copied: the
+# word is bound to occur in V8 somewhere. Those are reported whatever V8 has.
+MIN_WORDS = 3
 
 def is_v8s(key):
     words = key.split()
+    if len(words) < MIN_WORDS:
+        return False
     if len(words) < SHINGLE:
-        return key in blob
+        return key in exact
     return all(shingle in haystack for shingle in shingles(words))
 
 ASSERT_MACRO = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
@@ -121,22 +135,33 @@ total = flagged = 0
 for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
                                   capture_output=True, text=True).stdout.split()):
     report = []
+    block = []
+
+    def judge(block):
+        global flagged
+        if not block:
+            return
+        key = normalise(" ".join(body for _, _, body in block))
+        if is_v8s(key):
+            return
+        for number, stripped, _ in block:
+            report.append((number, stripped))
+            flagged += 1
+
     for number, line in enumerate(open(path), 1):
         stripped = line.strip()
         if not stripped.startswith("//"):
+            judge(block)
+            block = []
             continue
         body = stripped.lstrip("/!").strip()
         if not body:
+            judge(block)
+            block = []
             continue
         total += 1
-        key = normalise(body)
-        # A doc line that is only a V8 symbol name is the allowed exception.
-        if re.fullmatch(r"`[A-Za-z_][A-Za-z0-9_:<>\[\]]*(\(\))?`\.?", body):
-            continue
-        if len(key) <= 12 or is_v8s(key):
-            continue
-        report.append((number, stripped))
-        flagged += 1
+        block.append((number, stripped, body))
+    judge(block)
     messages = [] if path.endswith("heap/heap.rs") else assert_messages(path)
     for number in messages:
         report.append((number, "<assertion message>"))

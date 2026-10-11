@@ -4,7 +4,6 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::property_details::{PropertyAttributes, DONT_DELETE, DONT_ENUM, NONE, READ_ONLY};
 use crate::objects::tagged::Tagged;
 
-/// `PropertyDescriptor`
 #[derive(Default)]
 pub struct PropertyDescriptor {
     value: Option<Tagged>,
@@ -20,17 +19,14 @@ impl PropertyDescriptor {
         PropertyDescriptor::default()
     }
 
-    /// `PropertyDescriptor::IsAccessorDescriptor`
     pub fn is_accessor_descriptor(&self) -> bool {
         self.get.is_some() || self.set.is_some()
     }
 
-    /// `PropertyDescriptor::IsDataDescriptor`
     pub fn is_data_descriptor(&self) -> bool {
         self.value.is_some() || self.writable.is_some()
     }
 
-    /// `PropertyDescriptor::ToAttributes`
     pub fn to_attributes(&self) -> PropertyAttributes {
         let mut attributes = NONE;
         if !self.enumerable.unwrap_or(false) {
@@ -59,7 +55,6 @@ impl PropertyDescriptor {
 }
 
 impl Isolate {
-    /// `PropertyDescriptor::ToPropertyDescriptor`
     pub(crate) fn to_property_descriptor(
         &mut self,
         object: Tagged,

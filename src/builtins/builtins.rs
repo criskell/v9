@@ -3,7 +3,6 @@ use crate::interpreter::interpreter::{ExecutionResult, Thrown};
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
-/// `Builtin`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(i32)]
 pub enum Builtin {
@@ -242,7 +241,6 @@ impl Isolate {
 }
 
 impl Isolate {
-    /// `Builtins::ArrayPrototypePush`
     fn array_prototype_push(&mut self, receiver: Tagged, args: &[Tagged]) -> ExecutionResult {
         let array = match self.as_js_array(receiver) {
             Some(array) => array,
@@ -264,7 +262,6 @@ impl Isolate {
         Ok(Smi::from_int(length as i32))
     }
 
-    /// `Builtins::ArrayPrototypePop`
     fn array_prototype_pop(&mut self, receiver: Tagged) -> ExecutionResult {
         use crate::objects::elements::ElementsAccessor;
         let array = match self.as_js_array(receiver) {
@@ -289,7 +286,6 @@ impl Isolate {
         Ok(last)
     }
 
-    /// `Builtins::ArrayPrototypeJoin`
     fn array_prototype_join(
         &mut self,
         receiver: Tagged,
@@ -322,7 +318,6 @@ impl Isolate {
         Ok(self.new_string(&joined).tagged())
     }
 
-    /// `Builtins::ArrayPrototypeIndexOf`
     fn array_prototype_index_of(
         &mut self,
         receiver: Tagged,
@@ -348,7 +343,6 @@ impl Isolate {
         Ok(Smi::from_int(-1))
     }
 
-    /// `Builtins::ObjectDefineProperty`
     fn object_define_property(
         &mut self,
         target: Option<Tagged>,
@@ -398,7 +392,6 @@ impl Isolate {
         Ok(result)
     }
 
-    /// `Builtins::ObjectKeys`
     fn object_keys(&mut self, target: Option<Tagged>) -> ExecutionResult {
         use crate::objects::js_objects::JSObject;
         let target = target.unwrap_or(self.undefined_value());
@@ -442,7 +435,6 @@ impl Isolate {
         Err(Thrown(message))
     }
 
-    /// `Object::HasOwnProperty`
     fn has_own_property(&mut self, receiver: Tagged, name: Tagged) -> Tagged {
         use crate::objects::js_objects::JSObject;
         let Some(object) = receiver.to_strong_heap_object() else {

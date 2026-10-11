@@ -8,7 +8,6 @@ use crate::objects::tagged::Tagged;
 use crate::handles::handles::Handle;
 
 impl Isolate {
-    /// `Runtime_DefineClass`
     pub(crate) fn runtime_define_class(&mut self, args: &[Tagged]) -> ExecutionResult {
         debug_assert!(
             ClassBoilerplate::K_FIRST_DYNAMIC_ARGUMENT_INDEX as usize <= args.len()
@@ -23,7 +22,6 @@ impl Isolate {
         result
     }
 
-    /// `DefineClass`
     fn define_class(&mut self, args: &[Handle]) -> ExecutionResult {
         let super_class = args[ClassBoilerplate::K_PROTOTYPE_ARGUMENT_INDEX as usize];
         let super_class_value = super_class.get(self);
@@ -68,7 +66,6 @@ impl Isolate {
         Ok(prototype.get(self))
     }
 
-    /// `IsConstructor`
     fn is_constructor(&self, value: Tagged) -> bool {
         match value.to_strong_heap_object() {
             Some(object) => {
@@ -84,12 +81,10 @@ impl Isolate {
         Ok(prototype.tagged())
     }
 
-    /// `CreateClassPrototype`
     fn create_class_prototype(&mut self) -> JSObject {
         self.new_js_object()
     }
 
-    /// `InitClassConstructor`
     fn init_class_constructor(
         &mut self,
         args: &[Handle],
@@ -118,7 +113,6 @@ impl Isolate {
         self.add_descriptors_by_template(args, constructor, true)
     }
 
-    /// `InitClassPrototype`
     fn init_class_prototype(
         &mut self,
         args: &[Handle],
@@ -148,7 +142,6 @@ impl Isolate {
         self.add_descriptors_by_template(args, prototype, false)
     }
 
-    /// `AddDescriptorsByTemplate`
     fn add_descriptors_by_template(
         &mut self,
         args: &[Handle],

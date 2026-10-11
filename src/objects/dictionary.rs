@@ -7,11 +7,9 @@ use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
 object_type!(
-    /// `NumberDictionary`
     NumberDictionary
 );
 
-/// `NumberDictionaryShape`
 pub const NUMBER_DICTIONARY_SHAPE: HashTableShape = HashTableShape {
     prefix_size: 1,
     entry_size: 3,
@@ -24,7 +22,6 @@ impl NumberDictionary {
 
     pub const K_MAX_NUMBER_KEY_INDEX: i32 = HashTableBase::K_PREFIX_START_INDEX;
 
-    // Bit masks.
     pub const K_REQUIRES_SLOW_ELEMENTS_MASK: i32 = 1;
     pub const K_REQUIRES_SLOW_ELEMENTS_TAG_SIZE: i32 = 1;
     pub const K_REQUIRES_SLOW_ELEMENTS_LIMIT: u32 = (1 << 29) - 1;
@@ -53,13 +50,11 @@ impl NumberDictionary {
         self.as_hash_table().number_of_elements(heap)
     }
 
-    /// `NumberDictionaryBaseShape::Hash`
     #[inline]
     pub fn hash(key: u32) -> u32 {
         crate::utils::utils::compute_seeded_hash(key, 0)
     }
 
-    /// `NumberDictionaryBaseShape::IsMatch`
     #[inline]
     pub fn is_match(heap: &Heap, key: u32, other: Tagged) -> bool {
         match Smi::try_to_int(other) {
@@ -71,14 +66,12 @@ impl NumberDictionary {
         }
     }
 
-    /// `Dictionary::KeyAt`
     #[inline]
     pub fn key_at(self, heap: &Heap, entry: i32) -> Tagged {
         self.as_hash_table()
             .key_at(heap, NUMBER_DICTIONARY_SHAPE, entry)
     }
 
-    /// `Dictionary::ValueAt`
     #[inline]
     pub fn value_at(self, heap: &Heap, entry: i32) -> Tagged {
         self.as_fixed_array().get(
@@ -87,7 +80,6 @@ impl NumberDictionary {
         )
     }
 
-    /// `Dictionary::ValueAtPut`
     #[inline]
     pub fn value_at_put(self, heap: &mut Heap, entry: i32, value: Tagged) {
         self.as_fixed_array().set(
@@ -97,7 +89,6 @@ impl NumberDictionary {
         );
     }
 
-    /// `Dictionary::DetailsAt`
     #[inline]
     pub fn details_at(self, heap: &Heap, entry: i32) -> PropertyDetails {
         let raw = self.as_fixed_array().get(
@@ -107,7 +98,6 @@ impl NumberDictionary {
         PropertyDetails::from_raw(Smi::to_int(raw) as u32)
     }
 
-    /// `Dictionary::DetailsAtPut`
     #[inline]
     pub fn details_at_put(self, heap: &mut Heap, entry: i32, details: PropertyDetails) {
         self.as_fixed_array().set(
@@ -117,7 +107,6 @@ impl NumberDictionary {
         );
     }
 
-    /// `NumberDictionary::requires_slow_elements`
     #[inline]
     pub fn requires_slow_elements(self, heap: &Heap) -> bool {
         let max_index_object = self
@@ -129,7 +118,6 @@ impl NumberDictionary {
         }
     }
 
-    /// `NumberDictionary::set_requires_slow_elements`
     #[inline]
     pub fn set_requires_slow_elements(self, heap: &mut Heap) {
         self.as_fixed_array().set(
@@ -139,7 +127,6 @@ impl NumberDictionary {
         );
     }
 
-    /// `NumberDictionary::max_number_key`
     // Get the value of the max number key that has been added to this
     // dictionary. max_number_key can only be called if requires_slow_elements
     // returns false.
@@ -155,7 +142,6 @@ impl NumberDictionary {
         }
     }
 
-    /// `NumberDictionary::UpdateMaxNumberKey`
     pub fn update_max_number_key(self, heap: &mut Heap, key: u32) {
         // If the dictionary requires slow elements an element has already
         // been added at a high index.
@@ -176,7 +162,6 @@ impl NumberDictionary {
         }
     }
 
-    /// `HashTable::FindEntry`
     // Find entry for key otherwise return kNotFound.
     pub fn find_entry(self, heap: &Heap, key: u32) -> i32 {
         let capacity = self.capacity(heap);
@@ -188,7 +173,6 @@ impl NumberDictionary {
         let mut entry = HashTableBase::first_probe(hash, capacity);
         loop {
             let element = self.key_at(heap, entry as i32);
-            // Empty entry.
             if heap.is_undefined(element) {
                 return K_NOT_FOUND;
             }
@@ -200,7 +184,6 @@ impl NumberDictionary {
         }
     }
 
-    /// `Dictionary::ClearEntry`
     pub fn clear_entry(self, heap: &mut Heap, entry: i32) {
         let the_hole = heap.the_hole_value;
         self.as_hash_table()
@@ -209,7 +192,6 @@ impl NumberDictionary {
         self.details_at_put(heap, entry, PropertyDetails::from_raw(0));
     }
 
-    /// `HashTable::FindInsertionEntry`
     pub fn find_insertion_entry(self, heap: &Heap, hash: u32) -> i32 {
         let capacity = self.capacity(heap);
         let mut count = 1;
@@ -226,7 +208,6 @@ impl NumberDictionary {
 }
 
 impl Isolate {
-    /// `Factory::NewNumberDictionary`
     pub fn new_number_dictionary(&mut self, at_least_space_for: u32) -> NumberDictionary {
         let capacity = HashTableBase::compute_capacity(at_least_space_for);
         let length = NUMBER_DICTIONARY_SHAPE.size_for(capacity);
@@ -264,7 +245,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `Dictionary::Add`
     pub fn dictionary_add(
         &mut self,
         dictionary: NumberDictionary,
@@ -299,7 +279,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `Dictionary::Set`
     pub fn dictionary_set(
         &mut self,
         dictionary: NumberDictionary,
@@ -316,7 +295,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `HashTable::EnsureCapacity`
     fn dictionary_ensure_capacity(
         &mut self,
         dictionary: NumberDictionary,
@@ -370,11 +348,9 @@ impl Isolate {
 }
 
 object_type!(
-    /// `NameDictionary`
     NameDictionary
 );
 
-/// `NameDictionaryShape`
 pub const NAME_DICTIONARY_SHAPE: HashTableShape = HashTableShape {
     prefix_size: 3,
     entry_size: 3,
@@ -411,7 +387,6 @@ impl NameDictionary {
         self.as_hash_table().number_of_elements(heap)
     }
 
-    /// `BaseNameDictionary::next_enumeration_index`
     #[inline]
     pub fn next_enumeration_index(self, heap: &Heap) -> i32 {
         Smi::to_int(
@@ -420,7 +395,6 @@ impl NameDictionary {
         )
     }
 
-    /// `BaseNameDictionary::set_next_enumeration_index`
     #[inline]
     pub fn set_next_enumeration_index(self, heap: &mut Heap, index: i32) {
         self.as_fixed_array().set(
@@ -430,27 +404,23 @@ impl NameDictionary {
         );
     }
 
-    /// `NameDictionaryShape::Hash`
     #[inline]
     pub fn hash(heap: &Heap, key: Tagged) -> u32 {
         crate::objects::name::Name::unchecked_cast(key.to_strong_heap_object().expect("a Name key"))
             .raw_hash_field_hash(heap)
     }
 
-    /// `NameDictionaryShape::IsMatch`
     #[inline]
     pub fn is_match(key: Tagged, other: Tagged) -> bool {
         key == other
     }
 
-    /// `Dictionary::KeyAt`
     #[inline]
     pub fn key_at(self, heap: &Heap, entry: i32) -> Tagged {
         self.as_hash_table()
             .key_at(heap, NAME_DICTIONARY_SHAPE, entry)
     }
 
-    /// `Dictionary::ValueAt`
     #[inline]
     pub fn value_at(self, heap: &Heap, entry: i32) -> Tagged {
         self.as_fixed_array().get(
@@ -466,7 +436,6 @@ impl NameDictionary {
         )
     }
 
-    /// `Dictionary::ValueAtPut`
     #[inline]
     pub fn value_at_put(self, heap: &mut Heap, entry: i32, value: Tagged) {
         self.as_fixed_array().set(
@@ -476,7 +445,6 @@ impl NameDictionary {
         );
     }
 
-    /// `Dictionary::DetailsAt`
     #[inline]
     pub fn details_at(self, heap: &Heap, entry: i32) -> PropertyDetails {
         let raw = self.as_fixed_array().get(
@@ -486,7 +454,6 @@ impl NameDictionary {
         PropertyDetails::from_raw(Smi::to_int(raw) as u32)
     }
 
-    /// `Dictionary::DetailsAtPut`
     #[inline]
     pub fn details_at_put(self, heap: &mut Heap, entry: i32, details: PropertyDetails) {
         self.as_fixed_array().set(
@@ -496,7 +463,6 @@ impl NameDictionary {
         );
     }
 
-    /// `Dictionary::ClearEntry`
     pub fn clear_entry(self, heap: &mut Heap, entry: i32) {
         let the_hole = heap.the_hole_value;
         self.as_hash_table()
@@ -505,7 +471,6 @@ impl NameDictionary {
         self.details_at_put(heap, entry, PropertyDetails::from_raw(0));
     }
 
-    /// `HashTable::FindEntry`
     pub fn find_entry(self, heap: &Heap, key: Tagged) -> i32 {
         let capacity = self.capacity(heap);
         if capacity == 0 {
@@ -527,7 +492,6 @@ impl NameDictionary {
         }
     }
 
-    /// `HashTable::FindInsertionEntry`
     pub fn find_insertion_entry(self, heap: &Heap, hash: u32) -> i32 {
         let capacity = self.capacity(heap);
         let mut count = 1;
@@ -542,7 +506,6 @@ impl NameDictionary {
         }
     }
 
-    /// `Dictionary::IterateEntries`
     pub fn iterate_entries(self, heap: &Heap) -> Vec<i32> {
         (0..self.capacity(heap) as i32)
             .filter(|entry| HashTableBase::is_key(heap, self.key_at(heap, *entry)))
@@ -551,7 +514,6 @@ impl NameDictionary {
 }
 
 impl Isolate {
-    /// `Factory::NewNameDictionary`
     pub fn new_name_dictionary(&mut self, at_least_space_for: u32) -> NameDictionary {
         let capacity = HashTableBase::compute_capacity(at_least_space_for);
         let length = NAME_DICTIONARY_SHAPE.size_for(capacity);
@@ -593,7 +555,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `BaseNameDictionary::Add`
     pub fn name_dictionary_add(
         &mut self,
         dictionary: NameDictionary,
@@ -626,7 +587,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `Dictionary::Set`
     pub fn name_dictionary_set(
         &mut self,
         dictionary: NameDictionary,
@@ -642,7 +602,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `Dictionary::DeleteEntry`
     pub fn name_dictionary_delete(
         &mut self,
         dictionary: NameDictionary,
@@ -653,7 +612,6 @@ impl Isolate {
         dictionary
     }
 
-    /// `HashTable::EnsureCapacity`
     fn name_dictionary_ensure_capacity(
         &mut self,
         dictionary: NameDictionary,

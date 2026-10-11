@@ -9,7 +9,6 @@ use crate::objects::property_details::Representation;
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
 object_type!(
-    /// `Map`
     Map
 );
 
@@ -74,14 +73,11 @@ impl Map {
         Self::K_CONSTRUCTOR_OR_BACK_POINTER_OFFSET + K_TAGGED_SIZE;
     pub const K_TRANSITIONS_OR_PROTOTYPE_INFO_OFFSET: i32 =
         Self::K_INSTANCE_DESCRIPTORS_OFFSET + K_TAGGED_SIZE;
-    /// `Map::kSize`
     pub const K_SIZE: i32 = Self::K_TRANSITIONS_OR_PROTOTYPE_INFO_OFFSET + K_TAGGED_SIZE;
 
     pub const K_INITIAL_INOBJECT_SLACK: i32 = 4;
 
-    // -- instance size ------------------------------------------------------
 
-    /// `Map::instance_size`
     #[inline]
     pub fn instance_size(self, heap: &Heap) -> i32 {
         self.instance_size_in_words(heap) * K_TAGGED_SIZE
@@ -122,15 +118,12 @@ impl Map {
         self.instance_size_in_words(heap) - self.inobject_properties_start_in_words(heap)
     }
 
-    /// `Map::GetInObjectPropertyOffset`
     #[inline]
     pub fn inobject_property_offset(self, heap: &Heap, index: i32) -> i32 {
         (self.inobject_properties_start_in_words(heap) + index) * K_TAGGED_SIZE
     }
 
-    // -- instance type ------------------------------------------------------
 
-    /// `Map::instance_type`
     #[inline]
     pub fn instance_type(self, heap: &Heap) -> InstanceType {
         heap.read_u16(self.field(Self::K_INSTANCE_TYPE_OFFSET))
@@ -141,7 +134,6 @@ impl Map {
         heap.write_u16(self.field(Self::K_INSTANCE_TYPE_OFFSET), instance_type);
     }
 
-    // -- bit_field ----------------------------------------------------------
 
     #[inline]
     fn bit_field(self, heap: &Heap) -> u8 {
@@ -159,7 +151,6 @@ impl Map {
         heap.write_u8(self.field(Self::K_BIT_FIELD_OFFSET), updated);
     }
 
-    /// `Map::is_callable`
     #[inline]
     pub fn is_callable(self, heap: &Heap) -> bool {
         self.bit_field(heap) & (1 << IS_CALLABLE_BIT) != 0
@@ -175,7 +166,6 @@ impl Map {
         self.bit_field(heap) & (1 << IS_UNDETECTABLE_BIT) != 0
     }
 
-    /// `Map::is_constructor`
     #[inline]
     pub fn is_constructor(self, heap: &Heap) -> bool {
         self.bit_field(heap) & (1 << IS_CONSTRUCTOR_BIT) != 0
@@ -186,7 +176,6 @@ impl Map {
         self.set_bit_field_bit(heap, IS_CONSTRUCTOR_BIT, value);
     }
 
-    // -- bit_field2 ---------------------------------------------------------
 
     #[inline]
     pub fn bit_field2(self, heap: &Heap) -> u8 {
@@ -198,51 +187,43 @@ impl Map {
         heap.write_u8(self.field(Self::K_BIT_FIELD2_OFFSET), value);
     }
 
-    /// `Map::elements_kind`
     #[inline]
     pub fn elements_kind(self, heap: &Heap) -> ElementsKind {
         let bits = (self.bit_field2(heap) >> ELEMENTS_KIND_SHIFT) & mask8(ELEMENTS_KIND_BITS);
         ElementsKind::from_bits(bits)
     }
 
-    /// `Map::set_elements_kind`
     #[inline]
     pub fn set_elements_kind(self, heap: &mut Heap, kind: ElementsKind) {
         let cleared = self.bit_field2(heap) & !(mask8(ELEMENTS_KIND_BITS) << ELEMENTS_KIND_SHIFT);
         self.set_bit_field2(heap, cleared | ((kind as u8) << ELEMENTS_KIND_SHIFT));
     }
 
-    /// `Map::has_fast_elements`
     #[inline]
     pub fn has_fast_elements(self, heap: &Heap) -> bool {
         elements_kind::is_fast_elements_kind(self.elements_kind(heap))
     }
 
-    /// `Map::has_fast_smi_elements`
     #[inline]
     pub fn has_fast_smi_elements(self, heap: &Heap) -> bool {
         elements_kind::is_smi_elements_kind(self.elements_kind(heap))
     }
 
-    /// `Map::has_fast_object_elements`
     #[inline]
     pub fn has_fast_object_elements(self, heap: &Heap) -> bool {
         elements_kind::is_object_elements_kind(self.elements_kind(heap))
     }
 
-    /// `Map::has_fast_double_elements`
     #[inline]
     pub fn has_fast_double_elements(self, heap: &Heap) -> bool {
         elements_kind::is_double_elements_kind(self.elements_kind(heap))
     }
 
-    /// `Map::has_dictionary_elements`
     #[inline]
     pub fn has_dictionary_elements(self, heap: &Heap) -> bool {
         elements_kind::is_dictionary_elements_kind(self.elements_kind(heap))
     }
 
-    // -- bit_field3 ---------------------------------------------------------
 
     #[inline]
     pub fn bit_field3(self, heap: &Heap) -> u32 {
@@ -353,7 +334,6 @@ impl Map {
         self.update_bit_field3_bit(heap, IS_UNSTABLE_BIT, value);
     }
 
-    // -- tagged fields ------------------------------------------------------
 
     #[inline]
     pub fn prototype(self, heap: &Heap) -> Tagged {
@@ -388,7 +368,6 @@ impl Map {
         self.field(Self::K_CONSTRUCTOR_OR_BACK_POINTER_OFFSET)
     }
 
-    /// `Map::instance_descriptors`
     #[inline]
     pub fn instance_descriptors_raw(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_INSTANCE_DESCRIPTORS_OFFSET))
@@ -413,7 +392,6 @@ impl Map {
         self.field(Self::K_INSTANCE_DESCRIPTORS_OFFSET)
     }
 
-    /// `Map::raw_transitions`
     #[inline]
     pub fn raw_transitions(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_TRANSITIONS_OR_PROTOTYPE_INFO_OFFSET))
@@ -519,7 +497,6 @@ impl Isolate {
         )
     }
 
-    /// `Map::TransitionToDataProperty`
     pub fn transition_to_data_property_with_attributes(
         &mut self,
         map: Map,
@@ -546,7 +523,6 @@ impl Isolate {
         new_map
     }
 
-    /// `Map::TransitionToAccessorProperty`
     pub(crate) fn transition_to_accessor_property(
         &mut self,
         map: Map,
@@ -600,7 +576,6 @@ impl Isolate {
         new_map
     }
 
-    /// `Map::TooManyFastProperties`
     pub(crate) fn too_many_fast_properties(&self, map: Map, store_origin: StoreOrigin) -> bool {
         if store_origin != StoreOrigin::MaybeKeyed {
             return false;
@@ -614,7 +589,6 @@ impl Isolate {
         external > limit
     }
 
-    /// `Map::CopyNormalized`
     pub(crate) fn copy_normalized(&mut self, map: Map) -> Map {
         let result = self.copy_map_shell(map);
         result.set_is_dictionary_map(&mut self.heap, true);
@@ -623,13 +597,11 @@ impl Isolate {
         result
     }
 
-    /// `Map::Normalize`
     pub(crate) fn normalize_map(&mut self, fast_map: Map) -> Map {
         debug_assert!(!fast_map.is_dictionary_map(&self.heap));
         self.copy_normalized(fast_map)
     }
 
-    /// `Map::CopyAddDescriptor`
     pub(crate) fn copy_add_descriptor_with_attributes(
         &mut self,
         map: Map,

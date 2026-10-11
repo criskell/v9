@@ -1,10 +1,8 @@
 use crate::ast::ast::*;
 
-/// `AstPrinter`
 pub struct AstPrinter;
 
 impl AstPrinter {
-    /// `AstPrinter::PrintProgram`
     pub fn print_program(program: &Program) -> String {
         let mut out = String::new();
         out.push_str("PROGRAM\n");
@@ -18,14 +16,12 @@ impl AstPrinter {
         out
     }
 
-    /// `AstPrinter::PrintStatement`
     pub fn print_statement(statement: &Statement) -> String {
         let mut out = String::new();
         print_statement(&mut out, statement, 0);
         out
     }
 
-    /// `AstPrinter::PrintExpression`
     pub fn print_expression(expression: &Expression) -> String {
         let mut out = String::new();
         print_expression(&mut out, expression, 0);

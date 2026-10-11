@@ -6,14 +6,11 @@ use crate::objects::map::Map;
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `JSObject`
     JSObject
 );
 
 impl JSObject {
-    /// `JSReceiver::kPropertiesOrHashOffset`
     pub const K_PROPERTIES_OR_HASH_OFFSET: i32 = K_TAGGED_SIZE;
-    /// `JSObject::kElementsOffset`
     pub const K_ELEMENTS_OFFSET: i32 = Self::K_PROPERTIES_OR_HASH_OFFSET + K_TAGGED_SIZE;
     pub const K_HEADER_SIZE: i32 = Self::K_ELEMENTS_OFFSET + K_TAGGED_SIZE;
 
@@ -27,7 +24,6 @@ impl JSObject {
 
     pub const K_MIN_ADDED_ELEMENTS_CAPACITY: u32 = 16;
 
-    /// `JSObject::NewElementsCapacity`
     // Computes the new capacity when expanding the elements of a JSObject.
     #[inline]
     pub const fn new_elements_capacity(old_capacity: u32) -> u32 {
@@ -35,7 +31,6 @@ impl JSObject {
         old_capacity + (old_capacity >> 1) + Self::K_MIN_ADDED_ELEMENTS_CAPACITY
     }
 
-    /// `JSObject::GetElementsKind`
     #[inline]
     pub fn get_elements_kind(self, heap: &Heap) -> ElementsKind {
         heap.map_of(self.object()).elements_kind(heap)
@@ -56,7 +51,6 @@ impl JSObject {
         self.field(Self::K_PROPERTIES_OR_HASH_OFFSET)
     }
 
-    /// `JSObject::property_dictionary`
     #[inline]
     pub fn property_dictionary(self, heap: &Heap) -> crate::objects::dictionary::NameDictionary {
         crate::objects::dictionary::NameDictionary::unchecked_cast(
@@ -66,13 +60,11 @@ impl JSObject {
         )
     }
 
-    /// `JSObject::HasFastProperties`
     #[inline]
     pub fn has_fast_properties(self, heap: &Heap) -> bool {
         !heap.map_of(self.object()).is_dictionary_map(heap)
     }
 
-    /// `JSObject::property_array`
     #[inline]
     pub fn property_array(self, heap: &Heap) -> PropertyArray {
         PropertyArray::unchecked_cast(
@@ -153,7 +145,6 @@ impl JSObject {
 }
 
 impl crate::execution::isolate::Isolate {
-    /// `ShouldConvertToSlowElements`
     pub(crate) fn should_convert_to_slow_elements(&self, capacity: u32, index: u32) -> (bool, u32) {
         if index < capacity {
             return (false, capacity);
@@ -165,7 +156,6 @@ impl crate::execution::isolate::Isolate {
         (false, new_capacity)
     }
 
-    /// `ShouldConvertToFastElements`
     pub(crate) fn should_convert_to_fast_elements(
         &self,
         object: JSObject,
@@ -200,14 +190,12 @@ impl crate::execution::isolate::Isolate {
         (2 * dictionary_size >= new_capacity, new_capacity)
     }
 
-    /// `JSObject::BestFittingFastElementsKind`
     pub(crate) fn best_fitting_fast_elements_kind(&self, object: JSObject) -> ElementsKind {
         use crate::objects::elements_kind::ElementsKind::*;
         let _ = object;
         HoleyElements
     }
 
-    /// `JSObject::GetElementsTransitionMap`
     pub(crate) fn get_elements_transition_map(
         &mut self,
         object: JSObject,
@@ -225,7 +213,6 @@ impl crate::execution::isolate::Isolate {
         map.tagged()
     }
 
-    /// `JSObject::SetMapAndElements`
     pub(crate) fn set_map_and_elements(
         &mut self,
         object: JSObject,
@@ -237,7 +224,6 @@ impl crate::execution::isolate::Isolate {
         object.set_elements(&mut self.heap, elements);
     }
 
-    /// `JSObject::TransitionElementsKind`
     pub(crate) fn transition_elements_kind(&mut self, object: JSObject, to_kind: ElementsKind) {
         use crate::objects::elements_kind as ek;
         let from_kind = object.get_elements_kind(&self.heap);
@@ -267,7 +253,6 @@ impl crate::execution::isolate::Isolate {
         }
     }
 
-    /// `JSObject::AddDataElement`
     pub(crate) fn add_data_element(&mut self, object: JSObject, index: u32, value: Tagged) {
         use crate::objects::elements_kind as ek;
         use crate::objects::instance_type::JS_ARRAY_TYPE;

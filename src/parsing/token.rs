@@ -1,4 +1,3 @@
-/// `Token::Value`
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum Token {
@@ -16,7 +15,6 @@ pub enum Token {
     Conditional,
     Semicolon,
     RightBrace,
-    /// End of source.
     Eos,
 
     Arrow,
@@ -55,7 +53,6 @@ pub enum Token {
     Exp,
     Add,
     Sub,
-    // END BinaryOp
     Not,
     BitNot,
     Delete,
@@ -75,7 +72,6 @@ pub enum Token {
     InstanceOf,
     In,
 
-    // Keywords.
     Break,
     Case,
     Catch,
@@ -105,7 +101,6 @@ pub enum Token {
     Smi,
     BigInt,
     String,
-    // END Literal
     Super,
     Identifier,
     Get,
@@ -156,7 +151,6 @@ macro_rules! token_table {
                 match self { $($token => $precedence,)* }
             }
 
-            /// `Token::IsKeyword`
             pub fn is_keyword(self) -> bool {
                 match self { $($token => $keyword,)* }
             }
@@ -330,13 +324,11 @@ impl Token {
         self.in_range(Arrow, AssignSub)
     }
 
-    /// `Token::IsBinaryOp`
     #[inline]
     pub const fn is_binary_op(self) -> bool {
         self.in_range(Comma, Sub)
     }
 
-    /// `Token::IsCompareOp`
     #[inline]
     pub const fn is_compare_op(self) -> bool {
         self.in_range(Eq, In)
@@ -377,7 +369,6 @@ impl Token {
         self.in_range(BitOr, Shr) || matches!(self, BitNot)
     }
 
-    /// `Token::IsLiteral`
     #[inline]
     pub const fn is_literal(self) -> bool {
         self.in_range(NullLiteral, String)

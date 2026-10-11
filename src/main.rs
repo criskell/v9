@@ -68,7 +68,6 @@ fn with_file(command: &str, action: fn(&str, &str)) {
     action(&path, &source);
 }
 
-/// `--print-ast`
 fn print_ast(_path: &str, source: &str) {
     match vx::parsing::parser::Parser::parse_program(source) {
         Ok(program) => print!("{}", AstPrinter::print_program(&program)),
@@ -155,7 +154,6 @@ fn trace_ic(_path: &str, source: &str) {
     println!("              {primary_used}/4096 primary slots, {secondary_used}/1024 secondary");
 }
 
-/// `--print-bytecode`
 fn print_bytecode(_path: &str, source: &str) {
     use vx::interpreter::bytecode_array_iterator::disassemble;
     use vx::interpreter::bytecode_generator::BytecodeGenerator;

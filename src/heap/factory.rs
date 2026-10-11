@@ -17,9 +17,7 @@ use crate::objects::tagged::Tagged;
 pub const K_DESCRIPTOR_ARRAY_SLACK: i32 = 4;
 
 impl Isolate {
-    // -- numbers ------------------------------------------------------------
 
-    /// `Factory::NewHeapNumber`
     pub fn new_heap_number(&mut self, value: f64) -> HeapNumber {
         let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
         let object = self
@@ -44,7 +42,6 @@ impl Isolate {
         }
     }
 
-    // -- strings ------------------------------------------------------------
 
     pub fn new_string(&mut self, s: &str) -> VxString {
         let one_byte = VxString::is_one_byte_content(s);
@@ -56,7 +53,6 @@ impl Isolate {
         self.allocate_string_raw(s, map, one_byte, AllocationType::Young)
     }
 
-    // -- arrays -------------------------------------------------------------
 
     pub fn new_fixed_array(&mut self, length: i32) -> FixedArray {
         if length == 0 {
@@ -77,7 +73,6 @@ impl Isolate {
         array
     }
 
-    /// `Factory::NewFixedDoubleArray`
     pub fn new_fixed_double_array(&mut self, length: i32) -> FixedDoubleArray {
         let map = self
             .roots
@@ -95,7 +90,6 @@ impl Isolate {
         array
     }
 
-    /// `Factory::NewJSArrayWithElements`
     pub fn new_js_array_with_elements(
         &mut self,
         elements: Tagged,
@@ -124,7 +118,6 @@ impl Isolate {
         array
     }
 
-    /// `JSFunction::CalculateInstanceSizeHelper`
     pub(crate) fn new_js_object_map_for_constructor(&mut self) -> Map {
         use crate::objects::instance_type::JS_OBJECT_TYPE;
         use crate::objects::js_objects::JSObject;
@@ -136,7 +129,6 @@ impl Isolate {
         map
     }
 
-    /// `Factory::NewJSArray`
     pub fn new_js_array(&mut self, capacity: i32) -> JSArray {
         let kind = elements_kind::get_initial_fast_elements_kind();
         let elements = if capacity == 0 {
@@ -147,7 +139,6 @@ impl Isolate {
         self.new_js_array_with_elements(elements, kind, 0)
     }
 
-    /// `Factory::NewFixedArrayWithHoles`
     pub fn new_fixed_array_with_holes(&mut self, length: i32) -> FixedArray {
         let array = self.new_fixed_array(length);
         let the_hole = self.the_hole_value();
@@ -157,7 +148,6 @@ impl Isolate {
         array
     }
 
-    /// `Factory::NewPropertyArray`
     pub fn new_property_array(&mut self, length: i32) -> PropertyArray {
         if length == 0 {
             return self.empty_property_array();
@@ -202,7 +192,6 @@ impl Isolate {
         array
     }
 
-    // -- maps ---------------------------------------------------------------
 
     pub fn new_map(
         &mut self,
@@ -247,7 +236,6 @@ impl Isolate {
         map
     }
 
-    // -- objects ------------------------------------------------------------
 
     pub fn new_js_object_from_map(&mut self, map: Map) -> JSObject {
         let instance_size = map.instance_size(&self.heap);
@@ -291,7 +279,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    // -- code ---------------------------------------------------------------
 
     pub fn new_bytecode_array(
         &mut self,
@@ -387,7 +374,6 @@ impl Isolate {
         pool
     }
 
-    /// `Factory::NewScopeInfo`
     pub fn new_scope_info(&mut self, names: &[String]) -> crate::objects::scope_info::ScopeInfo {
         use crate::objects::scope_info::ScopeInfo;
         let count = names.len() as i32;
@@ -407,7 +393,6 @@ impl Isolate {
         info
     }
 
-    /// `Factory::NewTuple2`
     pub fn new_tuple2(
         &mut self,
         value1: Tagged,
@@ -430,7 +415,6 @@ impl Isolate {
         tuple
     }
 
-    /// `ClassBoilerplate::New`
     pub fn new_class_boilerplate(
         &mut self,
         members: &[(i32, String)],
@@ -605,7 +589,6 @@ impl Isolate {
         vector
     }
 
-    /// `Factory::NewSharedFunctionInfo`
     pub fn new_shared_function_info(
         &mut self,
         name: &str,
@@ -650,7 +633,6 @@ impl Isolate {
         info
     }
 
-    /// `Factory::NewFunctionFromSharedFunctionInfo`
     pub fn new_js_function(
         &mut self,
         shared: crate::objects::shared_function_info::SharedFunctionInfo,
@@ -798,7 +780,6 @@ impl Isolate {
 
 pub const JS_OBJECT_HEADER_WORDS: i32 = JSObject::K_HEADER_SIZE / K_TAGGED_SIZE;
 
-/// `HandlerTableBuilder::ToHandlerTable`
 fn encode_handler_table(table: &crate::codegen::handler_table::HandlerTable) -> Vec<i32> {
     use crate::codegen::handler_table::HandlerTable;
     let mut encoded = Vec::new();

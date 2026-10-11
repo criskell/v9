@@ -4,13 +4,11 @@ use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
 object_type!(
-    /// `HeapNumber`
     HeapNumber
 );
 
 impl HeapNumber {
     pub const K_VALUE_OFFSET: i32 = 8;
-    /// `HeapNumber::kSize`
     pub const K_SIZE: i32 = Self::K_VALUE_OFFSET + 8;
 
     #[inline]
@@ -36,7 +34,6 @@ pub fn number_value(heap: &Heap, value: Tagged) -> Option<f64> {
     }
 }
 
-/// `Object::IsNumber`
 pub fn is_number(heap: &Heap, value: Tagged) -> bool {
     if value.is_smi() {
         return true;

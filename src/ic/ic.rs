@@ -64,7 +64,6 @@ impl Isolate {
         self.roots.uninitialized_value
     }
 
-    /// `FeedbackVector::MegamorphicSentinel`
     #[inline]
     pub fn megamorphic_sentinel(&self) -> Tagged {
         self.roots.megamorphic_symbol
@@ -91,9 +90,6 @@ impl Isolate {
         )
     }
 
-    // -----------------------------------------------------------------------
-    // LoadIC
-    // -----------------------------------------------------------------------
 
     pub fn load_ic(
         &mut self,
@@ -169,7 +165,6 @@ impl Isolate {
         value
     }
 
-    /// `StoreIC::Store`
     pub fn store_ic(
         &mut self,
         receiver: JSObject,
@@ -310,8 +305,6 @@ impl Isolate {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // -----------------------------------------------------------------------
 
     pub fn load_global_ic(
         &mut self,
@@ -342,7 +335,6 @@ impl Isolate {
         Some(cell.value(&self.heap))
     }
 
-    /// `StoreGlobalIC::Store`
     pub fn store_global_ic(
         &mut self,
         name: Tagged,
@@ -382,7 +374,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    /// `FeedbackNexus::ConfigurePropertyCellMode`
     fn configure_property_cell_mode(
         &mut self,
         nexus: FeedbackNexus,
@@ -406,8 +397,6 @@ impl Isolate {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // -----------------------------------------------------------------------
 
     fn update_ic(&mut self, nexus: FeedbackNexus, map: Map, handler: Tagged, name: Tagged) {
         let before = self.ic_state(nexus);
@@ -445,7 +434,6 @@ impl Isolate {
         }
     }
 
-    /// `IC::UpdateMegamorphicCache`
     fn update_megamorphic_cache(&mut self, map: Map, name: Tagged, handler: Tagged) {
         let Some(name) = self.as_internalized_name(name) else {
             return;

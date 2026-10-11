@@ -76,7 +76,6 @@ impl Scanner {
         scanner
     }
 
-    /// `Scanner::current_token`
     #[inline]
     pub fn current_token(&self) -> Token {
         self.current.token
@@ -123,7 +122,6 @@ impl Scanner {
         self.current.location
     }
 
-    /// `Scanner::peek_location`
     #[inline]
     pub fn peek_location(&self) -> Location {
         self.next.location
@@ -171,9 +169,7 @@ impl Scanner {
         }
     }
 
-    // -- the character stream -----------------------------------------------
 
-    /// `Scanner::Advance`
     #[inline]
     fn advance(&mut self) {
         self.c0 = self.source.get(self.cursor).copied();
@@ -214,19 +210,16 @@ impl Scanner {
         ) || Self::is_line_terminator(c)
     }
 
-    /// `Scanner::IsIdentifierStart`
     #[inline]
     fn is_identifier_start(c: char) -> bool {
         c == '$' || c == '_' || c.is_alphabetic()
     }
 
-    /// `Scanner::IsIdentifierPart`
     #[inline]
     fn is_identifier_part(c: char) -> bool {
         c == '$' || c == '_' || c.is_alphanumeric() || c == '\u{200c}' || c == '\u{200d}'
     }
 
-    // -- skipping -----------------------------------------------------------
 
     fn skip_whitespace_and_comments(&mut self) {
         loop {
@@ -288,7 +281,6 @@ impl Scanner {
         );
     }
 
-    // -- scanning -----------------------------------------------------------
 
     fn scan_token(&mut self) -> TokenDesc {
         self.skip_whitespace_and_comments();
@@ -542,7 +534,6 @@ impl Scanner {
         }
     }
 
-    /// `Scanner::ScanIdentifierOrKeyword`
     fn scan_identifier_or_keyword(&mut self, beg_pos: usize) -> TokenDesc {
         let mut literal = String::new();
         while let Some(c) = self.c0 {
@@ -562,7 +553,6 @@ impl Scanner {
         }
     }
 
-    /// `Scanner::ScanString`
     fn scan_string(&mut self, beg_pos: usize) -> TokenDesc {
         let quote = self.c0.unwrap();
         self.advance();
@@ -603,7 +593,6 @@ impl Scanner {
         }
     }
 
-    /// `Scanner::ScanEscape`
     fn scan_escape(&mut self, out: &mut String, beg_pos: usize) {
         let Some(c) = self.c0 else {
             self.report_error(
@@ -1019,7 +1008,6 @@ mod tests {
         assert_eq!(big.token, Token::Number);
         assert_eq!(big.number_value, 2147483648.0);
 
-        // Not integers.
         assert_eq!(scan_one("1.5").token, Token::Number);
         assert_eq!(scan_one("1.5").number_value, 1.5);
         assert_eq!(scan_one("1e3").token, Token::Number);

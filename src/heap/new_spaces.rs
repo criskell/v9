@@ -73,14 +73,12 @@ impl SemiSpace {
     pub fn allocate_raw(&mut self, size_in_bytes: usize) -> Option<Address> {
         self.space.allocate_raw(size_in_bytes)
     }
-    /// `SemiSpace::Reset`
     #[inline]
     pub fn reset(&mut self) {
         self.space.reset();
     }
 }
 
-/// `SemiSpaceNewSpace`
 pub struct SemiSpaceNewSpace {
     to_space: SemiSpace,
     from_space: SemiSpace,
@@ -100,18 +98,15 @@ impl SemiSpaceNewSpace {
         }
     }
 
-    /// `SemiSpaceNewSpace::SwapSemiSpaces`
     pub fn swap_semi_spaces(&mut self) {
         SemiSpace::swap(&mut self.from_space, &mut self.to_space);
     }
 
-    /// `SemiSpaceNewSpace::age_mark`
     #[inline]
     pub fn age_mark(&self) -> Address {
         self.age_mark
     }
 
-    /// `SemiSpaceNewSpace::set_age_mark`
     #[inline]
     pub fn set_age_mark(&mut self, address: Address) {
         self.age_mark = address;
@@ -150,7 +145,6 @@ impl SemiSpaceNewSpace {
     pub fn top(&self) -> Address {
         self.to_space.top()
     }
-    /// `NewSpace::Size`
     #[inline]
     pub fn size(&self) -> usize {
         self.to_space.size()

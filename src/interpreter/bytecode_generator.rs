@@ -52,7 +52,6 @@ enum Resolution {
         depth: i32,
         slot: i32,
     },
-    /// A property of the global object.
     Global,
 }
 
@@ -180,11 +179,7 @@ impl BytecodeGenerator {
         })
     }
 
-    // -----------------------------------------------------------------------
-    // Statements
-    // -----------------------------------------------------------------------
 
-    /// `BytecodeGenerator::VisitStatements`
     fn visit_statements(&mut self, statements: &[Statement]) -> Result<()> {
         for statement in statements {
             self.visit_statement(statement)?;
@@ -271,7 +266,6 @@ impl BytecodeGenerator {
         }
     }
 
-    /// `BytecodeGenerator::VisitVariableDeclaration`
     fn visit_variable_declarations(&mut self, declarations: &[VariableDeclaration]) -> Result<()> {
         for declaration in declarations {
             match &declaration.initializer {
@@ -285,7 +279,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitIfStatement`
     fn visit_if_statement(
         &mut self,
         condition: &Expression,
@@ -331,7 +324,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitWhileStatement`
     fn visit_while_statement(&mut self, condition: &Expression, body: &Statement) -> Result<()> {
         self.loop_stack.push(LoopBuilder::new());
         let depth = self.loop_stack.len() - 1;
@@ -389,7 +381,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitForStatement`
     fn visit_for_statement(
         &mut self,
         init: Option<&Statement>,
@@ -433,8 +424,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitReturnStatement`
-    /// `ControlScopeForTryFinally::Execute`
     fn check_does_not_cross_finally(&self, command: &str) -> Result<()> {
         if let Some(scope) = self.finally_stack.last() {
             if self.loop_stack.len() <= scope.loop_mark {
@@ -456,7 +445,6 @@ impl BytecodeGenerator {
         self.build_return()
     }
 
-    /// `ControlScope::PerformCommand`
     fn build_return(&mut self) -> Result<()> {
         use crate::interpreter::bytecode_flags_and_tokens::TryFinallyContinuationToken;
         use crate::interpreter::control_flow_builders::TryFinallyBuilder;
@@ -479,9 +467,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // Variables
-    // -----------------------------------------------------------------------
 
     fn resolve(&self, name: &str) -> Resolution {
         let mut context_depth = 0;
@@ -531,7 +516,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::BuildVariableLoad`
     fn build_variable_load(&mut self, name: &str) {
         match self.resolve(name) {
             Resolution::Local(register) | Resolution::Parameter(register) => {
@@ -566,10 +550,7 @@ impl BytecodeGenerator {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // -----------------------------------------------------------------------
 
-    /// `BytecodeGenerator::VisitForAccumulatorValue`
     fn visit_for_accumulator_value(&mut self, expression: &Expression) -> Result<()> {
         self.builder.set_source_position(expression.position());
         match expression {
@@ -774,11 +755,7 @@ impl BytecodeGenerator {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Expressions
-    // -----------------------------------------------------------------------
 
-    /// `BytecodeGenerator::VisitBinaryOperation`
     fn visit_binary_operation(
         &mut self,
         op: Token,
@@ -808,7 +785,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitCompareOperation`
     fn visit_compare_operation(
         &mut self,
         op: Token,
@@ -883,7 +859,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitUnaryOperation`
     fn visit_unary_operation(&mut self, op: Token, expression: &Expression) -> Result<()> {
         match op {
             Token::Not => {
@@ -1004,7 +979,6 @@ impl BytecodeGenerator {
         }
     }
 
-    /// `BytecodeGenerator::VisitAssignment`
     fn visit_assignment(
         &mut self,
         op: Token,
@@ -1085,7 +1059,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitConditional`
     fn visit_conditional(
         &mut self,
         condition: &Expression,
@@ -1110,7 +1083,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitProperty`
     fn visit_property(&mut self, object: &Expression, key: &PropertyAccess) -> Result<()> {
         let mark = self.builder.register_allocator().next_register_index();
         let object_register = self.visit_for_register_value(object)?;
@@ -1128,7 +1100,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitCallNew`
     fn visit_call_new(&mut self, callee: &Expression, arguments: &[Expression]) -> Result<()> {
         let mark = self.builder.register_allocator().next_register_index();
         let constructor = self.visit_for_register_value(callee)?;
@@ -1146,7 +1117,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitCall`
     fn visit_call(&mut self, callee: &Expression, arguments: &[Expression]) -> Result<()> {
         let mark = self.builder.register_allocator().next_register_index();
 
@@ -1210,7 +1180,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitSuperCallForwardArgs`
     fn visit_super_call_forward_args(&mut self) -> Result<()> {
         let constructor = self.builder.register_allocator().new_register();
         self.builder
@@ -1222,7 +1191,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::BuildSuperCall`
     fn build_super_call(&mut self, arguments: &[Expression]) -> Result<()> {
         let constructor = self.builder.register_allocator().new_register();
         self.builder
@@ -1252,12 +1220,10 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitClassLiteral`
     fn visit_class_literal(&mut self, class: &ClassLiteral) -> Result<()> {
         self.build_class_literal(class)
     }
 
-    /// `BytecodeGenerator::BuildClassLiteral`
     fn build_class_literal(&mut self, class: &ClassLiteral) -> Result<()> {
         use crate::objects::literal_objects::{ClassBoilerplate, ValueKind};
 
@@ -1322,7 +1288,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitObjectLiteral`
     fn visit_object_literal(&mut self, properties: &[ObjectLiteralProperty]) -> Result<()> {
         let mark = self.builder.register_allocator().next_register_index();
         self.builder.create_empty_object_literal();
@@ -1417,7 +1382,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitLiteralAccessor`
     fn visit_literal_accessor(
         &mut self,
         property: Option<&Expression>,
@@ -1435,7 +1399,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::BuildTryCatch`
     fn visit_try_catch_statement(
         &mut self,
         try_block: &[Statement],
@@ -1470,7 +1433,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitForInStatement`
     fn visit_for_in_statement(
         &mut self,
         each: &str,
@@ -1528,7 +1490,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::BuildTryFinally`
     fn visit_try_finally_statement(
         &mut self,
         try_block: &[Statement],
@@ -1615,7 +1576,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    /// `BytecodeGenerator::VisitDelete`
     fn visit_delete(&mut self, expression: &Expression) -> Result<()> {
         match expression {
             // Delete of an object property is allowed both in sloppy
@@ -1644,7 +1604,6 @@ impl BytecodeGenerator {
         }
     }
 
-    /// `BytecodeGenerator::VisitArrayLiteral`
     fn visit_array_literal(&mut self, values: &[Expression]) -> Result<()> {
         let mark = self.builder.register_allocator().next_register_index();
         self.builder.create_empty_array_literal();

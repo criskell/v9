@@ -16,12 +16,10 @@ const HASH_FIELD_TYPE_BITS: u32 = 2;
 const HASH_FIELD_TYPE_MASK: u32 = (1 << HASH_FIELD_TYPE_BITS) - 1;
 const HASH_SHIFT: u32 = HASH_FIELD_TYPE_BITS;
 
-/// `Name::kHashNotComputedMask`
 pub const K_HASH_NOT_COMPUTED_MASK: u32 = 1;
 
 pub const K_EMPTY_HASH_FIELD: u32 = HashFieldType::Empty as u32;
 
-/// `String::HashBits::kMax`
 pub const K_MAX_HASH: u32 = u32::MAX >> HASH_SHIFT;
 
 impl Name {
@@ -37,7 +35,6 @@ impl Name {
         heap.write_u32(self.field(Self::K_RAW_HASH_FIELD_OFFSET), value);
     }
 
-    /// `Name::IsHashFieldComputed`
     #[inline]
     pub fn is_hash_field_computed(raw_hash_field: u32) -> bool {
         raw_hash_field & K_HASH_NOT_COMPUTED_MASK == 0
@@ -66,7 +63,6 @@ impl Name {
         hash
     }
 
-    /// `Name::RawHash`
     #[inline]
     pub fn raw_hash_field_hash(self, heap: &Heap) -> u32 {
         let raw = self.raw_hash_field(heap);

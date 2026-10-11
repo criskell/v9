@@ -2,14 +2,10 @@ use crate::execution::isolate::Isolate;
 use crate::heap::heap::AllocationType;
 use crate::objects::tagged::HeapObject;
 
-/// `HeapAllocator`
 #[derive(Default)]
 pub struct HeapAllocator {
-    /// `HeapAllocator::allocation_gc_interval_`
     allocation_gc_interval: Option<i32>,
-    /// `HeapAllocator::allocation_timeout_`
     allocation_timeout: Option<i32>,
-    /// `Heap::always_allocate_scope_count_`
     always_allocate_scope_count: usize,
 }
 
@@ -24,18 +20,15 @@ impl HeapAllocator {
         allocator
     }
 
-    /// `HeapAllocator::SetAllocationGcInterval`
     pub fn set_allocation_gc_interval(&mut self, interval: i32) {
         self.allocation_gc_interval = if interval > 0 { Some(interval) } else { None };
         self.update_allocation_timeout();
     }
 
-    /// `HeapAllocator::UpdateAllocationTimeout`
     pub fn update_allocation_timeout(&mut self) {
         self.allocation_timeout = self.allocation_gc_interval;
     }
 
-    /// `HeapAllocator::ReachedAllocationTimeout`
     fn reached_allocation_timeout(&mut self) -> bool {
         if self.always_allocate() {
             return false;
@@ -48,7 +41,6 @@ impl HeapAllocator {
         timeout <= 0
     }
 
-    /// `Heap::always_allocate`
     #[inline]
     pub fn always_allocate(&self) -> bool {
         self.always_allocate_scope_count != 0
@@ -56,7 +48,6 @@ impl HeapAllocator {
 }
 
 impl Isolate {
-    /// `AlwaysAllocateScope`
     pub(crate) fn enter_always_allocate_scope(&mut self) {
         self.heap_allocator.always_allocate_scope_count += 1;
     }
@@ -65,12 +56,10 @@ impl Isolate {
         self.heap_allocator.always_allocate_scope_count -= 1;
     }
 
-    /// `HeapAllocator::SetAllocationGcInterval`
     pub fn set_allocation_gc_interval(&mut self, interval: i32) {
         self.heap_allocator.set_allocation_gc_interval(interval);
     }
 
-    /// `HeapAllocator::AllocateRawWith<kRetryOrFail>`
     pub fn allocate_raw_with_retry_or_fail(
         &mut self,
         size_in_bytes: usize,
@@ -86,7 +75,6 @@ impl Isolate {
         self.retry_allocate_or_fail(size_in_bytes, allocation)
     }
 
-    /// `HeapAllocator::RetryAllocateOrFail`
     fn retry_allocate_or_fail(
         &mut self,
         size_in_bytes: usize,

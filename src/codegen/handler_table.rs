@@ -1,6 +1,5 @@
 use crate::interpreter::bytecode_register::Register;
 
-/// `HandlerTable::CatchPrediction`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CatchPrediction {
     // The handler will (likely) rethrow the exception.
@@ -9,10 +8,8 @@ pub enum CatchPrediction {
     Caught,
 }
 
-/// `HandlerTable::kNoHandlerFound`
 pub const K_NO_HANDLER_FOUND: i32 = -1;
 
-/// `HandlerTable`
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandlerTable {
     entries: Vec<HandlerTableEntry>,
@@ -39,20 +36,17 @@ impl HandlerTable {
     pub const K_HANDLER_WAS_USED_SHIFT: u32 = 3;
     pub const K_HANDLER_OFFSET_SHIFT: u32 = 4;
 
-    /// `HandlerTable::SetRangeHandler`
     #[inline]
     pub fn encode_handler(offset: i32, prediction: CatchPrediction) -> i32 {
         (offset << Self::K_HANDLER_OFFSET_SHIFT)
             | ((prediction as i32) << Self::K_HANDLER_PREDICTION_SHIFT)
     }
 
-    /// `HandlerTable::HandlerOffsetField::decode`
     #[inline]
     pub fn decode_handler_offset(value: i32) -> i32 {
         value >> Self::K_HANDLER_OFFSET_SHIFT
     }
 
-    /// `HandlerTable::HandlerPredictionField::decode`
     #[inline]
     pub fn decode_handler_prediction(value: i32) -> CatchPrediction {
         match value & ((1 << Self::K_HANDLER_PREDICTION_BITS) - 1) {
@@ -65,7 +59,6 @@ impl HandlerTable {
         HandlerTable { entries }
     }
 
-    /// `HandlerTable::NumberOfRangeEntries`
     #[inline]
     pub fn number_of_range_entries(&self) -> usize {
         self.entries.len()
@@ -76,25 +69,21 @@ impl HandlerTable {
         &self.entries[index as usize]
     }
 
-    /// `HandlerTable::GetRangeStart`
     #[inline]
     pub fn get_range_start(&self, index: usize) -> i32 {
         self.entries[index].offset_start
     }
 
-    /// `HandlerTable::GetRangeEnd`
     #[inline]
     pub fn get_range_end(&self, index: usize) -> i32 {
         self.entries[index].offset_end
     }
 
-    /// `HandlerTable::GetRangeHandler`
     #[inline]
     pub fn get_range_handler(&self, index: usize) -> i32 {
         self.entries[index].offset_target
     }
 
-    /// `HandlerTable::LookupHandlerIndexForRange`
     pub fn lookup_handler_index_for_range(&self, pc_offset: i32) -> i32 {
         let mut innermost_handler = K_NO_HANDLER_FOUND;
         for index in 0..self.number_of_range_entries() {

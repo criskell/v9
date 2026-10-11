@@ -50,8 +50,6 @@ impl Isolate {
         ValueKind::Object
     }
 
-    /// `Object::BooleanValue`.
-    /// `-0`, `NaN`, `""`.
     pub fn to_boolean(&self, value: Tagged) -> bool {
         match self.value_kind(value) {
             ValueKind::Smi => Smi::to_int(value) != 0,
@@ -93,7 +91,6 @@ impl Isolate {
         }
     }
 
-    /// `Object::ToString`
     pub fn to_string(&self, value: Tagged) -> std::string::String {
         match self.value_kind(value) {
             ValueKind::Smi => Smi::to_int(value).to_string(),
@@ -112,7 +109,6 @@ impl Isolate {
         }
     }
 
-    /// `Object::TypeOf`
     pub fn type_of(&mut self, value: Tagged) -> Tagged {
         let name = match self.value_kind(value) {
             ValueKind::Smi | ValueKind::HeapNumber => "number",
@@ -209,9 +205,7 @@ impl Isolate {
         self.new_number(result as f64)
     }
 
-    /// `Object::GetPrototypeChainRootMap`
     ///
-    /// `Map::GetPrototypeChainRootMap`
     pub fn get_prototype_chain_root(&self, value: Tagged) -> Option<Tagged> {
         use crate::objects::contexts::NativeContext;
         use crate::objects::instance_type as it;
@@ -235,7 +229,6 @@ impl Isolate {
         None
     }
 
-    /// `Object::ToArrayLength`
     // Tries to convert an object to an array length. Returns true and sets the
     // output parameter if it succeeds.
     pub fn to_array_length(&self, value: Tagged) -> Option<u32> {
@@ -249,7 +242,6 @@ impl Isolate {
         Some(number as u32)
     }
 
-    /// `Object::ToArrayIndex`
     // Tries to convert an object to an array index. Returns true and sets the
     // output parameter if it succeeds. Equivalent to ToArrayLength, but does
     // not allow kMaxUInt32.
@@ -260,7 +252,6 @@ impl Isolate {
         }
     }
 
-    /// `String::AsArrayIndex`
     pub fn string_as_array_index(&self, value: Tagged) -> Option<u32> {
         let string = crate::objects::string::String::try_cast(&self.heap, value)?;
         let text = string.to_rust_string(&self.heap);
@@ -380,7 +371,6 @@ impl Isolate {
     }
 }
 
-/// `DoubleToInt32`
 pub fn double_to_int32(value: f64) -> i32 {
     if !value.is_finite() || value == 0.0 {
         return 0;
@@ -639,7 +629,6 @@ mod tests {
 }
 
 impl crate::execution::isolate::Isolate {
-    /// `Object::InstanceOf`
     pub(crate) fn instance_of(
         &mut self,
         object: Tagged,
@@ -667,7 +656,6 @@ impl crate::execution::isolate::Isolate {
         self.ordinary_has_instance(callable, object)
     }
 
-    /// `Object::OrdinaryHasInstance`
     pub(crate) fn ordinary_has_instance(
         &mut self,
         callable: Tagged,
@@ -712,7 +700,6 @@ impl crate::execution::isolate::Isolate {
         Ok(self.boolean_value(result))
     }
 
-    /// `JSReceiver::HasInPrototypeChain`
     pub(crate) fn has_in_prototype_chain(
         &self,
         object: crate::objects::tagged::HeapObject,

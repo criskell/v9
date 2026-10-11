@@ -5,7 +5,6 @@ use crate::objects::tagged::Tagged;
 
 object_type!(JSFunction);
 
-/// `JSFunction::PrototypeOrInitialMapData`
 #[derive(Default)]
 pub struct PrototypeOrInitialMapData {
     pub instance_prototype: Tagged,
@@ -36,8 +35,6 @@ impl JSFunction {
         heap.read_tagged(self.field(Self::K_SHARED_FUNCTION_INFO_OFFSET))
     }
 
-    /// `JSFunction::shared`
-    /// `JSFunction::prototype_or_initial_map`
     #[inline]
     pub fn prototype_or_initial_map(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_PROTOTYPE_OR_INITIAL_MAP_OFFSET))
@@ -53,7 +50,6 @@ impl JSFunction {
         self.field(Self::K_PROTOTYPE_OR_INITIAL_MAP_OFFSET)
     }
 
-    /// `JSFunction::TryGetPrototypeOrInitialMap`
     pub fn try_get_prototype_or_initial_map(
         self,
         heap: &Heap,
@@ -91,7 +87,6 @@ impl JSFunction {
         Some(out)
     }
 
-    /// `JSFunction::has_initial_map`
     #[inline]
     pub fn has_initial_map(self, heap: &Heap) -> bool {
         match self.try_get_prototype_or_initial_map(heap) {
@@ -100,7 +95,6 @@ impl JSFunction {
         }
     }
 
-    /// `JSFunction::initial_map`
     #[inline]
     pub fn initial_map(self, heap: &Heap) -> crate::objects::map::Map {
         self.try_get_prototype_or_initial_map(heap)
@@ -108,13 +102,11 @@ impl JSFunction {
             .expect("an initial map")
     }
 
-    /// `JSFunction::has_prototype`
     #[inline]
     pub fn has_prototype(self, heap: &Heap) -> bool {
         self.try_get_prototype_or_initial_map(heap).is_some()
     }
 
-    /// `JSFunction::has_non_instance_prototype`
     #[inline]
     pub fn has_non_instance_prototype(self, heap: &Heap) -> bool {
         match self.try_get_prototype_or_initial_map(heap) {
@@ -123,7 +115,6 @@ impl JSFunction {
         }
     }
 
-    /// `JSFunction::prototype`
     #[inline]
     pub fn prototype(self, heap: &Heap) -> Tagged {
         let data = self
@@ -135,7 +126,6 @@ impl JSFunction {
         data.instance_prototype
     }
 
-    /// `JSFunction::instance_prototype`
     #[inline]
     pub fn instance_prototype(self, heap: &Heap) -> Option<Tagged> {
         let data = self.try_get_prototype_or_initial_map(heap)?;
@@ -157,7 +147,6 @@ impl JSFunction {
         heap.write_tagged(self.field(Self::K_SHARED_FUNCTION_INFO_OFFSET), value);
     }
 
-    /// `JSFunction::context`
     #[inline]
     pub fn context(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_CONTEXT_OFFSET))
@@ -180,7 +169,6 @@ impl JSFunction {
 }
 
 impl crate::execution::isolate::Isolate {
-    /// `JSFunction::instance_prototype`
     pub(crate) fn function_prototype_object(
         &mut self,
         function: JSFunction,
@@ -208,12 +196,10 @@ impl crate::execution::isolate::Isolate {
         prototype
     }
 
-    /// `Factory::NewFunctionPrototype`
     fn new_function_prototype(&mut self) -> crate::objects::js_objects::JSObject {
         self.new_js_object()
     }
 
-    /// `JSFunction::SetPrototype`
     pub(crate) fn set_function_prototype(&mut self, function: JSFunction, value: Tagged) {
         use crate::objects::r#struct::Tuple2;
 
@@ -266,7 +252,6 @@ impl crate::execution::isolate::Isolate {
         function.set_prototype_or_initial_map(&mut self.heap, value);
     }
 
-    /// `JSFunction::EnsureHasInitialMap`
     pub(crate) fn ensure_has_initial_map(
         &mut self,
         function: JSFunction,
@@ -292,7 +277,6 @@ impl crate::execution::isolate::Isolate {
         map
     }
 
-    /// `JSFunction::SetInitialMap`
     pub(crate) fn set_initial_map(
         &mut self,
         function: JSFunction,
@@ -321,7 +305,6 @@ impl crate::execution::isolate::Isolate {
         }
     }
 
-    /// `Builtins::Construct`
     pub(crate) fn construct(
         &mut self,
         target: Tagged,
@@ -404,7 +387,6 @@ mod tests {
 }
 
 impl crate::execution::isolate::Isolate {
-    /// `GetSuperConstructor`
     pub(crate) fn get_super_constructor(
         &mut self,
         active_function: Tagged,

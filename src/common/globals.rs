@@ -38,9 +38,6 @@ pub const K_SMI_MAX_VALUE: i64 = i32::MAX as i64;
 
 pub const K_CLEARED_WEAK_HEAP_OBJECT_LOWER32: u32 = 3;
 
-// ---------------------------------------------------------------------------
-// Object alignment.
-// ---------------------------------------------------------------------------
 
 pub const K_OBJECT_ALIGNMENT_BITS: u32 = K_TAGGED_SIZE_LOG2 as u32;
 pub const K_OBJECT_ALIGNMENT: u64 = 1 << K_OBJECT_ALIGNMENT_BITS;

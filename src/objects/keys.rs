@@ -4,7 +4,6 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::tagged::Tagged;
 
 impl Isolate {
-    /// `JSReceiver::GetKeys`
     pub(crate) fn get_keys(&mut self, receiver: JSObject) -> Vec<Tagged> {
         use crate::objects::elements::ElementsAccessor;
 
@@ -49,7 +48,6 @@ impl Isolate {
         keys
     }
 
-    /// `KeyAccumulator::CollectOwnPropertyNames`
     fn own_enumerable_names(&self, holder: JSObject) -> Vec<Tagged> {
         use crate::objects::hash_table::HashTableBase;
 
@@ -77,7 +75,6 @@ impl Isolate {
             .collect()
     }
 
-    /// `DescriptorArray::InitializeOrChangeEnumCache`
     pub(crate) fn initialize_or_change_enum_cache(
         &mut self,
         map: crate::objects::map::Map,
@@ -109,7 +106,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    /// `Factory::NewEnumCache`
     fn new_enum_cache(&mut self) -> crate::objects::descriptor_array::EnumCache {
         use crate::objects::descriptor_array::EnumCache;
         let map = self.roots.enum_cache_map.to_strong_heap_object().unwrap();
@@ -127,7 +123,6 @@ impl Isolate {
 }
 
 impl Isolate {
-    /// `Runtime::kForInEnumerate`
     pub(crate) fn for_in_enumerate(
         &mut self,
         receiver: Tagged,
@@ -164,7 +159,6 @@ impl Isolate {
         Ok(result)
     }
 
-    /// `Runtime::kForInPrepare`
     pub(crate) fn for_in_prepare(&mut self, enumerable: Tagged) -> (Tagged, Tagged, i32) {
         let Some(object) = enumerable.to_strong_heap_object() else {
             let empty = self.roots.empty_fixed_array;
@@ -175,7 +169,6 @@ impl Isolate {
         (self.undefined_value(), array.tagged(), length)
     }
 
-    /// `Runtime::kForInNext`
     pub(crate) fn for_in_next(
         &mut self,
         receiver: Tagged,
@@ -206,7 +199,6 @@ impl Isolate {
         }
     }
 
-    /// `JSReceiver::HasProperty`
     fn has_property_for_in(&mut self, object: JSObject, key: Tagged) -> bool {
         use crate::objects::elements::ElementsAccessor;
         if let Some(index) = self.string_as_array_index(key) {

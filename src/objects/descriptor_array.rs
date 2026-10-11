@@ -4,11 +4,9 @@ use crate::objects::property_details::PropertyDetails;
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `DescriptorArray`
     DescriptorArray
 );
 
-/// `DescriptorArray::kNotFound`
 pub const K_NOT_FOUND: i32 = -1;
 
 impl DescriptorArray {
@@ -16,7 +14,6 @@ impl DescriptorArray {
     pub const K_NUMBER_OF_DESCRIPTORS_OFFSET: i32 = Self::K_NUMBER_OF_ALL_DESCRIPTORS_OFFSET + 2;
     pub const K_FLAGS_OFFSET: i32 = Self::K_NUMBER_OF_DESCRIPTORS_OFFSET + 2;
     pub const K_ENUM_CACHE_OFFSET: i32 = Self::K_FLAGS_OFFSET + 4;
-    /// `DescriptorArray::kHeaderSize`
     pub const K_HEADER_SIZE: i32 = Self::K_ENUM_CACHE_OFFSET + K_TAGGED_SIZE;
 
     pub const K_ENTRY_SIZE: i32 = 3;
@@ -24,7 +21,6 @@ impl DescriptorArray {
     pub const K_ENTRY_DETAILS_INDEX: i32 = 1;
     pub const K_ENTRY_VALUE_INDEX: i32 = 2;
 
-    /// `DescriptorArray::SizeFor`
     #[inline]
     pub const fn size_for(number_of_all_descriptors: i32) -> i32 {
         Self::K_HEADER_SIZE + number_of_all_descriptors * Self::K_ENTRY_SIZE * K_TAGGED_SIZE
@@ -62,7 +58,6 @@ impl DescriptorArray {
         );
     }
 
-    /// `DescriptorArray::number_of_slack_descriptors`
     #[inline]
     pub fn number_of_slack_descriptors(self, heap: &Heap) -> i32 {
         self.number_of_all_descriptors(heap) - self.number_of_descriptors(heap)
@@ -94,14 +89,12 @@ impl DescriptorArray {
         ))
     }
 
-    /// `DescriptorArray::GetKey`
     #[inline]
     pub fn get_key(self, heap: &Heap, descriptor: i32) -> Tagged {
         debug_assert!(descriptor >= 0 && descriptor < self.number_of_descriptors(heap));
         heap.read_tagged(self.key_address(descriptor))
     }
 
-    /// `DescriptorArray::GetDetails`
     #[inline]
     pub fn get_details(self, heap: &Heap, descriptor: i32) -> PropertyDetails {
         debug_assert!(descriptor >= 0 && descriptor < self.number_of_descriptors(heap));
@@ -111,7 +104,6 @@ impl DescriptorArray {
         ))))
     }
 
-    /// `DescriptorArray::GetStrongValue`
     #[inline]
     pub fn get_value(self, heap: &Heap, descriptor: i32) -> Tagged {
         debug_assert!(descriptor >= 0 && descriptor < self.number_of_descriptors(heap));
@@ -178,7 +170,6 @@ impl DescriptorArray {
 }
 
 object_type!(
-    /// `EnumCache`
     EnumCache
 );
 
@@ -187,7 +178,6 @@ impl EnumCache {
     pub const K_INDICES_OFFSET: i32 = Self::K_KEYS_OFFSET + crate::common::globals::K_TAGGED_SIZE;
     pub const K_SIZE: i32 = Self::K_INDICES_OFFSET + crate::common::globals::K_TAGGED_SIZE;
 
-    /// `EnumCache::keys`
     #[inline]
     pub fn keys(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_KEYS_OFFSET))
@@ -203,7 +193,6 @@ impl EnumCache {
         self.field(Self::K_KEYS_OFFSET)
     }
 
-    /// `EnumCache::indices`
     #[inline]
     pub fn indices(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_INDICES_OFFSET))

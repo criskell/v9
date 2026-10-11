@@ -1,4 +1,3 @@
-/// `Runtime::FunctionId`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum FunctionId {
@@ -6,7 +5,6 @@ pub enum FunctionId {
     DefineClass,
 }
 
-/// `Runtime::Function`
 pub struct Function {
     pub function_id: FunctionId,
     pub name: &'static str,
@@ -34,7 +32,6 @@ impl FunctionId {
         self as u16
     }
 
-    /// `Runtime::FunctionForId`
     pub fn from_u16(id: u16) -> Option<&'static Function> {
         K_INTRINSIC_FUNCTIONS.get(id as usize)
     }

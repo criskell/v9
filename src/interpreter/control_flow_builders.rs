@@ -13,13 +13,11 @@ impl BreakableControlFlowBuilder {
         BreakableControlFlowBuilder::default()
     }
 
-    /// `BreakableControlFlowBuilder::Break`
     pub fn emit_break(&mut self, builder: &mut BytecodeArrayBuilder) {
         let label = self.break_labels.new_label();
         builder.jump(self.break_labels.label_mut(label));
     }
 
-    /// `BreakableControlFlowBuilder::BindBreakTarget`
     pub fn bind_break_target(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind_labels(&mut self.break_labels);
     }
@@ -60,7 +58,6 @@ impl LoopBuilder {
         LoopBuilder::default()
     }
 
-    /// `LoopBuilder::LoopHeader`
     pub fn loop_header(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind_loop_header(&mut self.loop_header);
     }
@@ -69,12 +66,10 @@ impl LoopBuilder {
         builder.jump_loop(&self.loop_header);
     }
 
-    /// `LoopBuilder::BindContinueTarget`
     pub fn bind_continue_target(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind_labels(&mut self.continue_labels);
     }
 
-    /// `LoopBuilder::Continue`
     pub fn emit_continue(&mut self, builder: &mut BytecodeArrayBuilder) {
         let label = self.continue_labels.new_label();
         builder.jump(self.continue_labels.label_mut(label));
@@ -117,12 +112,10 @@ impl ConditionalControlFlowBuilder {
         &mut self.else_labels
     }
 
-    /// `ConditionalControlFlowBuilder::Then`
     pub fn then_branch(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind_labels(&mut self.then_labels);
     }
 
-    /// `ConditionalControlFlowBuilder::Else`
     pub fn else_branch(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind_labels(&mut self.else_labels);
     }
@@ -137,7 +130,6 @@ impl ConditionalControlFlowBuilder {
     }
 }
 
-/// `TryCatchBuilder`
 pub struct TryCatchBuilder {
     handler_id: i32,
     catch_prediction: CatchPrediction,
@@ -156,25 +148,21 @@ impl TryCatchBuilder {
         }
     }
 
-    /// `TryCatchBuilder::BeginTry`
     pub fn begin_try(&mut self, builder: &mut BytecodeArrayBuilder, context: Register) {
         builder.mark_try_begin(self.handler_id, context);
     }
 
-    /// `TryCatchBuilder::EndTry`
     pub fn end_try(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.mark_try_end(self.handler_id);
         builder.jump(&mut self.exit);
         builder.mark_handler(self.handler_id, self.catch_prediction);
     }
 
-    /// `TryCatchBuilder::EndCatch`
     pub fn end_catch(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind(&mut self.exit);
     }
 }
 
-/// `TryFinallyBuilder`
 pub struct TryFinallyBuilder {
     handler_id: i32,
     catch_prediction: CatchPrediction,
@@ -191,28 +179,23 @@ impl TryFinallyBuilder {
         }
     }
 
-    /// `TryFinallyBuilder::BeginTry`
     pub fn begin_try(&mut self, builder: &mut BytecodeArrayBuilder, context: Register) {
         builder.mark_try_begin(self.handler_id, context);
     }
 
-    /// `TryFinallyBuilder::LeaveTry`
     pub fn leave_try(builder: &mut BytecodeArrayBuilder, finalization_sites: &mut BytecodeLabels) {
         let label = finalization_sites.new_label();
         builder.jump(finalization_sites.label_mut(label));
     }
 
-    /// `TryFinallyBuilder::EndTry`
     pub fn end_try(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.mark_try_end(self.handler_id);
     }
 
-    /// `TryFinallyBuilder::BeginHandler`
     pub fn begin_handler(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.mark_handler(self.handler_id, self.catch_prediction);
     }
 
-    /// `TryFinallyBuilder::BeginFinally`
     pub fn begin_finally(
         builder: &mut BytecodeArrayBuilder,
         finalization_sites: &mut BytecodeLabels,
@@ -220,7 +203,6 @@ impl TryFinallyBuilder {
         builder.bind_labels(finalization_sites);
     }
 
-    /// `TryFinallyBuilder::EndFinally`
     pub fn end_finally(&mut self, _builder: &mut BytecodeArrayBuilder) {}
 }
 

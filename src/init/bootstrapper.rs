@@ -30,14 +30,12 @@ impl Isolate {
         let infinity = self.new_heap_number(f64::INFINITY).tagged();
         self.set_property_by_str(self.global_object(), "Infinity", infinity);
 
-        // `console.log`
         let console = self.new_js_object();
         let console = self.create_object_handle(console.object());
         self.install_builtin(console, "log", Builtin::ConsoleLog, 1);
         let console = console.get(self);
         self.set_property_by_str(self.global_object(), "console", console);
 
-        // `Math`
         let math = self.new_js_object();
         let math = self.create_object_handle(math.object());
         self.install_builtin(math, "sqrt", Builtin::MathSqrt, 1);
@@ -239,7 +237,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    /// `Genesis::SimpleInstallFunction`
     fn install_builtin(
         &mut self,
         target: Handle,
@@ -264,7 +261,6 @@ impl Isolate {
         self.close_handle_scope(scope);
     }
 
-    /// `Isolate::global_object`
     pub fn global_object(&self) -> JSObject {
         JSObject::unchecked_cast(
             self.roots

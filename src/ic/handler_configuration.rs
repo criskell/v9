@@ -2,12 +2,10 @@ use crate::objects::property_details::K_DESCRIPTOR_INDEX_BIT_COUNT;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
-/// `LoadHandler::Kind`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u32)]
 pub enum HandlerKind {
     Normal = 0,
-    /// A property of the global object.
     Global = 1,
     Field = 2,
     ConstantFromPrototype = 3,
@@ -48,7 +46,6 @@ const fn mask(bits: u32) -> u32 {
 pub struct Handler(u32);
 
 impl Handler {
-    /// `LoadHandler::LoadNativeDataProperty`
     pub fn native_data_property(descriptor_index: u32) -> Handler {
         debug_assert!(descriptor_index <= mask(DESCRIPTOR_INDEX_BITS));
         Handler(
@@ -74,7 +71,6 @@ impl Handler {
         )
     }
 
-    /// `LoadHandler::LoadGlobal`
     pub fn global(descriptor_index: u32) -> Handler {
         Handler(
             ((HandlerKind::Global as u32) << KIND_SHIFT)
@@ -87,7 +83,6 @@ impl Handler {
         HandlerKind::from_u32((self.0 >> KIND_SHIFT) & mask(KIND_BITS))
     }
 
-    /// `LoadHandler::StorageOffsetInWordsBits::decode`
     #[inline]
     pub fn storage_offset_in_words(self) -> u32 {
         (self.0 >> STORAGE_OFFSET_SHIFT) & mask(STORAGE_OFFSET_BITS)

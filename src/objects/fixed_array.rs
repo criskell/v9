@@ -4,22 +4,18 @@ use crate::objects::smi::Smi;
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
 object_type!(
-    /// `FixedArray`
     FixedArray
 );
 
 impl FixedArray {
     pub const K_LENGTH_OFFSET: i32 = K_TAGGED_SIZE;
-    /// `FixedArray::kHeaderSize`
     pub const K_HEADER_SIZE: i32 = Self::K_LENGTH_OFFSET + K_TAGGED_SIZE;
 
-    /// `FixedArray::SizeFor`
     #[inline]
     pub const fn size_for(length: i32) -> i32 {
         Self::K_HEADER_SIZE + length * K_TAGGED_SIZE
     }
 
-    /// `FixedArray::OffsetOfElementAt`
     #[inline]
     pub const fn offset_of_element_at(index: i32) -> i32 {
         Self::K_HEADER_SIZE + index * K_TAGGED_SIZE
@@ -40,14 +36,12 @@ impl FixedArray {
         self.field(Self::offset_of_element_at(index))
     }
 
-    /// `FixedArray::get`
     #[inline]
     pub fn get(self, heap: &Heap, index: i32) -> Tagged {
         debug_assert!(index >= 0 && index < self.length(heap));
         heap.read_tagged(self.element_address(index))
     }
 
-    /// `FixedArray::set`
     #[inline]
     pub fn set(self, heap: &mut Heap, index: i32, value: Tagged) {
         debug_assert!(index >= 0 && index < self.length(heap));

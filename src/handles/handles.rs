@@ -1,13 +1,11 @@
 use crate::execution::isolate::Isolate;
 use crate::objects::tagged::{HeapObject, Tagged};
 
-/// `HandleScope`
 pub struct HandleScope {
     prev_next: usize,
 }
 
 impl Isolate {
-    /// `HandleScope::HandleScope`
     #[must_use]
     pub(crate) fn handle_scope(&self) -> HandleScope {
         HandleScope {
@@ -19,7 +17,6 @@ impl Isolate {
         self.handles.truncate(scope.prev_next);
     }
 
-    /// `HandleScope::CreateHandle`
     pub(crate) fn create_handle(&mut self, value: Tagged) -> Handle {
         self.handles.push(value);
         Handle {
@@ -32,7 +29,6 @@ impl Isolate {
     }
 }
 
-/// `Handle<Object>`
 #[derive(Copy, Clone, Debug)]
 pub struct Handle {
     index: usize,

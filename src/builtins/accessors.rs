@@ -4,12 +4,10 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::tagged::Tagged;
 
 impl Isolate {
-    /// `Accessors::ArrayLengthGetter`
     pub(crate) fn array_length_getter(&self, holder: JSArray) -> Tagged {
         holder.length(&self.heap)
     }
 
-    /// `Accessors::FunctionPrototypeGetter`
     pub(crate) fn function_prototype_getter(
         &mut self,
         holder: crate::objects::js_function::JSFunction,
@@ -28,7 +26,6 @@ impl Isolate {
         prototype
     }
 
-    /// `Accessors::FunctionPrototypeSetter`
     pub(crate) fn function_prototype_setter(
         &mut self,
         holder: crate::objects::js_function::JSFunction,
@@ -37,7 +34,6 @@ impl Isolate {
         self.set_function_prototype(holder, value);
     }
 
-    /// `Accessors::MakeFunctionPrototypeInfo`
     pub(crate) fn function_prototype_if_requested(
         &self,
         object: Tagged,
@@ -56,12 +52,10 @@ impl Isolate {
         ))
     }
 
-    /// `Accessors::StringLengthGetter`
     pub(crate) fn string_length_getter(&self, holder: crate::objects::string::String) -> Tagged {
         crate::objects::smi::Smi::from_int(holder.length(&self.heap))
     }
 
-    /// `Accessors::ArrayLengthSetter`
     pub(crate) fn array_length_setter(&mut self, object: JSObject, value: Tagged) {
         let array = JSArray::unchecked_cast(object.object());
         let Some(length) = self.to_array_length(value) else {

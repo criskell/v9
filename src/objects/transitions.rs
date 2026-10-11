@@ -6,23 +6,19 @@ use crate::objects::smi::Smi;
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `TransitionArray`
     TransitionArray
 );
 
-/// `TransitionArray::kNotFound`
 pub const K_NOT_FOUND: i32 = -1;
 
 impl TransitionArray {
     pub const K_PROTOTYPE_TRANSITIONS_INDEX: i32 = 0;
     pub const K_SIDE_STEP_TRANSITIONS_INDEX: i32 = 1;
     pub const K_TRANSITION_LENGTH_INDEX: i32 = 2;
-    /// `TransitionArray::kFirstIndex`
     pub const K_FIRST_INDEX: i32 = 3;
 
     pub const K_ENTRY_KEY_INDEX: i32 = 0;
     pub const K_ENTRY_TARGET_INDEX: i32 = 1;
-    /// `TransitionArray::kTransitionSize`
     pub const K_TRANSITION_SIZE: i32 = 2;
 
     #[inline]
@@ -45,7 +41,6 @@ impl TransitionArray {
         (self.as_array().length(heap) - Self::K_FIRST_INDEX) / Self::K_TRANSITION_SIZE
     }
 
-    /// `TransitionArray::number_of_transitions`
     #[inline]
     pub fn number_of_transitions(self, heap: &Heap) -> i32 {
         Smi::to_int(self.as_array().get(heap, Self::K_TRANSITION_LENGTH_INDEX))
@@ -69,7 +64,6 @@ impl TransitionArray {
             + Self::K_ENTRY_TARGET_INDEX
     }
 
-    /// `TransitionArray::GetKey`
     #[inline]
     pub fn get_key(self, heap: &Heap, transition_number: i32) -> Tagged {
         debug_assert!(transition_number < self.number_of_transitions(heap));
@@ -90,7 +84,6 @@ impl TransitionArray {
             .get(heap, Self::target_index(transition_number))
     }
 
-    /// `TransitionArray::GetTargetIfExists`
     #[inline]
     pub fn get_target(self, heap: &Heap, transition_number: i32) -> Option<Map> {
         let raw = self.get_raw_target(heap, transition_number);
@@ -125,12 +118,10 @@ impl TransitionArray {
     }
 }
 
-/// `TransitionsAccessor::Encoding`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
     Uninitialized,
     WeakRef,
-    /// A `TransitionArray`.
     FullTransitionArray,
 }
 
@@ -156,7 +147,6 @@ impl TransitionsAccessor {
         Encoding::FullTransitionArray
     }
 
-    /// `TransitionsAccessor::GetSimpleTransition`
     pub(crate) fn simple_transition(heap: &Heap, map: Map) -> Option<Map> {
         let raw = map.raw_transitions(heap);
         Some(Map::unchecked_cast(raw.to_heap_object()?))
@@ -197,7 +187,6 @@ impl TransitionsAccessor {
         )
     }
 
-    /// `TransitionsAccessor::NumberOfTransitions`
     pub fn number_of_transitions(heap: &Heap, map: Map) -> i32 {
         match Self::encoding(heap, map) {
             Encoding::Uninitialized => 0,

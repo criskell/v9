@@ -1,4 +1,3 @@
-/// `TryFinallyContinuationToken`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TryFinallyContinuationToken {
     // Fixed value tokens for paths we know we need.

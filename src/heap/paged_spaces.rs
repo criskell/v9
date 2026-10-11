@@ -1,7 +1,6 @@
 use crate::heap::spaces::{AllocationSpace, Space};
 use crate::objects::tagged::Address;
 
-/// `PagedSpace`
 #[derive(Clone, Debug)]
 pub struct PagedSpace {
     space: Space,

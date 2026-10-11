@@ -10,7 +10,6 @@ use crate::objects::oddball::{Oddball, OddballKind};
 use crate::objects::tagged::Tagged;
 
 impl Isolate {
-    /// `Heap::CreateReadOnlyHeapObjects`
     pub(crate) fn setup_read_only_roots(&mut self) {
         let meta = self
             .heap

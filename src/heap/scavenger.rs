@@ -32,7 +32,6 @@ impl Isolate {
 
         self.promoted_scan = self.heap.old_space().top();
 
-        // 2. Roots.
         self.iterate_and_scavenge_roots(&mut stats);
 
         self.scavenge_tenured_spaces(&mut stats);

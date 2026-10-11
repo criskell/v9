@@ -13,18 +13,11 @@ pub struct PropertyLocationInfo {
     pub holder: JSObject,
     pub details: PropertyDetails,
     pub dictionary_entry: i32,
-    /// `LookupIterator::descriptor_number`
     pub descriptor_index: i32,
 }
 
 impl Isolate {
-    // -----------------------------------------------------------------------
-    // Transitions
-    // -----------------------------------------------------------------------
 
-    // -----------------------------------------------------------------------
-    // Lookup
-    // -----------------------------------------------------------------------
 
     pub fn lookup_own_property(
         &self,
@@ -90,7 +83,6 @@ impl Isolate {
         }
     }
 
-    /// `Object::GetPropertyWithAccessor`
     pub(crate) fn get_property_with_accessors(
         &mut self,
         object: JSObject,
@@ -109,7 +101,6 @@ impl Isolate {
         self.call_accessor(getter, object.tagged(), &[])
     }
 
-    /// `Object::SetPropertyWithAccessor`
     pub(crate) fn set_property_with_accessors(
         &mut self,
         object: JSObject,
@@ -139,7 +130,6 @@ impl Isolate {
         }
     }
 
-    /// `AccessorPair::GetComponent`
     fn accessor_component(&self, pair: Tagged, getter: bool) -> Tagged {
         use crate::objects::r#struct::AccessorPair;
         match pair.to_strong_heap_object() {
@@ -193,8 +183,6 @@ impl Isolate {
         Some(self.property_value_at(&found))
     }
 
-    /// `JSObject::DefineOwnAccessorIgnoreAttributes`
-    /// `LookupIterator::TransitionToAccessorProperty`
     pub(crate) fn define_accessor(
         &mut self,
         object: JSObject,
@@ -266,7 +254,6 @@ impl Isolate {
         ))
     }
 
-    /// `Factory::NewAccessorPair`
     fn new_accessor_pair(&mut self) -> crate::objects::r#struct::AccessorPair {
         use crate::objects::r#struct::AccessorPair;
         let map = self
@@ -286,7 +273,6 @@ impl Isolate {
         pair
     }
 
-    /// `AccessorPair::Copy`
     fn accessor_pair_copy(
         &mut self,
         pair: crate::objects::r#struct::AccessorPair,
@@ -360,7 +346,6 @@ impl Isolate {
         self.set_property_with_origin(object, name, value, StoreOrigin::Named)
     }
 
-    /// `Object::SetProperty`
     pub fn set_property_with_origin(
         &mut self,
         object: JSObject,
@@ -449,7 +434,6 @@ impl Isolate {
         true
     }
 
-    /// `JSObject::NormalizeProperties`
     pub(crate) fn normalize_properties(&mut self, object: JSObject) {
         let map = object.map(&self.heap);
         if map.is_dictionary_map(&self.heap) {
@@ -524,7 +508,6 @@ impl Isolate {
         true
     }
 
-    /// `JSReceiver::DeleteProperty`
     pub(crate) fn delete_property(&mut self, object: JSObject, name: Tagged) -> bool {
         if self.lookup_own_property(object, name).is_none() {
             return true;
@@ -549,7 +532,6 @@ impl Isolate {
         true
     }
 
-    /// `JSObject::DefineOwnPropertyIgnoreAttributes`
     pub(crate) fn define_own_property(
         &mut self,
         object: JSObject,
@@ -580,7 +562,6 @@ impl Isolate {
         self.set_property_with_origin(object, name, value, StoreOrigin::Named)
     }
 
-    /// `JSObject::AddProperty`
     pub(crate) fn add_property_with_attributes(
         &mut self,
         object: JSObject,

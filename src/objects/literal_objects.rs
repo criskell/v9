@@ -3,7 +3,6 @@ use crate::objects::fixed_array::FixedArray;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::Tagged;
 
-/// `ClassBoilerplate::ValueKind`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ValueKind {
     ConstantKind,
@@ -30,7 +29,6 @@ impl ValueKind {
 }
 
 object_type!(
-    /// `ClassBoilerplate`
     ClassBoilerplate
 );
 
@@ -41,18 +39,14 @@ impl ClassBoilerplate {
     pub const K_MEMBER_FLAGS_OFFSET: i32 = 0;
     pub const K_MEMBER_KEY_OFFSET: i32 = 1;
 
-    /// `ClassBoilerplate::kConstructorArgumentIndex`
     pub const K_CONSTRUCTOR_ARGUMENT_INDEX: i32 = 1;
-    /// `ClassBoilerplate::kPrototypeArgumentIndex`
     pub const K_PROTOTYPE_ARGUMENT_INDEX: i32 = 2;
-    /// `ClassBoilerplate::kFirstDynamicArgumentIndex`
     pub const K_FIRST_DYNAMIC_ARGUMENT_INDEX: i32 = 3;
 
     fn as_fixed_array(self) -> FixedArray {
         FixedArray::unchecked_cast(self.object())
     }
 
-    /// `ClassBoilerplate::arguments_count`
     pub fn arguments_count(self, heap: &Heap) -> i32 {
         Smi::to_int(
             self.as_fixed_array()

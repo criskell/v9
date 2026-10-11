@@ -8,7 +8,6 @@ pub const READ_ONLY: PropertyAttributes = 1 << 0;
 pub const DONT_ENUM: PropertyAttributes = 1 << 1;
 pub const DONT_DELETE: PropertyAttributes = 1 << 2;
 
-/// `PropertyKind`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PropertyKind {
     Data = 0,
@@ -21,7 +20,6 @@ pub enum PropertyLocation {
     Descriptor = 1,
 }
 
-/// `PropertyConstness`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PropertyConstness {
     Mutable = 0,
@@ -62,7 +60,6 @@ pub enum Representation {
 }
 
 impl Representation {
-    /// `Representation::IsMoreGeneralThan`
     pub fn is_more_general_than(self, other: Representation) -> bool {
         match (self, other) {
             (a, b) if a == b => false,
@@ -106,7 +103,6 @@ const LOCATION_BITS: u32 = 1;
 const REPRESENTATION_SHIFT: u32 = LOCATION_SHIFT + LOCATION_BITS;
 const REPRESENTATION_BITS: u32 = 3;
 const DESCRIPTOR_POINTER_SHIFT: u32 = REPRESENTATION_SHIFT + REPRESENTATION_BITS;
-/// `kDescriptorIndexBitCount`
 pub const K_DESCRIPTOR_INDEX_BIT_COUNT: u32 = 10;
 const FIELD_INDEX_SHIFT: u32 = DESCRIPTOR_POINTER_SHIFT + K_DESCRIPTOR_INDEX_BIT_COUNT;
 const FIELD_INDEX_BITS: u32 = K_DESCRIPTOR_INDEX_BIT_COUNT + 1;
@@ -116,7 +112,6 @@ const CELL_TYPE_BITS: u32 = 3;
 const DICTIONARY_STORAGE_SHIFT: u32 = CELL_TYPE_SHIFT + CELL_TYPE_BITS;
 const DICTIONARY_STORAGE_BITS: u32 = 23;
 
-/// `kMaxNumberOfDescriptors`
 pub const K_MAX_NUMBER_OF_DESCRIPTORS: u32 = (1 << K_DESCRIPTOR_INDEX_BIT_COUNT) - 4;
 
 #[inline]
@@ -135,7 +130,6 @@ const fn decode(word: u32, shift: u32, bits: u32) -> u32 {
     (word >> shift) & mask(bits)
 }
 
-/// `PropertyDetails`
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct PropertyDetails(u32);
 
@@ -230,7 +224,6 @@ impl PropertyDetails {
         self.0
     }
 
-    /// `PropertyDetails::AsSmi`
     #[inline]
     pub fn as_smi(self) -> Tagged {
         Smi::from_int(self.0 as i32)
@@ -301,7 +294,6 @@ impl PropertyDetails {
         self.attributes() & DONT_DELETE == 0
     }
 
-    /// `PropertyDetails::CopyWithRepresentation`
     pub fn with_representation(self, representation: Representation) -> PropertyDetails {
         let cleared = self.0 & !(mask(REPRESENTATION_BITS) << REPRESENTATION_SHIFT);
         PropertyDetails(
@@ -336,13 +328,11 @@ impl PropertyDetails {
         PropertyDetails(cleared | encode(cell_type as u32, CELL_TYPE_SHIFT, CELL_TYPE_BITS))
     }
 
-    /// `PropertyDetails::dictionary_index`
     #[inline]
     pub fn dictionary_index(self) -> u32 {
         decode(self.0, DICTIONARY_STORAGE_SHIFT, DICTIONARY_STORAGE_BITS)
     }
 
-    /// `PropertyDetails::set_index`
     pub fn set_dictionary_index(self, index: u32) -> PropertyDetails {
         let cleared = self.0 & !(mask(DICTIONARY_STORAGE_BITS) << DICTIONARY_STORAGE_SHIFT);
         PropertyDetails(cleared | encode(index, DICTIONARY_STORAGE_SHIFT, DICTIONARY_STORAGE_BITS))
@@ -354,7 +344,6 @@ impl PropertyDetails {
     }
 }
 
-/// `PropertyDetails::kInitialIndex`
 pub const K_FIRST_INDEX: i32 = 1;
 
 impl std::fmt::Debug for PropertyDetails {
@@ -374,7 +363,6 @@ impl std::fmt::Debug for PropertyDetails {
     }
 }
 
-/// `Descriptor::AccessorConstant`
 pub fn accessor_constant(attributes: PropertyAttributes) -> PropertyDetails {
     PropertyDetails::new_descriptor(PropertyKind::Accessor, attributes)
 }

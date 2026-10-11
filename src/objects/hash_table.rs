@@ -3,11 +3,9 @@ use crate::objects::fixed_array::FixedArray;
 use crate::objects::smi::Smi;
 use crate::objects::tagged::{Address, Tagged};
 
-/// `InternalIndex`
 pub const K_NOT_FOUND: i32 = -1;
 
 object_type!(
-    /// `HashTableBase`
     HashTableBase
 );
 
@@ -25,7 +23,6 @@ impl HashTableBase {
         FixedArray::unchecked_cast(self.object())
     }
 
-    /// `HashTableBase::NumberOfElements`
     #[inline]
     pub fn number_of_elements(self, heap: &Heap) -> i32 {
         Smi::to_int(
@@ -34,14 +31,12 @@ impl HashTableBase {
         )
     }
 
-    /// `HashTableBase::SetNumberOfElements`
     #[inline]
     pub fn set_number_of_elements(self, heap: &mut Heap, count: i32) {
         self.as_fixed_array()
             .set(heap, Self::K_NUMBER_OF_ELEMENTS_INDEX, Smi::from_int(count));
     }
 
-    /// `HashTableBase::NumberOfDeletedElements`
     #[inline]
     pub fn number_of_deleted_elements(self, heap: &Heap) -> i32 {
         Smi::to_int(
@@ -50,7 +45,6 @@ impl HashTableBase {
         )
     }
 
-    /// `HashTableBase::SetNumberOfDeletedElements`
     #[inline]
     pub fn set_number_of_deleted_elements(self, heap: &mut Heap, count: i32) {
         self.as_fixed_array().set(
@@ -60,7 +54,6 @@ impl HashTableBase {
         );
     }
 
-    /// `HashTableBase::Capacity`
     #[inline]
     pub fn capacity(self, heap: &Heap) -> u32 {
         Smi::to_int(self.as_fixed_array().get(heap, Self::K_CAPACITY_INDEX)) as u32
@@ -72,14 +65,12 @@ impl HashTableBase {
             .set(heap, Self::K_CAPACITY_INDEX, Smi::from_int(capacity as i32));
     }
 
-    /// `HashTableBase::ElementAdded`
     #[inline]
     pub fn element_added(self, heap: &mut Heap) {
         let count = self.number_of_elements(heap);
         self.set_number_of_elements(heap, count + 1);
     }
 
-    /// `HashTableBase::ElementRemoved`
     #[inline]
     pub fn element_removed(self, heap: &mut Heap) {
         let count = self.number_of_elements(heap);
@@ -88,7 +79,6 @@ impl HashTableBase {
         self.set_number_of_deleted_elements(heap, deleted + 1);
     }
 
-    /// `HashTableBase::ComputeCapacity`
     // Computes the required capacity for a table holding the given
     // number of elements.
     #[inline]
@@ -99,20 +89,17 @@ impl HashTableBase {
         capacity.max(Self::K_MIN_CAPACITY)
     }
 
-    /// `HashTableBase::NextProbe`
     #[inline]
     pub fn next_probe(last: u32, number: u32, size: u32) -> u32 {
         (last + number) & (size - 1)
     }
 
-    /// `HashTable::FirstProbe`
     #[inline]
     pub fn first_probe(hash: u32, size: u32) -> u32 {
         hash & (size - 1)
     }
 }
 
-/// `HashTable::Shape`
 #[derive(Clone, Copy)]
 pub struct HashTableShape {
     pub prefix_size: i32,
@@ -120,27 +107,23 @@ pub struct HashTableShape {
 }
 
 impl HashTableShape {
-    /// `HashTable::kElementsStartIndex`
     #[inline]
     pub const fn elements_start_index(&self) -> i32 {
         HashTableBase::K_PREFIX_START_INDEX + self.prefix_size
     }
 
-    /// `HashTable::EntryToIndex`
     // Returns the index for an entry (of the key)
     #[inline]
     pub const fn entry_to_index(&self, entry: i32) -> i32 {
         (entry * self.entry_size) + self.elements_start_index()
     }
 
-    /// `HashTable::IndexToEntry`
     // Returns the entry for an index (of the key)
     #[inline]
     pub const fn index_to_entry(&self, index: i32) -> i32 {
         (index - self.elements_start_index()) / self.entry_size
     }
 
-    /// `HashTable::SizeFor`
     #[inline]
     pub const fn size_for(&self, capacity: u32) -> i32 {
         self.elements_start_index() + capacity as i32 * self.entry_size
@@ -148,7 +131,6 @@ impl HashTableShape {
 }
 
 impl HashTableBase {
-    /// `HashTable::KeyAt`
     // Returns the key at entry.
     #[inline]
     pub fn key_at(self, heap: &Heap, shape: HashTableShape, entry: i32) -> Tagged {
@@ -167,7 +149,6 @@ impl HashTableBase {
             .element_address(shape.entry_to_index(entry) + offset)
     }
 
-    /// `HashTable::IsKey`
     // Returns whether k is a real key. The hole and undefined are not allowed
     // as keys and can be used to indicate missing or deleted elements.
     #[inline]
@@ -175,7 +156,6 @@ impl HashTableBase {
         !heap.is_undefined(k) && !heap.is_the_hole(k)
     }
 
-    /// `HashTable::HasSufficientCapacityToAdd`
     pub fn has_sufficient_capacity_to_add(self, heap: &Heap, number_of_additional: i32) -> bool {
         HashTableBase::has_sufficient_capacity_to_add_for(
             self.capacity(heap) as i32,
@@ -185,7 +165,6 @@ impl HashTableBase {
         )
     }
 
-    /// `HashTable::HasSufficientCapacityToAdd`
     pub fn has_sufficient_capacity_to_add_for(
         capacity: i32,
         number_of_elements: i32,

@@ -113,13 +113,11 @@ impl OperandType {
         }
     }
 
-    /// `Bytecodes::IsRegisterOperandType`
     #[inline]
     pub fn is_register_operand_type(self) -> bool {
         self >= OperandType::Reg
     }
 
-    /// `Bytecodes::IsRegisterInputOperandType`
     #[inline]
     pub fn is_register_input_operand_type(self) -> bool {
         matches!(
@@ -128,7 +126,6 @@ impl OperandType {
         )
     }
 
-    /// `Bytecodes::IsRegisterOutputOperandType`
     #[inline]
     pub fn is_register_output_operand_type(self) -> bool {
         matches!(

@@ -68,7 +68,6 @@ impl FeedbackSlotKind {
         }
     }
 
-    /// `IsLoadICKind`
     pub fn is_load_ic(self) -> bool {
         matches!(self, FeedbackSlotKind::LoadProperty)
     }
@@ -80,7 +79,6 @@ impl FeedbackSlotKind {
         )
     }
 
-    /// `IsGlobalICKind`
     pub fn is_global_ic(self) -> bool {
         matches!(
             self,
@@ -229,7 +227,6 @@ impl FeedbackMetadata {
         heap.write_u32(self.field(Self::K_SLOT_COUNT_OFFSET), value as u32);
     }
 
-    /// `FeedbackMetadata::GetKind`
     #[inline]
     pub fn get_kind(self, heap: &Heap, slot: i32) -> FeedbackSlotKind {
         debug_assert!(slot >= 0 && slot < self.slot_count(heap));
@@ -243,7 +240,6 @@ impl FeedbackMetadata {
 }
 
 object_type!(
-    /// `FeedbackVector`
     FeedbackVector
 );
 
@@ -252,7 +248,6 @@ impl FeedbackVector {
     pub const K_INVOCATION_COUNT_OFFSET: i32 = Self::K_LENGTH_OFFSET + 4;
     pub const K_SHARED_FUNCTION_INFO_OFFSET: i32 = Self::K_INVOCATION_COUNT_OFFSET + 4;
     pub const K_METADATA_OFFSET: i32 = Self::K_SHARED_FUNCTION_INFO_OFFSET + K_TAGGED_SIZE;
-    /// `FeedbackVector::kHeaderSize`
     pub const K_HEADER_SIZE: i32 = Self::K_METADATA_OFFSET + K_TAGGED_SIZE;
 
     pub fn size_for(length: i32) -> i32 {
@@ -323,14 +318,12 @@ impl FeedbackVector {
         self.field(Self::K_HEADER_SIZE + slot * K_TAGGED_SIZE)
     }
 
-    /// `FeedbackVector::Get`
     #[inline]
     pub fn get(self, heap: &Heap, slot: i32) -> Tagged {
         debug_assert!(slot >= 0 && slot < self.length(heap));
         heap.read_tagged(self.slot_address(slot))
     }
 
-    /// `FeedbackVector::Set`
     #[inline]
     pub fn set(self, heap: &mut Heap, slot: i32, value: Tagged) {
         debug_assert!(slot >= 0 && slot < self.length(heap));
@@ -380,7 +373,6 @@ impl FeedbackNexus {
         self.vector
     }
 
-    /// `FeedbackNexus::GetFeedbackPair`
     #[inline]
     pub fn feedback(self, heap: &Heap) -> Tagged {
         self.vector.get(heap, self.slot)
@@ -429,7 +421,6 @@ impl FeedbackNexus {
         InlineCacheState::Polymorphic
     }
 
-    /// `FeedbackNexus::ConfigureMonomorphic`
     pub fn configure_monomorphic(self, heap: &mut Heap, map: Map, handler: Tagged) {
         self.set_feedback(heap, map.object().tagged_weak());
         self.set_feedback_extra(heap, handler);

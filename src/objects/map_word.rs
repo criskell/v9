@@ -5,13 +5,11 @@ use crate::objects::tagged::{HeapObject, Tagged};
 pub struct MapWord(u64);
 
 impl MapWord {
-    /// `MapWord::FromMap`
     #[inline]
     pub const fn from_map(map: HeapObject) -> MapWord {
         MapWord(map.tagged().ptr())
     }
 
-    /// `MapWord::ToMap`
     #[inline]
     pub const fn to_map(self) -> HeapObject {
         debug_assert!(!self.is_forwarding_address());
@@ -28,7 +26,6 @@ impl MapWord {
         self.0 & K_FORWARDING_TAG_MASK == K_FORWARDING_TAG
     }
 
-    /// `MapWord::ToForwardingAddress`
     #[inline]
     pub const fn to_forwarding_address(self) -> HeapObject {
         debug_assert!(self.is_forwarding_address());

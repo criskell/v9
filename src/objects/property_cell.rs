@@ -4,7 +4,6 @@ use crate::objects::property_details::{PropertyCellType, PropertyDetails};
 use crate::objects::tagged::{Address, Tagged};
 
 object_type!(
-    /// `PropertyCell`
     PropertyCell
 );
 
@@ -13,7 +12,6 @@ impl PropertyCell {
     pub const K_PROPERTY_DETAILS_RAW_OFFSET: i32 = Self::K_NAME_OFFSET + K_TAGGED_SIZE;
     pub const K_VALUE_OFFSET: i32 = Self::K_PROPERTY_DETAILS_RAW_OFFSET + K_TAGGED_SIZE;
     pub const K_DEPENDENT_CODE_OFFSET: i32 = Self::K_VALUE_OFFSET + K_TAGGED_SIZE;
-    /// `PropertyCell::kSize`
     pub const K_SIZE: i32 = Self::K_DEPENDENT_CODE_OFFSET + K_TAGGED_SIZE;
 
     #[inline]
@@ -31,7 +29,6 @@ impl PropertyCell {
         self.field(Self::K_NAME_OFFSET)
     }
 
-    /// `PropertyCell::property_details`
     #[inline]
     pub fn property_details(self, heap: &Heap) -> PropertyDetails {
         PropertyDetails::from_smi(heap.read_tagged(self.field(Self::K_PROPERTY_DETAILS_RAW_OFFSET)))
@@ -128,7 +125,6 @@ pub fn updated_cell_type(heap: &Heap, cell: PropertyCell, value: Tagged) -> Prop
                 PropertyCellType::Mutable
             }
         }
-        // Terminal.
         PropertyCellType::Mutable => PropertyCellType::Mutable,
     }
 }

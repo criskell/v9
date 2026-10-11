@@ -1,10 +1,7 @@
 use crate::interpreter::bytecode_operands::OperandSize;
 
-/// `ConstantArrayBuilder::k8BitCapacity`
 pub const K_8BIT_CAPACITY: usize = 1 << 8;
-/// `ConstantArrayBuilder::k16BitCapacity`
 pub const K_16BIT_CAPACITY: usize = (1 << 16) - K_8BIT_CAPACITY;
-/// `ConstantArrayBuilder::k32BitCapacity`
 pub const K_32BIT_CAPACITY: usize = (1usize << 32) - K_16BIT_CAPACITY - K_8BIT_CAPACITY;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -19,7 +16,6 @@ pub enum ConstantEntry {
     TheHole,
 }
 
-/// `ConstantArrayBuilder::ConstantArraySlice`
 #[derive(Debug)]
 struct ConstantArraySlice {
     start_index: usize,
@@ -52,19 +48,16 @@ impl ConstantArraySlice {
         self.start_index + self.capacity - 1
     }
 
-    /// `ConstantArraySlice::Reserve`
     fn reserve(&mut self) {
         debug_assert!(self.available() > 0);
         self.reserved += 1;
     }
 
-    /// `ConstantArraySlice::Unreserve`
     fn unreserve(&mut self) {
         debug_assert!(self.reserved > 0);
         self.reserved -= 1;
     }
 
-    /// `ConstantArraySlice::Allocate`
     fn allocate(&mut self, entry: ConstantEntry) -> usize {
         debug_assert!(self.available() > 0);
         let index = self.start_index + self.constants.len();
@@ -81,7 +74,6 @@ impl ConstantArraySlice {
     }
 }
 
-/// `ConstantArrayBuilder`
 pub struct ConstantArrayBuilder {
     slices: [ConstantArraySlice; 3],
     dedup: std::collections::HashMap<DedupKey, usize>,
@@ -128,7 +120,6 @@ impl ConstantArrayBuilder {
         0
     }
 
-    /// `ConstantArrayBuilder::At`
     pub fn at(&self, index: usize) -> ConstantEntry {
         for slice in &self.slices {
             if slice.contains_index(index) {

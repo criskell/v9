@@ -18,7 +18,6 @@ pub struct BytecodeArrayData {
     pub bytecodes: Vec<u8>,
     pub constants: Vec<ConstantEntry>,
     pub register_count: i32,
-    /// Including the receiver.
     pub parameter_count: i32,
     pub feedback_slot_count: i32,
     pub feedback_slot_kinds: Vec<FeedbackSlotKind>,
@@ -50,7 +49,6 @@ impl BytecodeArrayBuilder {
         }
     }
 
-    // -- frame ---------------------------------------------------------------
 
     #[inline]
     pub fn parameter_count(&self) -> i32 {
@@ -96,9 +94,7 @@ impl BytecodeArrayBuilder {
         self.bytecode_array_writer.offset()
     }
 
-    // -- emission ------------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::Output`
     fn output(&mut self, bytecode: Bytecode, operands: &[i32]) -> &mut Self {
         let mut node = BytecodeNode::new(bytecode, operands);
         if let Some(position) = self.pending_source_position.take() {
@@ -177,23 +173,19 @@ impl BytecodeArrayBuilder {
         }
     }
 
-    /// `BytecodeArrayBuilder::LoadAccumulatorWithRegister`
     pub fn load_accumulator_with_register(&mut self, register: Register) -> &mut Self {
         self.output(Bytecode::Ldar, &[register.to_operand()])
     }
 
-    /// `BytecodeArrayBuilder::StoreAccumulatorInRegister`
     pub fn store_accumulator_in_register(&mut self, register: Register) -> &mut Self {
         self.output(Bytecode::Star, &[register.to_operand()])
     }
 
-    /// `BytecodeArrayBuilder::MoveRegister`
     pub fn move_register(&mut self, from: Register, to: Register) -> &mut Self {
         debug_assert_ne!(from, to);
         self.output(Bytecode::Mov, &[from.to_operand(), to.to_operand()])
     }
 
-    // -- contexts ------------------------------------------------------------
 
     pub fn create_function_context(&mut self, names: &[String], slots: i32) -> &mut Self {
         let index = self
@@ -207,7 +199,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::PushContext, &[register.to_operand()])
     }
 
-    /// `BytecodeArrayBuilder::PopContext`
     pub fn pop_context(&mut self, register: Register) -> &mut Self {
         self.output(Bytecode::PopContext, &[register.to_operand()])
     }
@@ -234,25 +225,20 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    // -- globals -------------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::LoadGlobal`
     pub fn load_global(&mut self, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadGlobalNotInsideTypeof);
         self.output(Bytecode::LdaGlobal, &[index, slot])
     }
 
-    /// `BytecodeArrayBuilder::StoreGlobal`
     pub fn store_global(&mut self, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::StoreGlobalStrict);
         self.output(Bytecode::StaGlobal, &[index, slot])
     }
 
-    // -- properties ----------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::LoadNamedProperty`
     pub fn load_named_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadProperty);
@@ -285,7 +271,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::SetKeyedProperty`
     pub fn set_keyed_property(&mut self, object: Register, key: Register) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetKeyedStrict);
         self.output(
@@ -294,7 +279,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    // -- operators -----------------------------------------------------------
 
     pub fn binary_operation(&mut self, op: Token, register: Register) -> &mut Self {
         let bytecode = match op {
@@ -330,7 +314,6 @@ impl BytecodeArrayBuilder {
         self.output(bytecode, &[literal, K_UNINITIALIZED_EMBEDDED_FEEDBACK])
     }
 
-    /// `BytecodeArrayBuilder::UnaryOperation`
     pub fn unary_operation(&mut self, op: Token) -> &mut Self {
         match op {
             Token::Add => {
@@ -361,13 +344,11 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::ToBooleanLogicalNot, &[])
     }
 
-    /// `BytecodeArrayBuilder::TypeOf`
     pub fn type_of(&mut self) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::TypeOf);
         self.output(Bytecode::TypeOf, &[slot])
     }
 
-    /// `BytecodeArrayBuilder::Construct`
     pub fn construct(&mut self, constructor: Register, args: RegisterList) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
         self.output(
@@ -381,12 +362,10 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::ForInEnumerate`
     pub fn for_in_enumerate(&mut self, receiver: Register) -> &mut Self {
         self.output(Bytecode::ForInEnumerate, &[receiver.to_operand()])
     }
 
-    /// `BytecodeArrayBuilder::ForInPrepare`
     pub fn for_in_prepare(&mut self, cache_info_triple: RegisterList) -> &mut Self {
         debug_assert_eq!(cache_info_triple.register_count(), 3);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::ForIn);
@@ -396,7 +375,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::ForInNext`
     pub fn for_in_next(
         &mut self,
         receiver: Register,
@@ -416,18 +394,15 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::ForInStep`
     pub fn for_in_step(&mut self, index: Register) -> &mut Self {
         self.output(Bytecode::ForInStep, &[index.to_operand()])
     }
 
-    /// `LoopBuilder::BreakIfForInDone`
     pub fn for_in_done(&mut self, index: Register, cache_length: Register) -> &mut Self {
         self.load_accumulator_with_register(index);
         self.compare_operation(Token::EqStrict, cache_length)
     }
 
-    /// `BytecodeArrayBuilder::Delete`
     pub fn delete(&mut self, object: Register, strict: bool) -> &mut Self {
         let bytecode = if strict {
             Bytecode::DeletePropertyStrict
@@ -474,7 +449,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::TestReferenceEqual, &[register.to_operand()])
     }
 
-    // -- conversions ---------------------------------------------------------
 
     pub fn to_boolean(&mut self) -> &mut Self {
         self.output(Bytecode::ToBoolean, &[])
@@ -493,7 +467,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::ToNumber, &[slot])
     }
 
-    // -- literals ------------------------------------------------------------
 
     pub fn create_empty_object_literal(&mut self) -> &mut Self {
         self.output(Bytecode::CreateEmptyObjectLiteral, &[])
@@ -504,7 +477,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::CreateEmptyArrayLiteral, &[slot])
     }
 
-    /// `BytecodeArrayBuilder::CreateClosure`
     pub fn create_closure(&mut self, function_index: usize) -> &mut Self {
         let index = self
             .bytecode_array_writer
@@ -514,7 +486,6 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::CreateClosure, &[index, slot, 0])
     }
 
-    // -- calls ---------------------------------------------------------------
 
     pub fn call_undefined_receiver(&mut self, callee: Register, args: RegisterList) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
@@ -529,7 +500,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::CallRuntime`
     pub fn call_runtime(
         &mut self,
         function_id: crate::runtime::runtime::FunctionId,
@@ -549,7 +519,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::ConstructForwardAllArgs`
     pub fn construct_forward_all_args(&mut self, constructor: Register) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
         self.output(
@@ -558,7 +527,6 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    /// `BytecodeArrayBuilder::GetSuperConstructor`
     pub fn get_super_constructor(&mut self, out: Register) -> &mut Self {
         self.output(Bytecode::GetSuperConstructor, &[out.to_operand()])
     }
@@ -577,9 +545,7 @@ impl BytecodeArrayBuilder {
         )
     }
 
-    // -- control flow --------------------------------------------------------
 
-    /// `BytecodeArrayBuilder::Jump`
     pub fn jump(&mut self, label: &mut BytecodeLabel) -> &mut Self {
         self.output_jump(Bytecode::Jump, label)
     }
@@ -644,13 +610,10 @@ impl BytecodeArrayBuilder {
         self
     }
 
-    /// `BytecodeArrayBuilder::Return`
     pub fn emit_return(&mut self) -> &mut Self {
         self.output(Bytecode::Return, &[])
     }
 
-    /// `BytecodeArrayBuilder::Throw`
-    /// `BytecodeArrayBuilder::ReThrow`
     pub fn emit_rethrow(&mut self) -> &mut Self {
         self.output(Bytecode::ReThrow, &[])
     }
@@ -669,7 +632,6 @@ impl BytecodeArrayBuilder {
         self.bytecode_array_writer.exit_seen_in_block()
     }
 
-    // -- finishing -----------------------------------------------------------
 
     fn insert_name(&mut self, name: &str) -> i32 {
         self.bytecode_array_writer
@@ -700,12 +662,10 @@ impl BytecodeArrayBuilder {
         }
     }
 
-    /// `BytecodeArrayBuilder::NewHandlerEntry`
     pub fn new_handler_entry(&mut self) -> i32 {
         self.handler_table_builder.new_handler_entry()
     }
 
-    /// `BytecodeArrayBuilder::MarkTryBegin`
     pub fn mark_try_begin(&mut self, handler_id: i32, context: Register) {
         let offset = self.bytecode_array_writer.offset();
         self.handler_table_builder
@@ -714,14 +674,12 @@ impl BytecodeArrayBuilder {
             .set_context_register(handler_id, context);
     }
 
-    /// `BytecodeArrayBuilder::MarkTryEnd`
     pub fn mark_try_end(&mut self, handler_id: i32) {
         let offset = self.bytecode_array_writer.offset();
         self.handler_table_builder
             .set_try_region_end(handler_id, offset);
     }
 
-    /// `BytecodeArrayBuilder::MarkHandler`
     pub fn mark_handler(
         &mut self,
         handler_id: i32,
@@ -735,7 +693,6 @@ impl BytecodeArrayBuilder {
             .set_prediction(handler_id, prediction);
     }
 
-    /// `BytecodeArrayBuilder::DropHandlerEntry`
     pub fn drop_handler_entry(&mut self, handler_id: i32) {
         self.handler_table_builder.drop_handler_entry(handler_id);
     }
@@ -881,7 +838,6 @@ mod tests {
 
     #[test]
     fn a_loop_jumps_backwards_to_its_header() {
-        // while (true) { }
         let mut builder = BytecodeArrayBuilder::new(1, 0);
         let mut header = BytecodeLoopHeader::new();
         builder.bind_loop_header(&mut header);

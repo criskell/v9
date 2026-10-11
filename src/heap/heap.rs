@@ -39,18 +39,14 @@ pub struct Heap {
 
     read_only_space: ReadOnlySpace,
     new_space: SemiSpaceNewSpace,
-    /// `Heap::old_space_`
     old_space: PagedSpace,
 
     pub gc_count: usize,
     pub bytes_promoted: usize,
     pub bytes_evacuated: usize,
 
-    /// `ReadOnlyRoots::the_hole_value`
     pub(crate) the_hole_value: Tagged,
-    /// `ReadOnlyRoots::undefined_value`
     pub(crate) undefined_value: Tagged,
-    /// `ReadOnlyRoots::null_value`
     pub(crate) null_value: Tagged,
 }
 
@@ -97,18 +93,15 @@ impl Heap {
         &self.config
     }
 
-    // -- Spaces -------------------------------------------------------------
 
     pub fn read_only_space(&self) -> &ReadOnlySpace {
         &self.read_only_space
     }
 
-    /// `Heap::new_space`
     pub fn new_space(&self) -> &SemiSpaceNewSpace {
         &self.new_space
     }
 
-    /// `Heap::old_space`
     pub fn old_space(&self) -> &PagedSpace {
         &self.old_space
     }
@@ -148,7 +141,6 @@ impl Heap {
         self.read_only_space.contains(object.address())
     }
 
-    // -- Allocation ---------------------------------------------------------
 
     pub fn allocate_raw(
         &mut self,
@@ -219,17 +211,14 @@ impl Heap {
     }
 
     #[inline]
-    /// `ReadOnlyRoots::undefined_value`
     pub fn is_undefined(&self, value: Tagged) -> bool {
         self.undefined_value != Tagged::ZERO && value == self.undefined_value
     }
 
-    /// `ReadOnlyRoots::the_hole_value`
     pub fn is_the_hole(&self, value: Tagged) -> bool {
         self.the_hole_value != Tagged::ZERO && value == self.the_hole_value
     }
 
-    /// `ReadOnlyRoots::null_value`
     pub fn is_null(&self, value: Tagged) -> bool {
         self.null_value != Tagged::ZERO && value == self.null_value
     }
@@ -331,15 +320,12 @@ impl Heap {
         self.memory[i..i + length].fill(0);
     }
 
-    // -- The map word -------------------------------------------------------
 
-    /// `HeapObject::map_word`
     #[inline]
     pub fn map_word(&self, object: HeapObject) -> MapWord {
         MapWord::from_raw(self.read_u64(object.address()))
     }
 
-    /// `HeapObject::set_map_word`
     #[inline]
     pub fn set_map_word(&mut self, object: HeapObject, map_word: MapWord) {
         self.write_u64(object.address(), map_word.ptr());
@@ -357,7 +343,6 @@ impl Heap {
         word.to_map()
     }
 
-    /// `HeapObject::set_map`
     #[inline]
     pub fn set_map(&mut self, object: HeapObject, map: HeapObject) {
         self.set_map_word(object, MapWord::from_map(map));

@@ -13,20 +13,17 @@ impl Smi {
     pub const MIN_VALUE: i32 = K_SMI_MIN_VALUE as i32;
     pub const MAX_VALUE: i32 = K_SMI_MAX_VALUE as i32;
 
-    /// `Smi::zero`
     #[inline]
     pub const fn zero() -> Tagged {
         Smi::from_int(0)
     }
 
-    /// `Smi::FromInt`
     // Convert a value to a Smi object.
     #[inline]
     pub const fn from_int(value: i32) -> Tagged {
         Tagged(((value as i64) << K_SMI_SHIFT_BITS) as u64 | K_SMI_TAG)
     }
 
-    /// `Smi::FromIntptr`
     #[inline]
     pub const fn try_from_i64(value: i64) -> Option<Tagged> {
         if Smi::is_valid(value) {
@@ -36,14 +33,12 @@ impl Smi {
         }
     }
 
-    /// `Smi::IsValid`
     // Returns whether value can be represented in a Smi.
     #[inline]
     pub const fn is_valid(value: i64) -> bool {
         value >= K_SMI_MIN_VALUE && value <= K_SMI_MAX_VALUE
     }
 
-    /// `Smi::ToInt`
     // Convert a Smi object to an int.
     #[inline]
     pub const fn to_int(object: Tagged) -> i32 {
@@ -51,7 +46,6 @@ impl Smi {
         (object.ptr() as i64 >> K_SMI_SHIFT_BITS) as i32
     }
 
-    /// `Object::ToSmi`
     #[inline]
     pub const fn try_to_int(object: Tagged) -> Option<i32> {
         if object.is_smi() {
@@ -61,7 +55,6 @@ impl Smi {
         }
     }
 
-    /// `DoubleToSmiInteger`
     // Returns true if value can be converted to a SMI, and returns the
     // resulting integer value of the SMI in |smi_int_value|.
     #[inline]

@@ -32,13 +32,11 @@ impl JSArray {
         JSObject::unchecked_cast(self.object())
     }
 
-    /// `JSArray::length`
     #[inline]
     pub fn length(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_LENGTH_OFFSET))
     }
 
-    /// `JSArray::set_length`
     #[inline]
     pub fn set_length(self, heap: &mut Heap, value: Tagged) {
         heap.write_tagged(self.field(Self::K_LENGTH_OFFSET), value);
@@ -54,7 +52,6 @@ impl JSArray {
         self.set_length(heap, Smi::from_int(length as i32));
     }
 
-    /// `JSArray::elements`
     #[inline]
     pub fn elements(self, heap: &Heap) -> Tagged {
         self.as_js_object().elements(heap)

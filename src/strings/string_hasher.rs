@@ -8,7 +8,6 @@ impl RunningStringHasher {
         RunningStringHasher::default()
     }
 
-    /// `RunningStringHasher::AddCharacter`
     #[inline]
     pub fn add_character(&mut self, c: u16) {
         self.running_hash = self.running_hash.wrapping_add(c as u32);
@@ -16,7 +15,6 @@ impl RunningStringHasher {
         self.running_hash ^= self.running_hash >> 6;
     }
 
-    /// `RunningStringHasher::Finalize`
     pub fn finalize(mut self) -> u32 {
         self.running_hash = self.running_hash.wrapping_add(self.running_hash << 3);
         self.running_hash ^= self.running_hash >> 11;
@@ -35,11 +33,9 @@ fn convert_raw_hash_to_usable_hash(raw: u32) -> u32 {
     }
 }
 
-/// `StringHasher`
 pub struct StringHasher;
 
 impl StringHasher {
-    /// `StringHasher::HashSequentialString`
     pub fn hash_sequential_string(s: &str) -> u32 {
         let mut hasher = RunningStringHasher::new();
         for c in s.encode_utf16() {

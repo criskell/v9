@@ -1,6 +1,5 @@
 use crate::interpreter::bytecode_register::{Register, RegisterList};
 
-/// `BytecodeRegisterAllocator`
 #[derive(Debug)]
 pub struct BytecodeRegisterAllocator {
     next_register_index: i32,
@@ -15,7 +14,6 @@ impl BytecodeRegisterAllocator {
         }
     }
 
-    /// `BytecodeRegisterAllocator::NewRegister`
     pub fn new_register(&mut self) -> Register {
         let register = Register::new(self.next_register_index);
         self.next_register_index += 1;
@@ -23,7 +21,6 @@ impl BytecodeRegisterAllocator {
         register
     }
 
-    /// `BytecodeRegisterAllocator::NewRegisterList`
     pub fn new_register_list(&mut self, count: i32) -> RegisterList {
         let list = RegisterList::new(Register::new(self.next_register_index), count);
         self.next_register_index += count;
@@ -63,7 +60,6 @@ impl BytecodeRegisterAllocator {
         self.max_register_count
     }
 
-    /// `BytecodeRegisterAllocator::RegisterIsLive`
     #[inline]
     pub fn register_is_live(&self, register: Register) -> bool {
         register.index() < self.next_register_index
