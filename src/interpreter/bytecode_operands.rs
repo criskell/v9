@@ -265,9 +265,18 @@ mod tests {
     #[test]
     fn scaling_widens_scalable_operands_only() {
         // A register index scales with the prefix...
-        assert_eq!(OperandType::Reg.size(OperandScale::Single), OperandSize::Byte);
-        assert_eq!(OperandType::Reg.size(OperandScale::Double), OperandSize::Short);
-        assert_eq!(OperandType::Reg.size(OperandScale::Quadruple), OperandSize::Quad);
+        assert_eq!(
+            OperandType::Reg.size(OperandScale::Single),
+            OperandSize::Byte
+        );
+        assert_eq!(
+            OperandType::Reg.size(OperandScale::Double),
+            OperandSize::Short
+        );
+        assert_eq!(
+            OperandType::Reg.size(OperandScale::Quadruple),
+            OperandSize::Quad
+        );
 
         // ...and so do constant indices and immediates.
         for operand in [
@@ -281,7 +290,10 @@ mod tests {
         }
 
         // A flag byte does not: it is a fixed field, not an index.
-        assert_eq!(OperandType::Flag8.size(OperandScale::Single), OperandSize::Byte);
+        assert_eq!(
+            OperandType::Flag8.size(OperandScale::Single),
+            OperandSize::Byte
+        );
         assert_eq!(
             OperandType::Flag8.size(OperandScale::Quadruple),
             OperandSize::Byte,

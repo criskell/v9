@@ -166,19 +166,41 @@ bytecode_list! {
     CreateEmptyObjectLiteral, Use::WRITE_ACCUMULATOR;
     CreateClosure,            Use::WRITE_ACCUMULATOR, ConstantPoolIndex, FeedbackSlot, Flag8;
 
-    // -- Control flow. The jumps are contiguous so that `IsJump` is a range
-    //    check, and the conditional ones are contiguous within that.
-    JumpLoop,                 Use::CLOBBER_ACCUMULATOR, UImm, Imm, FeedbackSlot;
-    Jump,                     Use::NONE, UImm;
-    JumpIfToBooleanTrue,      Use::READ_ACCUMULATOR, UImm;
-    JumpIfToBooleanFalse,     Use::READ_ACCUMULATOR, UImm;
-    JumpIfTrue,               Use::READ_ACCUMULATOR, UImm;
-    JumpIfFalse,              Use::READ_ACCUMULATOR, UImm;
-    JumpIfNull,               Use::READ_ACCUMULATOR, UImm;
-    JumpIfNotNull,            Use::READ_ACCUMULATOR, UImm;
-    JumpIfUndefined,          Use::READ_ACCUMULATOR, UImm;
-    JumpIfNotUndefined,       Use::READ_ACCUMULATOR, UImm;
-    JumpIfUndefinedOrNull,    Use::READ_ACCUMULATOR, UImm;
+    // -- Control flow.
+    //
+    //    The order is V8's, and every jump predicate below is a range check
+    //    over it. Each conditional jump comes in two forms: one whose operand
+    //    is the offset itself (`UImm`) and one whose operand is a constant
+    //    pool index holding the offset (`ConstantPoolIndex`).
+    //
+    //    The second form is not for jumps that are "too long". It exists
+    //    because a *forward* jump has to be emitted before its distance is
+    //    known, so its operand width must be chosen in advance. The writer
+    //    reserves a constant pool entry to fix that width; if the real offset
+    //    turns out not to fit, it commits the reservation and rewrites the
+    //    bytecode to the `*Constant` form, whose index fits by construction.
+    //    See `bytecode_array_writer`.
+    JumpLoop,                      Use::CLOBBER_ACCUMULATOR, UImm, Imm, FeedbackSlot;
+    Jump,                          Use::NONE, UImm;
+    JumpConstant,                  Use::NONE, ConstantPoolIndex;
+    JumpIfNullConstant,            Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfNotNullConstant,         Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfUndefinedConstant,       Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfNotUndefinedConstant,    Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfUndefinedOrNullConstant, Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfTrueConstant,            Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfFalseConstant,           Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfToBooleanTrueConstant,   Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfToBooleanFalseConstant,  Use::READ_ACCUMULATOR, ConstantPoolIndex;
+    JumpIfToBooleanTrue,           Use::READ_ACCUMULATOR, UImm;
+    JumpIfToBooleanFalse,          Use::READ_ACCUMULATOR, UImm;
+    JumpIfTrue,                    Use::READ_ACCUMULATOR, UImm;
+    JumpIfFalse,                   Use::READ_ACCUMULATOR, UImm;
+    JumpIfNull,                    Use::READ_ACCUMULATOR, UImm;
+    JumpIfNotNull,                 Use::READ_ACCUMULATOR, UImm;
+    JumpIfUndefined,               Use::READ_ACCUMULATOR, UImm;
+    JumpIfNotUndefined,            Use::READ_ACCUMULATOR, UImm;
+    JumpIfUndefinedOrNull,         Use::READ_ACCUMULATOR, UImm;
 
     Return,                   Use::READ_ACCUMULATOR;
     Throw,                    Use::READ_ACCUMULATOR;
@@ -284,16 +306,49 @@ impl Bytecode {
         self >= Bytecode::JumpLoop && self <= Bytecode::JumpIfUndefinedOrNull
     }
 
-    /// `Bytecodes::IsConditionalJump`
+    /// `Bytecodes::IsConditionalJump`, either operand form.
     #[inline]
     pub fn is_conditional_jump(self) -> bool {
+        self >= Bytecode::JumpIfNullConstant && self <= Bytecode::JumpIfUndefinedOrNull
+    }
+
+    /// `Bytecodes::IsConditionalJumpImmediate`
+    #[inline]
+    pub fn is_conditional_jump_immediate(self) -> bool {
         self >= Bytecode::JumpIfToBooleanTrue && self <= Bytecode::JumpIfUndefinedOrNull
+    }
+
+    /// `Bytecodes::IsConditionalJumpConstant`
+    #[inline]
+    pub fn is_conditional_jump_constant(self) -> bool {
+        self >= Bytecode::JumpIfNullConstant && self <= Bytecode::JumpIfToBooleanFalseConstant
     }
 
     /// `Bytecodes::IsUnconditionalJump`
     #[inline]
     pub fn is_unconditional_jump(self) -> bool {
-        matches!(self, Bytecode::JumpLoop | Bytecode::Jump)
+        self >= Bytecode::JumpLoop && self <= Bytecode::JumpConstant
+    }
+
+    /// `Bytecodes::IsJumpImmediate`: the offset is the operand.
+    #[inline]
+    pub fn is_jump_immediate(self) -> bool {
+        matches!(self, Bytecode::Jump | Bytecode::JumpLoop) || self.is_conditional_jump_immediate()
+    }
+
+    /// `Bytecodes::IsJumpConstant`: the operand is a constant pool index
+    /// holding the offset.
+    #[inline]
+    pub fn is_jump_constant(self) -> bool {
+        self >= Bytecode::JumpConstant && self <= Bytecode::JumpIfToBooleanFalseConstant
+    }
+
+    /// `Bytecodes::IsJumpIfToBoolean`: jumps that coerce the accumulator to a
+    /// boolean themselves, so the generator does not have to emit a
+    /// `ToBoolean` before every `if`.
+    #[inline]
+    pub fn is_jump_if_to_boolean(self) -> bool {
+        self >= Bytecode::JumpIfToBooleanTrueConstant && self <= Bytecode::JumpIfToBooleanFalse
     }
 
     /// `Bytecodes::IsForwardJump`: everything but `JumpLoop`, which is the
@@ -302,7 +357,25 @@ impl Bytecode {
     /// interrupts and where to consider tiering up.
     #[inline]
     pub fn is_forward_jump(self) -> bool {
-        self.is_jump() && self != Bytecode::JumpLoop
+        self >= Bytecode::Jump && self <= Bytecode::JumpIfUndefinedOrNull
+    }
+
+    /// `Bytecodes::GetJumpWithConstantOperand`: the `*Constant` form of a
+    /// jump whose offset did not fit in its reserved operand.
+    pub fn jump_with_constant_operand(self) -> Bytecode {
+        match self {
+            Bytecode::Jump => Bytecode::JumpConstant,
+            Bytecode::JumpIfNull => Bytecode::JumpIfNullConstant,
+            Bytecode::JumpIfNotNull => Bytecode::JumpIfNotNullConstant,
+            Bytecode::JumpIfUndefined => Bytecode::JumpIfUndefinedConstant,
+            Bytecode::JumpIfNotUndefined => Bytecode::JumpIfNotUndefinedConstant,
+            Bytecode::JumpIfUndefinedOrNull => Bytecode::JumpIfUndefinedOrNullConstant,
+            Bytecode::JumpIfTrue => Bytecode::JumpIfTrueConstant,
+            Bytecode::JumpIfFalse => Bytecode::JumpIfFalseConstant,
+            Bytecode::JumpIfToBooleanTrue => Bytecode::JumpIfToBooleanTrueConstant,
+            Bytecode::JumpIfToBooleanFalse => Bytecode::JumpIfToBooleanFalseConstant,
+            other => unreachable!("{other} has no constant-operand form"),
+        }
     }
 
     /// `Bytecodes::Returns`
@@ -485,6 +558,16 @@ mod tests {
         let jumps = [
             Bytecode::JumpLoop,
             Bytecode::Jump,
+            Bytecode::JumpConstant,
+            Bytecode::JumpIfNullConstant,
+            Bytecode::JumpIfNotNullConstant,
+            Bytecode::JumpIfUndefinedConstant,
+            Bytecode::JumpIfNotUndefinedConstant,
+            Bytecode::JumpIfUndefinedOrNullConstant,
+            Bytecode::JumpIfTrueConstant,
+            Bytecode::JumpIfFalseConstant,
+            Bytecode::JumpIfToBooleanTrueConstant,
+            Bytecode::JumpIfToBooleanFalseConstant,
             Bytecode::JumpIfToBooleanTrue,
             Bytecode::JumpIfToBooleanFalse,
             Bytecode::JumpIfTrue,
@@ -514,6 +597,50 @@ mod tests {
         assert!(!Bytecode::JumpLoop.is_forward_jump());
         assert!(Bytecode::Jump.is_forward_jump());
         assert!(Bytecode::JumpIfFalse.is_forward_jump());
+
+        // The two operand forms partition the jumps.
+        for bytecode in Bytecode::ALL {
+            if !bytecode.is_jump() {
+                continue;
+            }
+            assert_ne!(
+                bytecode.is_jump_immediate(),
+                bytecode.is_jump_constant(),
+                "{bytecode} must take exactly one of an offset or an index"
+            );
+            let operand = bytecode.operand_type(0);
+            if bytecode.is_jump_constant() {
+                assert_eq!(operand, OperandType::ConstantPoolIndex, "{bytecode}");
+            } else {
+                assert_eq!(operand, OperandType::UImm, "{bytecode}");
+            }
+        }
+
+        // Every immediate conditional jump has a constant counterpart, and
+        // the pair agrees on everything but the operand.
+        for bytecode in Bytecode::ALL {
+            if !bytecode.is_conditional_jump_immediate() && *bytecode != Bytecode::Jump {
+                continue;
+            }
+            let constant = bytecode.jump_with_constant_operand();
+            assert!(constant.is_jump_constant(), "{bytecode} -> {constant}");
+            assert_eq!(
+                constant.implicit_register_use(),
+                bytecode.implicit_register_use(),
+                "{bytecode} and {constant} must agree on the accumulator"
+            );
+            assert_eq!(
+                constant.to_string(),
+                format!("{bytecode}Constant"),
+                "the naming convention is load-bearing for readers"
+            );
+        }
+
+        // The ToBoolean-coercing jumps are their own contiguous run.
+        assert!(Bytecode::JumpIfToBooleanTrue.is_jump_if_to_boolean());
+        assert!(Bytecode::JumpIfToBooleanFalseConstant.is_jump_if_to_boolean());
+        assert!(!Bytecode::JumpIfTrue.is_jump_if_to_boolean());
+        assert!(!Bytecode::Jump.is_jump_if_to_boolean());
     }
 
     #[test]
@@ -599,7 +726,10 @@ mod tests {
             assert_eq!(format!("{bytecode}"), Bytecode::to_string(*bytecode));
         }
         assert_eq!(format!("{}", Bytecode::Add), "Add");
-        assert_eq!(format!("{}", Bytecode::JumpIfToBooleanFalse), "JumpIfToBooleanFalse");
+        assert_eq!(
+            format!("{}", Bytecode::JumpIfToBooleanFalse),
+            "JumpIfToBooleanFalse"
+        );
     }
 
     #[test]

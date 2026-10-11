@@ -379,7 +379,10 @@ mod tests {
 
         assert_eq!(Register::new(0).operand_scale(), OperandScale::Single);
         assert_eq!(Register::new(129).operand_scale(), OperandScale::Double);
-        assert_eq!(Register::new(32_769).operand_scale(), OperandScale::Quadruple);
+        assert_eq!(
+            Register::new(32_769).operand_scale(),
+            OperandScale::Quadruple
+        );
 
         // A parameter encodes as a positive operand, so it leaves a byte one
         // step earlier.
