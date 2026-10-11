@@ -214,7 +214,7 @@ impl crate::execution::isolate::Isolate {
         answer
     }
 
-    fn not_a_constructor_message(&mut self, target: Tagged) -> Tagged {
+    pub(crate) fn not_a_constructor_message(&mut self, target: Tagged) -> Tagged {
         let text = self.to_string(target);
         self.new_string(&format!("{text} is not a constructor"))
             .tagged()
@@ -241,5 +241,21 @@ mod tests {
             JSObject::K_PROPERTIES_OR_HASH_OFFSET
         );
         assert_eq!(JSFunction::K_ELEMENTS_OFFSET, JSObject::K_ELEMENTS_OFFSET);
+    }
+}
+
+impl crate::execution::isolate::Isolate {
+    /// `GetSuperConstructor`
+    pub(crate) fn get_super_constructor(
+        &mut self,
+        active_function: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
+        let Some(object) = active_function.to_strong_heap_object() else {
+            let message = self.not_a_constructor_message(active_function);
+            return Err(Thrown(message));
+        };
+        let map = self.heap.map(object);
+        Ok(crate::objects::map::Map::unchecked_cast(map).prototype(&self.heap))
     }
 }

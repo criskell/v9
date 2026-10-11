@@ -155,6 +155,8 @@ fn shape(expression: &Expression) -> String {
             function.name.as_deref().unwrap_or(""),
             function.parameters.join(", ")
         ),
+        Expression::SuperCallReference { .. } => "super".to_string(),
+        Expression::SuperCallForwardArgs { .. } => "super(...arguments)".to_string(),
         Expression::ClassLiteral { class, .. } => format!(
             "class {}({})",
             class.name.as_deref().unwrap_or(""),

@@ -620,6 +620,10 @@ impl BytecodeGenerator {
             } => self.visit_call(callee, arguments),
             Expression::ObjectLiteral { properties, .. } => self.visit_object_literal(properties),
             Expression::ClassLiteral { class, .. } => self.visit_class_literal(class),
+            Expression::SuperCallReference { .. } => {
+                self.unsupported("`super` outside a call")
+            }
+            Expression::SuperCallForwardArgs { .. } => self.visit_super_call_forward_args(),
             Expression::ArrayLiteral { values, .. } => self.visit_array_literal(values),
             Expression::FunctionLiteral { function, .. } => {
                 let index = self.compile_function(function)?;
@@ -1147,6 +1151,9 @@ impl BytecodeGenerator {
         let mark = self.builder.register_allocator().next_register_index();
 
         match callee {
+            Expression::SuperCallReference { .. } => {
+                self.build_super_call(arguments)?;
+            }
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
                 let callee_register = self.builder.register_allocator().new_register();
@@ -1200,6 +1207,48 @@ impl BytecodeGenerator {
         }
 
         self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::VisitSuperCallForwardArgs`
+    fn visit_super_call_forward_args(&mut self) -> Result<()> {
+        let constructor = self.builder.register_allocator().new_register();
+        self.builder
+            .load_accumulator_with_register(Register::function_closure())
+            .get_super_constructor(constructor)
+            .construct_forward_all_args(constructor);
+        self.builder
+            .load_accumulator_with_register(Register::receiver());
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::BuildSuperCall`
+    fn build_super_call(&mut self, arguments: &[Expression]) -> Result<()> {
+        let constructor = self.builder.register_allocator().new_register();
+        self.builder
+            .load_accumulator_with_register(Register::function_closure())
+            .get_super_constructor(constructor);
+
+        let mut args = self
+            .builder
+            .register_allocator()
+            .new_growable_register_list();
+        let receiver = self
+            .builder
+            .register_allocator()
+            .grow_register_list(&mut args);
+        self.builder.move_register(Register::receiver(), receiver);
+        for argument in arguments {
+            self.visit_for_accumulator_value(argument)?;
+            let register = self
+                .builder
+                .register_allocator()
+                .grow_register_list(&mut args);
+            self.builder.store_accumulator_in_register(register);
+        }
+        self.builder.call_property(constructor, args);
+        self.builder
+            .load_accumulator_with_register(Register::receiver());
         Ok(())
     }
 

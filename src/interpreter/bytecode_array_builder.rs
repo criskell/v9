@@ -549,6 +549,20 @@ impl BytecodeArrayBuilder {
         )
     }
 
+    /// `BytecodeArrayBuilder::ConstructForwardAllArgs`
+    pub fn construct_forward_all_args(&mut self, constructor: Register) -> &mut Self {
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
+        self.output(
+            Bytecode::ConstructForwardAllArgs,
+            &[constructor.to_operand(), slot],
+        )
+    }
+
+    /// `BytecodeArrayBuilder::GetSuperConstructor`
+    pub fn get_super_constructor(&mut self, out: Register) -> &mut Self {
+        self.output(Bytecode::GetSuperConstructor, &[out.to_operand()])
+    }
+
     pub fn call_property(&mut self, callee: Register, args: RegisterList) -> &mut Self {
         debug_assert!(args.register_count() >= 1);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);

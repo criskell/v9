@@ -208,6 +208,16 @@ pub enum Expression {
         position: Position,
     },
 
+    /// `SuperCallReference`
+    SuperCallReference {
+        position: Position,
+    },
+
+    /// `SuperCallForwardArgs`
+    SuperCallForwardArgs {
+        position: Position,
+    },
+
     Sequence {
         expressions: Vec<Expression>,
         position: Position,
@@ -240,6 +250,8 @@ impl Expression {
             | Expression::ArrayLiteral { position, .. }
             | Expression::FunctionLiteral { position, .. }
             | Expression::ClassLiteral { position, .. }
+            | Expression::SuperCallReference { position }
+            | Expression::SuperCallForwardArgs { position }
             | Expression::Sequence { position, .. } => *position,
         }
     }

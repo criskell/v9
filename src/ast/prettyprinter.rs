@@ -325,6 +325,10 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
                 print_expression(out, value, depth + 1);
             }
         }
+        Expression::SuperCallReference { .. } => out.push_str("SUPER CALL REFERENCE\n"),
+        Expression::SuperCallForwardArgs { .. } => {
+            out.push_str("SUPER CALL FORWARD ARGS\n")
+        }
         Expression::FunctionLiteral { function, .. } => print_function(out, function, depth),
         Expression::ClassLiteral { class, .. } => {
             out.push_str(&format!(

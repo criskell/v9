@@ -255,11 +255,6 @@ fn a_class_declaration_without_a_name_is_refused() {
 }
 
 #[test]
-fn extends_is_reported_as_unimplemented() {
-    assert!(error("class B {} class C extends B {} new C();").contains("extends"));
-}
-
-#[test]
 fn a_class_survives_a_collection() {
     assert_eq!(
         evaluate(
@@ -283,5 +278,171 @@ fn many_instances_share_one_map() {
              total"
         ),
         "1225"
+    );
+}
+
+#[test]
+fn a_derived_class_inherits_methods() {
+    assert_eq!(
+        evaluate("class A { m() { return 1; } } class B extends A {} new B().m()"),
+        "1"
+    );
+}
+
+#[test]
+fn a_derived_class_may_override_a_method() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return 1; } }
+             class B extends A { m() { return 2; } }
+             new B().m()"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn super_runs_the_parent_constructor() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor(v) { this.v = v; } }
+             class B extends A { constructor(v) { super(v * 2); } }
+             new B(5).v"
+        ),
+        "10"
+    );
+}
+
+#[test]
+fn super_leaves_room_for_the_derived_constructor() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor() { this.a = 1; } }
+             class B extends A { constructor() { super(); this.b = 2; } }
+             var names = '';
+             for (var k in new B()) { names = names + k; }
+             names"
+        ),
+        "ab"
+    );
+}
+
+#[test]
+fn a_default_derived_constructor_forwards_its_arguments() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor(v) { this.v = v; } doubled() { return this.v * 2; } }
+             class B extends A {}
+             var b = new B(21);
+             b.v + ':' + b.doubled()"
+        ),
+        "21:42"
+    );
+}
+
+#[test]
+fn a_default_derived_constructor_forwards_several_arguments() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor(x, y) { this.x = x; this.y = y; } }
+             class B extends A {}
+             var b = new B(3, 4);
+             b.x + ':' + b.y"
+        ),
+        "3:4"
+    );
+}
+
+#[test]
+fn an_instance_of_a_derived_class_reaches_the_whole_chain() {
+    assert_eq!(
+        evaluate(
+            "class A { a() { return 'a'; } }
+             class B extends A { b() { return 'b'; } }
+             class C extends B { c() { return 'c'; } }
+             var o = new C();
+             o.a() + o.b() + o.c()"
+        ),
+        "abc"
+    );
+}
+
+#[test]
+fn static_methods_are_inherited() {
+    assert_eq!(
+        evaluate("class A { static s() { return 's'; } } class B extends A {} B.s()"),
+        "s"
+    );
+}
+
+#[test]
+fn an_inherited_accessor_runs_with_the_derived_instance() {
+    assert_eq!(
+        evaluate(
+            "class A { get doubled() { return this.v * 2; } }
+             class B extends A { constructor() { super(); this.v = 4; } }
+             new B().doubled"
+        ),
+        "8"
+    );
+}
+
+#[test]
+fn the_derived_prototype_still_points_at_its_own_class() {
+    assert_eq!(
+        evaluate("class A {} class B extends A {} B.prototype.constructor === B"),
+        "true"
+    );
+}
+
+#[test]
+fn inherited_methods_are_not_enumerable() {
+    assert_eq!(
+        evaluate(
+            "class A { m() {} } class B extends A { n() {} }
+             var names = '';
+             for (var k in new B()) { names = names + k; }
+             '[' + names + ']'"
+        ),
+        "[]"
+    );
+}
+
+#[test]
+fn extending_a_non_constructor_is_refused() {
+    assert!(error("class B extends 5 {} new B();").contains("not a constructor"));
+}
+
+#[test]
+fn extending_a_plain_object_is_refused() {
+    assert!(error("var o = {}; class B extends o {} new B();").contains("not a constructor"));
+}
+
+#[test]
+fn extending_null_gives_an_object_with_no_prototype() {
+    assert_eq!(
+        evaluate("class B extends null { constructor() { this.v = 1; } } new B().v"),
+        "1"
+    );
+}
+
+#[test]
+fn super_outside_a_call_is_refused() {
+    assert!(error("class A {} class B extends A { m() { return super.m(); } }")
+        .contains("super property access"));
+}
+
+#[test]
+fn a_hierarchy_survives_a_collection() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor(v) { this.v = v; } doubled() { return this.v * 2; } }
+             class B extends A { tripled() { return this.v * 3; } }
+             var b = new B(7);
+             var filler = 0;
+             for (var i = 0; i < 400; i = i + 1) { filler = { a: i, b: [i, i, i] }; }
+             b.doubled() + ':' + b.tripled()"
+        ),
+        "14:21"
     );
 }

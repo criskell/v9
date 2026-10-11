@@ -108,6 +108,8 @@ bytecode_list! {
     CallProperty,             Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
     CallUndefinedReceiver,    Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
     CallRuntime,              Use::WRITE_ACCUMULATOR, RuntimeId, RegList, RegCount;
+    GetSuperConstructor,      Use::READ_ACCUMULATOR, RegOut;
+    ConstructForwardAllArgs,  Use::READ_WRITE_ACCUMULATOR, Reg, FeedbackSlot;
 
     Construct,                Use::READ_WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
 

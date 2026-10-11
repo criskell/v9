@@ -52,6 +52,9 @@ impl Isolate {
         let params_count = bytecode.parameter_count(&self.heap) as usize;
         let register_count = bytecode.register_count(&self.heap) as usize;
 
+        let argument_count = args.len() + 1;
+        let params_count = params_count.max(argument_count);
+
         let params_base = self.stack.len();
         self.stack.push(receiver);
         let undefined = self.undefined_value();
@@ -93,6 +96,11 @@ impl Isolate {
             None => Tagged::ZERO,
         };
         self.write_register(&frame, Register::feedback_vector(), vector);
+        self.write_register(
+            &frame,
+            Register::argument_count(),
+            Smi::from_int(argument_count as i32),
+        );
 
         self.call_depth += 1;
         let result = self.dispatch(&frame);
@@ -707,6 +715,39 @@ impl Isolate {
                     }
 
                     let value = self.call_runtime(function_id, &arguments)?;
+                    self.set_accumulator(frame, value);
+                }
+
+                Bytecode::GetSuperConstructor => {
+                    let active_function = self.accumulator(frame);
+                    let out = register_operand(self, 0);
+                    let value = self.get_super_constructor(active_function)?;
+                    self.write_register(frame, out, value);
+                }
+
+                Bytecode::ConstructForwardAllArgs => {
+                    let constructor = self.read_register(frame, register_operand(self, 0));
+                    let argument_count =
+                        Smi::to_int(self.read_register(frame, Register::argument_count()));
+                    let mut arguments = Vec::with_capacity(argument_count as usize);
+                    for index in 1..argument_count {
+                        let register = Register::from_parameter_index(index);
+                        arguments.push(self.read_register(frame, register));
+                    }
+                    let receiver = self.read_register(frame, Register::receiver());
+
+                    let Some(callee_object) = constructor.to_strong_heap_object() else {
+                        let message = self.not_a_constructor_message(constructor);
+                        return Err(Thrown(message));
+                    };
+                    if !crate::objects::instance_type::is_callable(
+                        self.heap.instance_type(callee_object),
+                    ) {
+                        let message = self.not_a_constructor_message(constructor);
+                        return Err(Thrown(message));
+                    }
+                    let callee_function = JSFunction::unchecked_cast(callee_object);
+                    let value = self.execute(callee_function, receiver, &arguments)?;
                     self.set_accumulator(frame, value);
                 }
 

@@ -1067,6 +1067,14 @@ impl Parser {
                     position,
                 })
             }
+            Token::Super => {
+                self.consume(Token::Super);
+                if self.peek() != Token::LeftParen {
+                    return Err(self
+                        .unexpected_token_with_hint("super property access is not implemented"));
+                }
+                Ok(Expression::SuperCallReference { position })
+            }
             Token::Class => {
                 let class = self.parse_class_literal()?;
                 Ok(Expression::ClassLiteral {
@@ -1218,7 +1226,9 @@ impl Parser {
 
         let constructor = match constructor {
             Some(constructor) => constructor,
-            None => self.default_constructor(name.clone(), position)?,
+            None => {
+                self.default_constructor(name.clone(), extends.is_some(), position)?
+            }
         };
 
         Ok(ClassLiteral {
@@ -1280,16 +1290,25 @@ impl Parser {
     fn default_constructor(
         &mut self,
         name: Option<String>,
+        call_super: bool,
         position: Position,
     ) -> Result<FunctionLiteral> {
         self.function_state.push(FunctionState::default());
         self.scope_chain.push(ScopeKind::Function);
+        let body = if call_super {
+            vec![Statement::Return {
+                value: Some(Expression::SuperCallForwardArgs { position }),
+                position,
+            }]
+        } else {
+            Vec::new()
+        };
         let scope = self.scope_chain.pop();
         let state = self.function_state.pop().expect("the function state");
         Ok(FunctionLiteral {
             name,
             parameters: Vec::new(),
-            body: Vec::new(),
+            body,
             scope,
             hoisted_functions: state.hoisted_functions,
             position,
