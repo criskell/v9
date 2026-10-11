@@ -1,0 +1,13 @@
+[package]
+name = "vx"
+version = "0.1.0"
+edition = "2021"
+description = "A JavaScript engine in Rust, following V8's architecture. Experiment."
+
+[dependencies]
+# Intentionally empty: everything here is written by hand, std only.
+
+[profile.release]
+debug = true
+panic = "abort"
+codegen-units = 1
