@@ -1,0 +1,449 @@
+use crate::execution::isolate::Isolate;
+use crate::heap::heap::Heap;
+use crate::objects::fixed_array::FixedArray;
+use crate::objects::hash_table::{HashTableBase, HashTableShape, K_NOT_FOUND};
+use crate::objects::property_details::PropertyDetails;
+use crate::objects::smi::Smi;
+use crate::objects::tagged::Tagged;
+
+object_type!(
+    /// `NumberDictionary`
+    NumberDictionary
+);
+
+/// `NumberDictionaryShape`
+pub const NUMBER_DICTIONARY_SHAPE: HashTableShape = HashTableShape {
+    prefix_size: 1,
+    entry_size: 3,
+};
+
+impl NumberDictionary {
+    pub const K_ENTRY_KEY_INDEX: i32 = 0;
+    pub const K_ENTRY_VALUE_INDEX: i32 = 1;
+    pub const K_ENTRY_DETAILS_INDEX: i32 = 2;
+
+    pub const K_MAX_NUMBER_KEY_INDEX: i32 = HashTableBase::K_PREFIX_START_INDEX;
+
+    // Bit masks.
+    pub const K_REQUIRES_SLOW_ELEMENTS_MASK: i32 = 1;
+    pub const K_REQUIRES_SLOW_ELEMENTS_TAG_SIZE: i32 = 1;
+    pub const K_REQUIRES_SLOW_ELEMENTS_LIMIT: u32 = (1 << 29) - 1;
+
+    // JSObjects prefer dictionary elements if the dictionary saves this much
+    // memory compared to a fast elements backing store.
+    pub const K_PREFER_FAST_ELEMENTS_SIZE_FACTOR: u32 = 3;
+
+    #[inline]
+    pub fn as_hash_table(self) -> HashTableBase {
+        HashTableBase::unchecked_cast(self.object())
+    }
+
+    #[inline]
+    pub fn as_fixed_array(self) -> FixedArray {
+        FixedArray::unchecked_cast(self.object())
+    }
+
+    #[inline]
+    pub fn capacity(self, heap: &Heap) -> u32 {
+        self.as_hash_table().capacity(heap)
+    }
+
+    #[inline]
+    pub fn number_of_elements(self, heap: &Heap) -> i32 {
+        self.as_hash_table().number_of_elements(heap)
+    }
+
+    /// `NumberDictionaryBaseShape::Hash`
+    #[inline]
+    pub fn hash(key: u32) -> u32 {
+        crate::utils::utils::compute_seeded_hash(key, 0)
+    }
+
+    /// `NumberDictionaryBaseShape::IsMatch`
+    #[inline]
+    pub fn is_match(heap: &Heap, key: u32, other: Tagged) -> bool {
+        match Smi::try_to_int(other) {
+            Some(value) => value >= 0 && value as u32 == key,
+            None => match crate::objects::heap_number::number_value(heap, other) {
+                Some(value) => value == key as f64,
+                None => false,
+            },
+        }
+    }
+
+    /// `Dictionary::KeyAt`
+    #[inline]
+    pub fn key_at(self, heap: &Heap, entry: i32) -> Tagged {
+        self.as_hash_table()
+            .key_at(heap, NUMBER_DICTIONARY_SHAPE, entry)
+    }
+
+    /// `Dictionary::ValueAt`
+    #[inline]
+    pub fn value_at(self, heap: &Heap, entry: i32) -> Tagged {
+        self.as_fixed_array().get(
+            heap,
+            NUMBER_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_VALUE_INDEX,
+        )
+    }
+
+    /// `Dictionary::ValueAtPut`
+    #[inline]
+    pub fn value_at_put(self, heap: &mut Heap, entry: i32, value: Tagged) {
+        self.as_fixed_array().set(
+            heap,
+            NUMBER_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_VALUE_INDEX,
+            value,
+        );
+    }
+
+    /// `Dictionary::DetailsAt`
+    #[inline]
+    pub fn details_at(self, heap: &Heap, entry: i32) -> PropertyDetails {
+        let raw = self.as_fixed_array().get(
+            heap,
+            NUMBER_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_DETAILS_INDEX,
+        );
+        PropertyDetails::from_raw(Smi::to_int(raw) as u32)
+    }
+
+    /// `Dictionary::DetailsAtPut`
+    #[inline]
+    pub fn details_at_put(self, heap: &mut Heap, entry: i32, details: PropertyDetails) {
+        self.as_fixed_array().set(
+            heap,
+            NUMBER_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_DETAILS_INDEX,
+            Smi::from_int(details.raw() as i32),
+        );
+    }
+
+    /// `NumberDictionary::requires_slow_elements`
+    #[inline]
+    pub fn requires_slow_elements(self, heap: &Heap) -> bool {
+        let max_index_object = self
+            .as_fixed_array()
+            .get(heap, Self::K_MAX_NUMBER_KEY_INDEX);
+        match Smi::try_to_int(max_index_object) {
+            Some(value) => (value & Self::K_REQUIRES_SLOW_ELEMENTS_MASK) != 0,
+            None => false,
+        }
+    }
+
+    /// `NumberDictionary::set_requires_slow_elements`
+    #[inline]
+    pub fn set_requires_slow_elements(self, heap: &mut Heap) {
+        self.as_fixed_array().set(
+            heap,
+            Self::K_MAX_NUMBER_KEY_INDEX,
+            Smi::from_int(Self::K_REQUIRES_SLOW_ELEMENTS_MASK),
+        );
+    }
+
+    /// `NumberDictionary::max_number_key`
+    // Get the value of the max number key that has been added to this
+    // dictionary. max_number_key can only be called if requires_slow_elements
+    // returns false.
+    #[inline]
+    pub fn max_number_key(self, heap: &Heap) -> u32 {
+        debug_assert!(!self.requires_slow_elements(heap));
+        let max_index_object = self
+            .as_fixed_array()
+            .get(heap, Self::K_MAX_NUMBER_KEY_INDEX);
+        match Smi::try_to_int(max_index_object) {
+            Some(value) => (value as u32) >> Self::K_REQUIRES_SLOW_ELEMENTS_TAG_SIZE,
+            None => 0,
+        }
+    }
+
+    /// `NumberDictionary::UpdateMaxNumberKey`
+    pub fn update_max_number_key(self, heap: &mut Heap, key: u32) {
+        // If the dictionary requires slow elements an element has already
+        // been added at a high index.
+        if self.requires_slow_elements(heap) {
+            return;
+        }
+        if key > Self::K_REQUIRES_SLOW_ELEMENTS_LIMIT {
+            self.set_requires_slow_elements(heap);
+            return;
+        }
+        // Update max key value.
+        if key > self.max_number_key(heap) {
+            self.as_fixed_array().set(
+                heap,
+                Self::K_MAX_NUMBER_KEY_INDEX,
+                Smi::from_int((key << Self::K_REQUIRES_SLOW_ELEMENTS_TAG_SIZE) as i32),
+            );
+        }
+    }
+
+    /// `HashTable::FindEntry`
+    // Find entry for key otherwise return kNotFound.
+    pub fn find_entry(self, heap: &Heap, key: u32) -> i32 {
+        let capacity = self.capacity(heap);
+        if capacity == 0 {
+            return K_NOT_FOUND;
+        }
+        let hash = Self::hash(key);
+        let mut count = 1;
+        let mut entry = HashTableBase::first_probe(hash, capacity);
+        loop {
+            let element = self.key_at(heap, entry as i32);
+            // Empty entry.
+            if heap.is_undefined(element) {
+                return K_NOT_FOUND;
+            }
+            if !heap.is_the_hole(element) && Self::is_match(heap, key, element) {
+                return entry as i32;
+            }
+            entry = HashTableBase::next_probe(entry, count, capacity);
+            count += 1;
+        }
+    }
+
+    /// `Dictionary::ClearEntry`
+    pub fn clear_entry(self, heap: &mut Heap, entry: i32) {
+        let the_hole = heap.the_hole_value;
+        self.as_hash_table()
+            .set_key_at(heap, NUMBER_DICTIONARY_SHAPE, entry, the_hole);
+        self.value_at_put(heap, entry, the_hole);
+        self.details_at_put(heap, entry, PropertyDetails::from_raw(0));
+    }
+
+    /// `HashTable::FindInsertionEntry`
+    pub fn find_insertion_entry(self, heap: &Heap, hash: u32) -> i32 {
+        let capacity = self.capacity(heap);
+        let mut count = 1;
+        let mut entry = HashTableBase::first_probe(hash, capacity);
+        loop {
+            let element = self.key_at(heap, entry as i32);
+            if !HashTableBase::is_key(heap, element) {
+                return entry as i32;
+            }
+            entry = HashTableBase::next_probe(entry, count, capacity);
+            count += 1;
+        }
+    }
+}
+
+impl Isolate {
+    /// `Factory::NewNumberDictionary`
+    pub fn new_number_dictionary(&mut self, at_least_space_for: u32) -> NumberDictionary {
+        let capacity = HashTableBase::compute_capacity(at_least_space_for);
+        let length = NUMBER_DICTIONARY_SHAPE.size_for(capacity);
+        let map = self
+            .roots
+            .number_dictionary_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.heap.allocate_raw_or_fail(
+            FixedArray::size_for(length) as usize,
+            crate::heap::heap::AllocationType::Young,
+        );
+        self.heap.set_map(object, map);
+        let array = FixedArray::unchecked_cast(object);
+        array.set_length(&mut self.heap, length);
+        let undefined = self.undefined_value();
+        for index in 0..length {
+            array.set(&mut self.heap, index, undefined);
+        }
+        let dictionary = NumberDictionary::unchecked_cast(object);
+        dictionary
+            .as_hash_table()
+            .set_number_of_elements(&mut self.heap, 0);
+        dictionary
+            .as_hash_table()
+            .set_number_of_deleted_elements(&mut self.heap, 0);
+        dictionary
+            .as_hash_table()
+            .set_capacity(&mut self.heap, capacity);
+        dictionary.as_fixed_array().set(
+            &mut self.heap,
+            NumberDictionary::K_MAX_NUMBER_KEY_INDEX,
+            Smi::from_int(0),
+        );
+        dictionary
+    }
+
+    /// `Dictionary::Add`
+    pub fn dictionary_add(
+        &mut self,
+        dictionary: NumberDictionary,
+        key: u32,
+        value: Tagged,
+        details: PropertyDetails,
+    ) -> NumberDictionary {
+        debug_assert_eq!(dictionary.find_entry(&self.heap, key), K_NOT_FOUND);
+
+        // Check whether the dictionary should be extended.
+        let dictionary = self.dictionary_ensure_capacity(dictionary, 1);
+
+        let hash = NumberDictionary::hash(key);
+        let entry = dictionary.find_insertion_entry(&self.heap, hash);
+        let key_object = self.new_number(key as f64);
+        dictionary.as_hash_table().set_key_at(
+            &mut self.heap,
+            NUMBER_DICTIONARY_SHAPE,
+            entry,
+            key_object,
+        );
+        dictionary.value_at_put(&mut self.heap, entry, value);
+        dictionary.details_at_put(&mut self.heap, entry, details);
+        dictionary.as_hash_table().element_added(&mut self.heap);
+        dictionary.update_max_number_key(&mut self.heap, key);
+        dictionary
+    }
+
+    /// `Dictionary::Set`
+    pub fn dictionary_set(
+        &mut self,
+        dictionary: NumberDictionary,
+        key: u32,
+        value: Tagged,
+        details: PropertyDetails,
+    ) -> NumberDictionary {
+        let entry = dictionary.find_entry(&self.heap, key);
+        if entry == K_NOT_FOUND {
+            return self.dictionary_add(dictionary, key, value, details);
+        }
+        dictionary.value_at_put(&mut self.heap, entry, value);
+        dictionary.details_at_put(&mut self.heap, entry, details);
+        dictionary
+    }
+
+    /// `HashTable::EnsureCapacity`
+    fn dictionary_ensure_capacity(
+        &mut self,
+        dictionary: NumberDictionary,
+        number_of_additional: u32,
+    ) -> NumberDictionary {
+        if dictionary
+            .as_hash_table()
+            .has_sufficient_capacity_to_add(&self.heap, number_of_additional as i32)
+        {
+            return dictionary;
+        }
+        let at_least_space_for =
+            dictionary.number_of_elements(&self.heap) as u32 + number_of_additional;
+        self.dictionary_rehash(dictionary, at_least_space_for)
+    }
+
+    fn dictionary_rehash(
+        &mut self,
+        dictionary: NumberDictionary,
+        at_least_space_for: u32,
+    ) -> NumberDictionary {
+        let old_capacity = dictionary.capacity(&self.heap);
+        self.handles.push(dictionary.tagged());
+        let fresh = self.new_number_dictionary(at_least_space_for);
+        let dictionary = NumberDictionary::unchecked_cast(
+            self.handles.pop().unwrap().to_strong_heap_object().unwrap(),
+        );
+
+        for entry in 0..old_capacity as i32 {
+            let key = dictionary.key_at(&self.heap, entry);
+            if !HashTableBase::is_key(&self.heap, key) {
+                continue;
+            }
+            let Some(index) = self.to_array_index(key) else {
+                continue;
+            };
+            let value = dictionary.value_at(&self.heap, entry);
+            let details = dictionary.details_at(&self.heap, entry);
+            let hash = NumberDictionary::hash(index);
+            let target = fresh.find_insertion_entry(&self.heap, hash);
+            fresh
+                .as_hash_table()
+                .set_key_at(&mut self.heap, NUMBER_DICTIONARY_SHAPE, target, key);
+            fresh.value_at_put(&mut self.heap, target, value);
+            fresh.details_at_put(&mut self.heap, target, details);
+            fresh.as_hash_table().element_added(&mut self.heap);
+            fresh.update_max_number_key(&mut self.heap, index);
+        }
+        fresh
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::property_details::{default_data_field, Representation};
+
+    fn details() -> PropertyDetails {
+        default_data_field(0, Representation::Tagged)
+    }
+
+    #[test]
+    fn a_key_can_be_found_after_it_is_added() {
+        let mut isolate = Isolate::new();
+        let mut dictionary = isolate.new_number_dictionary(4);
+        for key in [0u32, 1, 7, 1000, 1_000_000] {
+            dictionary =
+                isolate.dictionary_add(dictionary, key, Smi::from_int(key as i32 * 2), details());
+        }
+        for key in [0u32, 1, 7, 1000, 1_000_000] {
+            let entry = dictionary.find_entry(&isolate.heap, key);
+            assert_ne!(entry, K_NOT_FOUND, "key {key} should be present");
+            assert_eq!(
+                Smi::to_int(dictionary.value_at(&isolate.heap, entry)),
+                key as i32 * 2
+            );
+        }
+        assert_eq!(dictionary.find_entry(&isolate.heap, 5), K_NOT_FOUND);
+        assert_eq!(dictionary.number_of_elements(&isolate.heap), 5);
+    }
+
+    #[test]
+    fn the_table_grows_and_keeps_every_key() {
+        let mut isolate = Isolate::new();
+        let mut dictionary = isolate.new_number_dictionary(4);
+        let initial_capacity = dictionary.capacity(&isolate.heap);
+        for key in 0..200u32 {
+            dictionary =
+                isolate.dictionary_add(dictionary, key * 7, Smi::from_int(key as i32), details());
+        }
+        assert!(dictionary.capacity(&isolate.heap) > initial_capacity);
+        assert_eq!(dictionary.number_of_elements(&isolate.heap), 200);
+        for key in 0..200u32 {
+            let entry = dictionary.find_entry(&isolate.heap, key * 7);
+            assert_ne!(entry, K_NOT_FOUND, "key {} lost in a rehash", key * 7);
+            assert_eq!(
+                Smi::to_int(dictionary.value_at(&isolate.heap, entry)),
+                key as i32
+            );
+        }
+    }
+
+    #[test]
+    fn setting_an_existing_key_replaces_it_rather_than_growing() {
+        let mut isolate = Isolate::new();
+        let mut dictionary = isolate.new_number_dictionary(4);
+        dictionary = isolate.dictionary_add(dictionary, 3, Smi::from_int(1), details());
+        dictionary = isolate.dictionary_set(dictionary, 3, Smi::from_int(2), details());
+        assert_eq!(dictionary.number_of_elements(&isolate.heap), 1);
+        let entry = dictionary.find_entry(&isolate.heap, 3);
+        assert_eq!(Smi::to_int(dictionary.value_at(&isolate.heap, entry)), 2);
+    }
+
+    #[test]
+    fn a_very_high_index_forces_slow_elements_forever() {
+        let mut isolate = Isolate::new();
+        let mut dictionary = isolate.new_number_dictionary(4);
+        dictionary = isolate.dictionary_add(dictionary, 5, Smi::from_int(1), details());
+        assert!(!dictionary.requires_slow_elements(&isolate.heap));
+        assert_eq!(dictionary.max_number_key(&isolate.heap), 5);
+
+        dictionary = isolate.dictionary_add(
+            dictionary,
+            NumberDictionary::K_REQUIRES_SLOW_ELEMENTS_LIMIT + 1,
+            Smi::from_int(2),
+            details(),
+        );
+        assert!(dictionary.requires_slow_elements(&isolate.heap));
+
+        dictionary = isolate.dictionary_add(dictionary, 6, Smi::from_int(3), details());
+        assert!(
+            dictionary.requires_slow_elements(&isolate.heap),
+            "a later low index must not undo it"
+        );
+    }
+}

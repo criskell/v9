@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod base;
 pub mod builtins;
 pub mod common;
 pub mod execution;
@@ -11,3 +12,4 @@ pub mod objects;
 pub mod parsing;
 pub mod roots;
 pub mod strings;
+pub mod utils;

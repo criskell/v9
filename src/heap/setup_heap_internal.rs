@@ -28,6 +28,7 @@ impl Isolate {
         self.roots.descriptor_array_map = self.new_bare_map(DESCRIPTOR_ARRAY_TYPE, 0).tagged();
         self.roots.fixed_array_map = self.new_bare_map(FIXED_ARRAY_TYPE, 0).tagged();
         self.roots.fixed_double_array_map = self.new_bare_map(FIXED_DOUBLE_ARRAY_TYPE, 0).tagged();
+        self.roots.number_dictionary_map = self.new_bare_map(NUMBER_DICTIONARY_TYPE, 0).tagged();
         self.roots.property_array_map = self.new_bare_map(PROPERTY_ARRAY_TYPE, 0).tagged();
         self.roots.transition_array_map = self.new_bare_map(TRANSITION_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_vector_map = self.new_bare_map(FEEDBACK_VECTOR_TYPE, 0).tagged();
@@ -112,6 +113,7 @@ impl Isolate {
             .new_oddball(OddballKind::TheHole, "hole", f64::NAN, "undefined")
             .tagged();
         self.heap.the_hole_value = self.roots.the_hole_value;
+        self.heap.undefined_value = self.roots.undefined_value;
         self.roots.uninitialized_value = self
             .new_oddball(
                 OddballKind::Uninitialized,
@@ -136,6 +138,9 @@ impl Isolate {
             let map = self.new_js_array_map(kind);
             self.roots.set_initial_js_array_map(kind, map.tagged());
         }
+        self.roots.js_array_dictionary_elements_map = self
+            .new_js_array_map(ElementsKind::DictionaryElements)
+            .tagged();
         self.roots.js_global_object_map = self
             .new_js_object_map(JS_GLOBAL_OBJECT_TYPE, Map::K_INITIAL_INOBJECT_SLACK)
             .tagged();

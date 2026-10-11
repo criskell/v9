@@ -37,7 +37,7 @@ impl Isolate {
                 visit(oddball.field(Oddball::K_TYPE_OF_OFFSET));
             }
 
-            it::FIXED_ARRAY_TYPE => {
+            it::FIXED_ARRAY_TYPE | it::NUMBER_DICTIONARY_TYPE => {
                 let array = FixedArray::unchecked_cast(object);
                 for i in 0..array.length(&self.heap) {
                     visit(array.element_address(i));

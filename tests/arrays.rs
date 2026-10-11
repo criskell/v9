@@ -216,6 +216,102 @@ fn an_array_survives_a_collection_with_its_elements() {
 }
 
 #[test]
+fn a_sparse_array_goes_to_dictionary_elements() {
+    // kMaxGap is 1024: a gap wider than that stops being worth storing as
+    // holes. Without this the backing store would be a million slots.
+    assert_eq!(
+        kind_of("var a = [1]; a[1000000] = 2; a"),
+        DictionaryElements
+    );
+    assert_eq!(
+        kind_of("var a = [1]; a[1023] = 2; a"),
+        HoleySmiElements,
+        "a gap inside kMaxGap stays fast"
+    );
+}
+
+#[test]
+fn a_dictionary_array_still_reads_and_writes() {
+    assert_eq!(evaluate("var a = [1]; a[1000000] = 2; a[0]"), "1");
+    assert_eq!(evaluate("var a = [1]; a[1000000] = 2; a[1000000]"), "2");
+    assert_eq!(evaluate("var a = [1]; a[1000000] = 2; a[500]"), "undefined");
+    assert_eq!(evaluate("var a = [1]; a[1000000] = 2; a.length"), "1000001");
+    assert_eq!(
+        evaluate("var a = [1]; a[1000000] = 2; a[1000000] = 9; a[1000000]"),
+        "9",
+        "a second write to a key already in the dictionary replaces it"
+    );
+}
+
+#[test]
+fn the_dictionary_holds_only_what_was_written() {
+    let (isolate, object) = run("var a = [1]; a[1000000] = 2; a");
+    let accessor = ElementsAccessor::for_kind(DictionaryElements);
+    assert_eq!(
+        accessor.number_of_elements(&isolate.heap, object),
+        2,
+        "two writes, two entries -- not a million"
+    );
+    let capacity = accessor.get_capacity(&isolate.heap, object.elements(&isolate.heap));
+    assert!(capacity < 64, "capacity {capacity} should be a small table");
+}
+
+#[test]
+fn filling_a_dictionary_array_in_comes_back_to_fast_elements() {
+    // ShouldConvertToFastElements: once the dictionary stops saving 50% of
+    // the space a dense store would take, it is worth going back.
+    let (isolate, object) = run("var a = [];
+         a[2000] = 1;
+         var i = 0;
+         while (i < 2000) { a[i] = i; i = i + 1; }
+         a");
+    assert!(
+        !vx::objects::elements_kind::is_dictionary_elements_kind(
+            object.get_elements_kind(&isolate.heap)
+        ),
+        "a dense array should not still be a dictionary: {}",
+        object.get_elements_kind(&isolate.heap)
+    );
+    let array = JSArray::unchecked_cast(object.object());
+    assert_eq!(array.length_value(&isolate.heap), 2001);
+}
+
+#[test]
+fn truncating_a_dictionary_array_drops_the_entries_above_the_length() {
+    assert_eq!(
+        evaluate("var a = []; a[2000] = 7; a.length = 1; a.length"),
+        "1"
+    );
+    assert_eq!(
+        evaluate("var a = []; a[2000] = 7; a[0] = 1; a.length = 1; a[2000]"),
+        "undefined"
+    );
+    assert_eq!(
+        evaluate("var a = []; a[2000] = 7; a[0] = 1; a.length = 1; a[0]"),
+        "1",
+        "what is below the new length survives"
+    );
+}
+
+#[test]
+fn a_dictionary_array_survives_a_collection() {
+    let mut isolate = Isolate::new();
+    isolate.setup_global_object();
+    let value = isolate
+        .run_script("var a = [1]; a[1000000] = 2; a")
+        .expect("runs");
+    isolate.handles.push(value);
+    let stats = isolate.collect_garbage();
+    assert!(stats.objects_evacuated > 0);
+    let moved = isolate.handles.pop().unwrap();
+    let object = JSObject::unchecked_cast(moved.to_strong_heap_object().unwrap());
+    assert_eq!(object.get_elements_kind(&isolate.heap), DictionaryElements);
+    let accessor = ElementsAccessor::for_kind(DictionaryElements);
+    assert_eq!(accessor.number_of_elements(&isolate.heap, object), 2);
+    assert!(accessor.has_element(&isolate.heap, object, 1000000));
+}
+
+#[test]
 fn a_double_whose_bits_look_like_a_pointer_is_not_traced() {
     // The reason a FixedDoubleArray needs its own instance type: its
     // contents are raw f64, and the collector must not follow them. A

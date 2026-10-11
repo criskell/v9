@@ -665,9 +665,6 @@ impl Isolate {
         }
         let holder = JSObject::unchecked_cast(receiver);
         let kind = holder.get_elements_kind(&self.heap);
-        if !crate::objects::elements_kind::is_fast_elements_kind(kind) {
-            return Ok(None);
-        }
         let accessor = ElementsAccessor::for_kind(kind);
         match accessor.get(self, holder, index) {
             Some(value) => Ok(Some(value)),

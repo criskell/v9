@@ -149,6 +149,48 @@ impl crate::execution::isolate::Isolate {
         (false, new_capacity)
     }
 
+    /// `ShouldConvertToFastElements`
+    pub(crate) fn should_convert_to_fast_elements(
+        &self,
+        object: JSObject,
+        dictionary: crate::objects::dictionary::NumberDictionary,
+        index: u32,
+    ) -> (bool, u32) {
+        use crate::objects::instance_type::JS_ARRAY_TYPE;
+        use crate::objects::js_array::JSArray;
+
+        // If properties with non-standard attributes or accessors were added,
+        // we cannot go back to fast elements.
+        if dictionary.requires_slow_elements(&self.heap) {
+            return (false, 0);
+        }
+
+        // Adding a property with this index will require slow elements.
+        if index >= crate::objects::smi::Smi::MAX_VALUE as u32 {
+            return (false, 0);
+        }
+
+        let mut new_capacity = if self.heap.instance_type(object.object()) == JS_ARRAY_TYPE {
+            JSArray::unchecked_cast(object.object()).length_value(&self.heap)
+        } else {
+            dictionary.max_number_key(&self.heap) + 1
+        };
+        new_capacity = new_capacity.max(index + 1);
+
+        let dictionary_size = dictionary.capacity(&self.heap)
+            * crate::objects::dictionary::NUMBER_DICTIONARY_SHAPE.entry_size as u32;
+
+        // Turn fast if the dictionary only saves 50% space.
+        (2 * dictionary_size >= new_capacity, new_capacity)
+    }
+
+    /// `JSObject::BestFittingFastElementsKind`
+    pub(crate) fn best_fitting_fast_elements_kind(&self, object: JSObject) -> ElementsKind {
+        use crate::objects::elements_kind::ElementsKind::*;
+        let _ = object;
+        HoleyElements
+    }
+
     /// `JSObject::GetElementsTransitionMap`
     pub(crate) fn get_elements_transition_map(
         &mut self,
@@ -158,6 +200,9 @@ impl crate::execution::isolate::Isolate {
         use crate::objects::instance_type::JS_ARRAY_TYPE;
         let map = self.heap.map_of(object.object());
         if map.instance_type(&self.heap) == JS_ARRAY_TYPE {
+            if to_kind == ElementsKind::DictionaryElements {
+                return self.roots.js_array_dictionary_elements_map;
+            }
             return self.roots.get_initial_js_array_map(to_kind);
         }
         map.set_elements_kind(&mut self.heap, to_kind);
@@ -225,9 +270,36 @@ impl crate::execution::isolate::Isolate {
         let elements = object.elements(&self.heap);
         let capacity = crate::objects::elements::ElementsAccessor::for_kind(kind)
             .get_capacity(&self.heap, elements);
-        let (to_slow, mut new_capacity) = self.should_convert_to_slow_elements(capacity, index);
-        if to_slow {
-            new_capacity = JSObject::new_elements_capacity(index + 1);
+        let dictionary_kind = ek::ElementsKind::DictionaryElements;
+        let mut new_capacity = capacity;
+        if ek::is_dictionary_elements_kind(kind) {
+            let dictionary = crate::objects::dictionary::NumberDictionary::unchecked_cast(
+                elements.to_strong_heap_object().expect("a dictionary"),
+            );
+            let (to_fast, fast_capacity) =
+                self.should_convert_to_fast_elements(object, dictionary, index);
+            if to_fast {
+                new_capacity = fast_capacity;
+                kind = self.best_fitting_fast_elements_kind(object);
+            } else {
+                kind = dictionary_kind;
+            }
+        } else {
+            let (to_slow, grown) = self.should_convert_to_slow_elements(capacity, index);
+            new_capacity = grown;
+            if to_slow {
+                kind = dictionary_kind;
+            }
+        }
+
+        if kind == dictionary_kind {
+            self.normalize_elements(object);
+            let accessor = crate::objects::elements::ElementsAccessor::for_kind(dictionary_kind);
+            accessor.set(self, object, index, value);
+            if is_js_array && index >= old_length {
+                array.set_length_value(&mut self.heap, index + 1);
+            }
+            return;
         }
 
         let mut to = ek::optimal_elements_kind(&self.heap, value);

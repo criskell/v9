@@ -596,7 +596,7 @@ impl Isolate {
             };
         }
         match instance_type {
-            it::FIXED_ARRAY_TYPE => {
+            it::FIXED_ARRAY_TYPE | it::NUMBER_DICTIONARY_TYPE => {
                 FixedArray::size_for(FixedArray::unchecked_cast(object).length(&self.heap))
             }
             it::PROPERTY_ARRAY_TYPE => {

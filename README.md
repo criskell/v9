@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 512 tests
+$ cargo test        # 524 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -105,6 +105,12 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
   having seen `1.5`, an array keeps the double store even if every later
   value is an integer — and each kind has its own map, so the shape is
   visible to an inline cache.
+* **Dictionary elements.** A gap wider than `kMaxGap` stops being worth
+  storing as holes, so the backing store becomes a `NumberDictionary` — an
+  open-addressed hash table in the heap, with V8's probe sequence and its
+  rapidhash mixer. `a[1000000] = 2` costs two entries, not a million slots,
+  and filling the array back in returns it to a dense store once the
+  dictionary stops saving half the space.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
   functions, recursion, closures, objects, arrays, property access, method calls, `typeof`.
@@ -112,9 +118,9 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
 ## What does not
 
 No classes, no `try`/`catch`, no generators or `async`, no `for...in`, no
-array methods (`push`, `map`, …). Elements are always fast: a sparse array
-stays a dense backing store full of holes where V8 would switch to a
-dictionary. Contexts are function contexts only: no `with`, no `catch`
+array methods (`push`, `map`, …). Properties never go to dictionary mode —
+only elements do — so an object with thousands of them keeps growing its
+descriptor array. Contexts are function contexts only: no `with`, no `catch`
 scope, no per-iteration `let` binding in a loop. Inline caches cover named property access and globals; prototype loads,
 transitioning stores and `globalThis.x` still do the full lookup.
 

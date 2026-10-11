@@ -147,6 +147,10 @@ which is the argument for reading it.
 | `src/objects/fixed-primitive-array.h` | `src/objects/fixed_primitive_array.rs` | [T] `FixedDoubleArray` with V8's hole NaN |
 | `src/objects/js-array.h` | `src/objects/js_array.rs` | [T] layout; fast elements only |
 | `src/objects/elements.cc` | `src/objects/elements.rs` | [A] `ElementsAccessor`: get, set, add, grow, convert |
+| `src/objects/hash-table.h` | `src/objects/hash_table.rs` | [T] layout, probing, capacity rules |
+| `src/objects/dictionary.h` | `src/objects/dictionary.rs` | [T] `NumberDictionary`: entries, details, slow-elements flag |
+| `src/base/hashing.h` | `src/base/hashing.rs` | [T] `hash64`, the rapidhash mum mixer |
+| `src/utils/utils.h`, `utils.cc` | `src/utils/utils.rs` | [T] `SmiHash64`, `ComputeSeededHash` |
 | `src/builtins/accessors.cc` | `src/builtins/accessors.rs` | [R] `ArrayLength` getter and setter, nothing else |
 | `src/objects/scope-info.h` | `src/objects/scope_info.rs` | [A] the context slot names, nothing else |
 | `src/roots/roots.h` | `src/roots/roots.rs` | [A] the roots `vx` needs |
@@ -193,7 +197,7 @@ which is the argument for reading it.
 | --- | --- | --- |
 | `src/objects/scope-info.h` (the rest) | `src/objects/scope_info.rs` | `with`, `catch`, block and module scopes |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
-| `src/objects/dictionary.h` | `src/objects/` | dictionary-mode objects |
+| `src/objects/dictionary.h` (`NameDictionary`) | `src/objects/dictionary.rs` | dictionary-mode *properties*; the elements half is done |
 | `src/compiler/`, `src/maglev/`, `src/baseline/` | — | optimizing tiers; not planned |
 
 ## Deviations
@@ -350,7 +354,10 @@ maps to.
 | `parsing/scanner.rs` | Scans Rust `char`, not UTF-16 code units; the two differ only for lone surrogates, which cannot appear in a `&str`. String literals are still converted to UTF-16 when they become heap strings, so `length` stays correct. No template literals, no regular expression literals, no `\u` escapes in identifiers, no numeric separators, no BigInt. Identifier start/continue use Rust's Unicode alphabetic classes rather than the exact `ID_Start`/`ID_Continue` tables. |
 | `objects/elements.rs` | V8 generates one `ElementsAccessor` subclass per kind through CRTP, so the kind is a compile-time constant and every access is monomorphic. `vx` has one struct carrying the kind and matches on it — the same decomposition, with the dispatch moved to run time, which costs nothing here because the interpreter is not generated code. No `Push`/`Pop`/`Shift`/`Unshift`/`Fill`/`Reverse`/`CopyElements`, no `KeyAccumulator`, no typed arrays, no dictionary elements. |
 | `objects/js_array.rs` | Fast elements only, and `length` is always a Smi: V8 allows a HeapNumber length up to 2^32-1, and a `JSArray` whose length does not fit a Smi cannot be built here. No read-only length, no `ArraySetLength` per ES 15.4.5.2 (so `length` assignment never rejects), no allocation sites or pretenuring. |
-| `objects/js_objects.rs` | `ShouldConvertToSlowElements` computes V8's answer but `vx` has no `NumberDictionary`, so a sparse array stays fast and stores the gap as holes. `a[1e6] = 1` therefore allocates a million slots where V8 would go to dictionary mode. The `kMaxGap` check is ported and its verdict is deliberately ignored, which is where dictionary elements will plug in. |
+| `objects/js_objects.rs` | `BestFittingFastElementsKind` always answers `HOLEY_ELEMENTS` instead of scanning the dictionary for the narrowest kind that fits, so an array that comes back from dictionary mode is tagged-holey rather than, say, packed-Smi. No `JSArgumentsObject` or string-wrapper branches in the slow/fast decision. |
+| `objects/dictionary.rs` | `NumberDictionary` only: no `NameDictionary`, `GlobalDictionary`, `SimpleNumberDictionary` or `OrderedHashTable`, so dictionary-mode *properties* do not exist — only dictionary-mode elements. The hash seed is zero, where V8 seeds per isolate from a random source to make collision attacks from script impractical. No shrinking (`ComputeCapacityWithShrink`), and deleting is only reached through `length` truncation. |
+| `objects/hash_table.rs` | V8's `HashTable<Derived, Shape>` is a template whose shape supplies the entry size, prefix size and hashing; `vx` passes a `HashTableShape` value instead, so the arithmetic is the same but not constant-folded. No `kDoHashSpreading` in `FirstProbe`, which V8 uses when the hash has fewer bits than the table has slots. |
+| `base/hashing.rs` | Only `hash64` and the rapidhash mum mixer, with the default secrets; V8 can be built with SipHash or with a per-process random secret, and has `hash32` plus the `hash_combine` family for everything else. |
 | `builtins/accessors.rs` | Two accessors out of V8's thirty-odd, and they are reached by name rather than through an `AccessorInfo` in the array map's descriptors, since `vx` has no accessor properties. The load IC still caches the result with a `kNativeDataProperty` handler, which is the kind V8 uses for it. |
 | `objects/elements_kind.rs` | The six fast kinds keep V8's numbering, since the predicates are range checks on it. No nonextensible, sealed, frozen, typed-array, arguments, string-wrapper, shared-array or wasm kinds, so `DICTIONARY_ELEMENTS` and `NO_ELEMENTS` are renumbered to 6 and 7. `DICTIONARY_ELEMENTS` is declared but not produced. |
 

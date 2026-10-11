@@ -26,6 +26,10 @@ pub const K_FORWARDING_TAG_SIZE: u32 = 2;
 pub const K_FORWARDING_TAG_MASK: u64 = (1 << K_FORWARDING_TAG_SIZE) - 1;
 
 pub const K_SMI_VALUE_SIZE: u32 = 32;
+// Mask applied to an integer hash so the result fits in a non-negative Smi
+// payload (safe to pass to Smi::FromInt). One bit narrower than the Smi value
+// field so the sign bit stays clear.
+pub const K_SMI_HASH_MASK: u32 = ((1u64 << (K_SMI_VALUE_SIZE - 1)) - 1) as u32;
 pub const K_SMI_SHIFT_SIZE: u32 = 31;
 pub const K_SMI_SHIFT_BITS: u32 = K_SMI_TAG_SIZE + K_SMI_SHIFT_SIZE;
 

@@ -48,6 +48,8 @@ pub struct Heap {
 
     /// `ReadOnlyRoots::the_hole_value`
     pub(crate) the_hole_value: Tagged,
+    /// `ReadOnlyRoots::undefined_value`
+    pub(crate) undefined_value: Tagged,
 }
 
 impl Heap {
@@ -84,6 +86,7 @@ impl Heap {
             bytes_promoted: 0,
             bytes_evacuated: 0,
             the_hole_value: Tagged::ZERO,
+            undefined_value: Tagged::ZERO,
         }
     }
 
@@ -213,6 +216,11 @@ impl Heap {
     }
 
     #[inline]
+    /// `ReadOnlyRoots::undefined_value`
+    pub fn is_undefined(&self, value: Tagged) -> bool {
+        self.undefined_value != Tagged::ZERO && value == self.undefined_value
+    }
+
     /// `ReadOnlyRoots::the_hole_value`
     pub fn is_the_hole(&self, value: Tagged) -> bool {
         self.the_hole_value != Tagged::ZERO && value == self.the_hole_value

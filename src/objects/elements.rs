@@ -1,11 +1,14 @@
 use crate::execution::isolate::Isolate;
 use crate::heap::heap::Heap;
+use crate::objects::dictionary::NumberDictionary;
 use crate::objects::elements_kind::{self, ElementsKind};
 use crate::objects::fixed_array::FixedArray;
 use crate::objects::fixed_primitive_array::FixedDoubleArray;
+use crate::objects::hash_table::{HashTableBase, K_NOT_FOUND};
 use crate::objects::heap_number;
 use crate::objects::js_array::JSArray;
 use crate::objects::js_objects::JSObject;
+use crate::objects::property_details::{default_data_field, Representation};
 use crate::objects::tagged::Tagged;
 
 // Abstract base class for handles that can operate on objects with differing
@@ -34,7 +37,9 @@ impl ElementsAccessor {
         let Some(store) = backing_store.to_strong_heap_object() else {
             return 0;
         };
-        if elements_kind::is_double_elements_kind(self.kind) {
+        if elements_kind::is_dictionary_elements_kind(self.kind) {
+            NumberDictionary::unchecked_cast(store).capacity(heap)
+        } else if elements_kind::is_double_elements_kind(self.kind) {
             FixedDoubleArray::unchecked_cast(store).length(heap) as u32
         } else {
             FixedArray::unchecked_cast(store).length(heap) as u32
@@ -43,6 +48,12 @@ impl ElementsAccessor {
 
     /// `ElementsAccessorBase::HasEntryImpl`
     pub fn has_entry(self, heap: &Heap, backing_store: Tagged, index: u32) -> bool {
+        if elements_kind::is_dictionary_elements_kind(self.kind) {
+            let Some(store) = backing_store.to_strong_heap_object() else {
+                return false;
+            };
+            return NumberDictionary::unchecked_cast(store).find_entry(heap, index) != K_NOT_FOUND;
+        }
         if index >= self.get_capacity(heap, backing_store) {
             return false;
         }
@@ -67,6 +78,11 @@ impl ElementsAccessor {
             return None;
         }
         let store = backing_store.to_strong_heap_object().unwrap();
+        if elements_kind::is_dictionary_elements_kind(self.kind) {
+            let dictionary = NumberDictionary::unchecked_cast(store);
+            let entry = dictionary.find_entry(&isolate.heap, index);
+            return Some(dictionary.value_at(&isolate.heap, entry));
+        }
         if elements_kind::is_double_elements_kind(self.kind) {
             let value =
                 FixedDoubleArray::unchecked_cast(store).get_scalar(&isolate.heap, index as i32);
@@ -82,6 +98,13 @@ impl ElementsAccessor {
             .elements(&isolate.heap)
             .to_strong_heap_object()
             .expect("a backing store");
+        if elements_kind::is_dictionary_elements_kind(self.kind) {
+            let dictionary = NumberDictionary::unchecked_cast(store);
+            let details = default_data_field(0, Representation::Tagged);
+            let updated = isolate.dictionary_set(dictionary, index, value, details);
+            holder.set_elements(&mut isolate.heap, updated.tagged());
+            return;
+        }
         if elements_kind::is_double_elements_kind(self.kind) {
             let number = heap_number::number_value(&isolate.heap, value)
                 .expect("a double store takes only numbers");
@@ -94,6 +117,12 @@ impl ElementsAccessor {
     /// `ElementsAccessorBase::NumberOfElementsImpl`
     pub fn number_of_elements(self, heap: &Heap, receiver: JSObject) -> u32 {
         let backing_store = receiver.elements(heap);
+        if elements_kind::is_dictionary_elements_kind(self.kind) {
+            let Some(store) = backing_store.to_strong_heap_object() else {
+                return 0;
+            };
+            return NumberDictionary::unchecked_cast(store).number_of_elements(heap) as u32;
+        }
         let capacity = self.get_capacity(heap, backing_store);
         (0..capacity)
             .filter(|index| self.has_entry(heap, backing_store, *index))
@@ -219,10 +248,89 @@ impl Isolate {
         accessor.set(self, object, index, value);
     }
 
+    /// `FastElementsAccessor::NormalizeImpl`
+    pub(crate) fn normalize_elements_impl(&mut self, object: JSObject) -> NumberDictionary {
+        let kind = object.get_elements_kind(&self.heap);
+        let accessor = ElementsAccessor::for_kind(kind);
+        let elements = object.elements(&self.heap);
+        let capacity = accessor.get_capacity(&self.heap, elements);
+        let used = accessor.number_of_elements(&self.heap, object);
+
+        let mut dictionary = self.new_number_dictionary(used.max(1));
+        let details = default_data_field(0, Representation::Tagged);
+        for index in 0..capacity {
+            if !accessor.has_entry(&self.heap, elements, index) {
+                continue;
+            }
+            let value = self.element_as_tagged(elements, kind, index);
+            dictionary = self.dictionary_add(dictionary, index, value, details);
+        }
+        dictionary
+    }
+
+    /// `JSObject::NormalizeElements`
+    pub(crate) fn normalize_elements(&mut self, object: JSObject) -> NumberDictionary {
+        use crate::objects::elements_kind::ElementsKind::DictionaryElements;
+        let elements = object.elements(&self.heap);
+        if elements_kind::is_dictionary_elements_kind(object.get_elements_kind(&self.heap)) {
+            return NumberDictionary::unchecked_cast(elements.to_strong_heap_object().unwrap());
+        }
+        let dictionary = self.normalize_elements_impl(object);
+        let new_map = self.get_elements_transition_map(object, DictionaryElements);
+        self.set_map_and_elements(object, new_map, dictionary.tagged());
+        dictionary
+    }
+
+    /// `DictionaryElementsAccessor::SetLengthImpl`
+    fn set_dictionary_length(&mut self, array: JSArray, length: u32) {
+        let object = array.as_js_object();
+        let dictionary = NumberDictionary::unchecked_cast(
+            object
+                .elements(&self.heap)
+                .to_strong_heap_object()
+                .expect("a dictionary"),
+        );
+        let old_length = array.length_value(&self.heap);
+        if length < old_length {
+            if length == 0 {
+                // Flush the backing store.
+                let empty = self.roots.empty_fixed_array;
+                let new_map = self.get_elements_transition_map(
+                    object,
+                    elements_kind::get_initial_fast_elements_kind(),
+                );
+                self.set_map_and_elements(object, new_map, empty);
+            } else {
+                // Remove elements that should be deleted.
+                let mut removed_entries = 0;
+                for entry in 0..dictionary.capacity(&self.heap) as i32 {
+                    let key = dictionary.key_at(&self.heap, entry);
+                    if !HashTableBase::is_key(&self.heap, key) {
+                        continue;
+                    }
+                    let Some(number) = self.to_array_length(key) else {
+                        continue;
+                    };
+                    if length <= number && number < old_length {
+                        dictionary.clear_entry(&mut self.heap, entry);
+                        removed_entries += 1;
+                    }
+                }
+                for _ in 0..removed_entries {
+                    dictionary.as_hash_table().element_removed(&mut self.heap);
+                }
+            }
+        }
+        array.set_length_value(&mut self.heap, length);
+    }
+
     /// `ElementsAccessorBase::SetLengthImpl`
     pub(crate) fn set_elements_length(&mut self, array: JSArray, length: u32) {
         let object = array.as_js_object();
         let mut kind = object.get_elements_kind(&self.heap);
+        if elements_kind::is_dictionary_elements_kind(kind) {
+            return self.set_dictionary_length(array, length);
+        }
         let old_length = array.length_value(&self.heap);
 
         if old_length < length && !elements_kind::is_holey_elements_kind(kind) {
