@@ -58,6 +58,7 @@ roots_table!(
     descriptor_array_map,
     transition_array_map,
     feedback_vector_map,
+    feedback_metadata_map,
     bytecode_array_map,
     shared_function_info_map,
     /// The map stamped on a region of free space, so the heap stays walkable.
@@ -82,6 +83,10 @@ roots_table!(
     the_hole_value,
     /// An inline cache slot nothing has reached yet.
     uninitialized_value,
+    /// `FeedbackVector::MegamorphicSentinel`: this site has seen too many
+    /// shapes and has stopped caching. V8 uses a `Symbol`; `vx` has no
+    /// symbols, so this is an oddball distinguished by identity.
+    megamorphic_symbol,
     empty_fixed_array,
     empty_property_array,
     empty_descriptor_array,

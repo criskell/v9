@@ -6,6 +6,7 @@ pub mod object_macros;
 
 pub mod bytecode_array;
 pub mod descriptor_array;
+pub mod feedback_vector;
 pub mod fixed_array;
 pub mod heap_number;
 pub mod instance_type;

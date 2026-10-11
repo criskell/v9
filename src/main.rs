@@ -35,6 +35,7 @@ fn main() {
         "ast" | "parse" => with_file("ast", print_ast),
         "run" => with_file("run", run_file),
         "bytecode" | "print-bytecode" => with_file("bytecode", print_bytecode),
+        "ic" | "trace-ic" => with_file("ic", trace_ic),
         other => {
             eprintln!("vx: unknown command `{other}`");
             eprintln!();
@@ -51,6 +52,8 @@ fn main() {
             eprintln!("          parse a file and print its syntax tree");
             eprintln!("  bytecode <file.js>");
             eprintln!("          compile a file and disassemble it");
+            eprintln!("  ic <file.js>");
+            eprintln!("          run a file and report its inline caches");
             eprintln!();
             eprintln!("See PORTING.md for what vx does and does not support.");
             std::process::exit(2);
@@ -105,6 +108,55 @@ fn run_file(_path: &str, source: &str) {
             std::process::exit(1);
         }
     }
+}
+
+/// `--trace-ic`: run a script and report what its caches learned.
+fn trace_ic(_path: &str, source: &str) {
+    let mut isolate = Isolate::new();
+    isolate.trace_ic_enabled = true;
+    let result = isolate.run_script(source);
+    for line in isolate.take_output() {
+        println!("{line}");
+    }
+    if let Err(message) = result {
+        eprintln!("{message}");
+        std::process::exit(1);
+    }
+
+    println!("== transitions ==");
+    println!();
+    for line in isolate.ic_transition_log() {
+        println!("  {line}");
+    }
+
+    println!();
+    println!("== the script's own sites ==");
+    println!();
+    for line in isolate.trace_ic() {
+        println!("  {line}");
+    }
+    let statistics = isolate.ic_statistics();
+    let total = statistics.hits + statistics.misses;
+    println!();
+    println!(
+        "  {} hits, {} misses{}",
+        statistics.hits,
+        statistics.misses,
+        if total > 0 {
+            format!(
+                " ({:.0}% hit rate)",
+                statistics.hits as f64 * 100.0 / total as f64
+            )
+        } else {
+            String::new()
+        }
+    );
+    println!(
+        "  transitions: {} -> monomorphic, {} -> polymorphic, {} -> megamorphic",
+        statistics.monomorphic_transitions,
+        statistics.polymorphic_transitions,
+        statistics.megamorphic_transitions
+    );
 }
 
 /// `--print-bytecode`

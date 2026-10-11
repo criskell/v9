@@ -15,6 +15,7 @@ pub mod builtins;
 pub mod common;
 pub mod execution;
 pub mod heap;
+pub mod ic;
 pub mod init;
 pub mod interpreter;
 pub mod numbers;

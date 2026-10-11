@@ -49,6 +49,7 @@ impl Isolate {
         // Variable sized: its instructions are inline, so the size comes
         // from the length field (V8's kVariableSizeSentinel).
         self.roots.bytecode_array_map = self.new_bare_map(BYTECODE_ARRAY_TYPE, 0).tagged();
+        self.roots.feedback_metadata_map = self.new_bare_map(FEEDBACK_METADATA_TYPE, 0).tagged();
         self.roots.shared_function_info_map = self
             .new_bare_map(
                 SHARED_FUNCTION_INFO_TYPE,
@@ -76,6 +77,7 @@ impl Isolate {
             self.roots.transition_array_map,
             self.roots.feedback_vector_map,
             self.roots.bytecode_array_map,
+            self.roots.feedback_metadata_map,
             self.roots.shared_function_info_map,
             self.roots.filler_map,
         ];
@@ -125,6 +127,14 @@ impl Isolate {
             .new_oddball(
                 OddballKind::Uninitialized,
                 "uninitialized",
+                f64::NAN,
+                "undefined",
+            )
+            .tagged();
+        self.roots.megamorphic_symbol = self
+            .new_oddball(
+                OddballKind::Uninitialized,
+                "megamorphic",
                 f64::NAN,
                 "undefined",
             )

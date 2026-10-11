@@ -27,6 +27,7 @@ use crate::interpreter::bytecode_register::{Register, RegisterList};
 use crate::interpreter::bytecode_register_allocator::BytecodeRegisterAllocator;
 use crate::interpreter::bytecodes::Bytecode;
 use crate::interpreter::constant_array_builder::ConstantEntry;
+use crate::objects::feedback_vector::{FeedbackSlotKind, FeedbackVectorSpec};
 use crate::parsing::token::Token;
 
 /// `BytecodeArrayBuilder::kUninitializedEmbeddedFeedback`: what a binary
@@ -51,6 +52,10 @@ pub struct BytecodeArrayData {
     /// Including the receiver.
     pub parameter_count: i32,
     pub feedback_slot_count: i32,
+    /// The kind of each feedback site, in allocation order. The vector's
+    /// layout cannot be recovered from the bytecode alone, because a slot's
+    /// width depends on its kind.
+    pub feedback_slot_kinds: Vec<FeedbackSlotKind>,
     pub source_position_table: Vec<(usize, usize)>,
 }
 
@@ -59,7 +64,9 @@ pub struct BytecodeArrayBuilder {
     register_allocator: BytecodeRegisterAllocator,
     parameter_count: i32,
     local_register_count: i32,
-    feedback_slot_count: i32,
+    /// `BytecodeArrayBuilder::feedback_vector_spec_`: the sites, in the
+    /// order they were allocated.
+    feedback_vector_spec: FeedbackVectorSpec,
     /// The source position to attach to the next bytecode emitted.
     pending_source_position: Option<usize>,
 }
@@ -75,7 +82,7 @@ impl BytecodeArrayBuilder {
             register_allocator: BytecodeRegisterAllocator::new(local_register_count),
             parameter_count,
             local_register_count,
-            feedback_slot_count: 0,
+            feedback_vector_spec: FeedbackVectorSpec::new(),
             pending_source_position: None,
         }
     }
@@ -112,11 +119,17 @@ impl BytecodeArrayBuilder {
         &mut self.register_allocator
     }
 
-    /// `FeedbackVectorSpec::AddSlot`, reduced to handing out an index.
-    pub fn allocate_feedback_slot(&mut self) -> i32 {
-        let slot = self.feedback_slot_count;
-        self.feedback_slot_count += 1;
-        slot
+    /// `FeedbackVectorSpec::AddSlot`.
+    ///
+    /// The *kind* has to be declared here and not later, because it decides
+    /// how wide the slot is -- so the vector's layout is fixed by the time
+    /// the bytecode referring to it exists.
+    pub fn allocate_feedback_slot(&mut self, kind: FeedbackSlotKind) -> i32 {
+        self.feedback_vector_spec.add_slot(kind)
+    }
+
+    pub fn feedback_vector_spec(&self) -> &FeedbackVectorSpec {
+        &self.feedback_vector_spec
     }
 
     /// `BytecodeArrayBuilder::SetStatementPosition` /
@@ -227,14 +240,14 @@ impl BytecodeArrayBuilder {
     /// `BytecodeArrayBuilder::LoadGlobal`
     pub fn load_global(&mut self, name: &str) -> &mut Self {
         let index = self.insert_name(name);
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadGlobalNotInsideTypeof);
         self.output(Bytecode::LdaGlobal, &[index, slot])
     }
 
     /// `BytecodeArrayBuilder::StoreGlobal`
     pub fn store_global(&mut self, name: &str) -> &mut Self {
         let index = self.insert_name(name);
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::StoreGlobalStrict);
         self.output(Bytecode::StaGlobal, &[index, slot])
     }
 
@@ -243,7 +256,7 @@ impl BytecodeArrayBuilder {
     /// `BytecodeArrayBuilder::LoadNamedProperty`
     pub fn load_named_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadProperty);
         self.output(
             Bytecode::GetNamedProperty,
             &[object.to_operand(), index, slot],
@@ -253,7 +266,7 @@ impl BytecodeArrayBuilder {
     /// `BytecodeArrayBuilder::LoadKeyedProperty`: the key is in the
     /// accumulator.
     pub fn load_keyed_property(&mut self, object: Register) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadKeyed);
         self.output(Bytecode::GetKeyedProperty, &[object.to_operand(), slot])
     }
 
@@ -261,7 +274,7 @@ impl BytecodeArrayBuilder {
     /// accumulator.
     pub fn set_named_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetNamedStrict);
         self.output(
             Bytecode::SetNamedProperty,
             &[object.to_operand(), index, slot],
@@ -273,7 +286,7 @@ impl BytecodeArrayBuilder {
     /// prototype chain may intercept it.
     pub fn define_named_own_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::DefineNamedOwn);
         self.output(
             Bytecode::DefineNamedOwnProperty,
             &[object.to_operand(), index, slot],
@@ -282,7 +295,7 @@ impl BytecodeArrayBuilder {
 
     /// `BytecodeArrayBuilder::SetKeyedProperty`
     pub fn set_keyed_property(&mut self, object: Register, key: Register) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetKeyedStrict);
         self.output(
             Bytecode::SetKeyedProperty,
             &[object.to_operand(), key.to_operand(), slot],
@@ -336,7 +349,7 @@ impl BytecodeArrayBuilder {
         match op {
             Token::Add => {
                 // Unary plus is ToNumber, nothing more.
-                let slot = self.allocate_feedback_slot();
+                let slot = self.allocate_feedback_slot(FeedbackSlotKind::BinaryOp);
                 self.output(Bytecode::ToNumber, &[slot])
             }
             Token::Sub => self.output(Bytecode::Negate, &[K_UNINITIALIZED_EMBEDDED_FEEDBACK]),
@@ -369,7 +382,7 @@ impl BytecodeArrayBuilder {
 
     /// `BytecodeArrayBuilder::TypeOf`
     pub fn type_of(&mut self) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::TypeOf);
         self.output(Bytecode::TypeOf, &[slot])
     }
 
@@ -390,7 +403,7 @@ impl BytecodeArrayBuilder {
             other => unreachable!("{other} has no comparison bytecode"),
         };
         let operands = if matches!(op, Token::InstanceOf | Token::In) {
-            let slot = self.allocate_feedback_slot();
+            let slot = self.allocate_feedback_slot(FeedbackSlotKind::InstanceOf);
             [register.to_operand(), slot]
         } else {
             [register.to_operand(), K_UNINITIALIZED_EMBEDDED_FEEDBACK]
@@ -438,7 +451,7 @@ impl BytecodeArrayBuilder {
     }
 
     pub fn to_number(&mut self) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::BinaryOp);
         self.output(Bytecode::ToNumber, &[slot])
     }
 
@@ -449,7 +462,7 @@ impl BytecodeArrayBuilder {
     }
 
     pub fn create_empty_array_literal(&mut self) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::Literal);
         self.output(Bytecode::CreateEmptyArrayLiteral, &[slot])
     }
 
@@ -459,7 +472,7 @@ impl BytecodeArrayBuilder {
             .bytecode_array_writer
             .constant_array_builder_mut()
             .insert_function_literal(function_index) as i32;
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::Literal);
         self.output(Bytecode::CreateClosure, &[index, slot, 0])
     }
 
@@ -471,7 +484,7 @@ impl BytecodeArrayBuilder {
     /// `args` must be the registers holding the arguments, contiguously --
     /// which is why the generator builds them with a growable register list.
     pub fn call_undefined_receiver(&mut self, callee: Register, args: RegisterList) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
         self.output(
             Bytecode::CallUndefinedReceiver,
             &[
@@ -490,7 +503,7 @@ impl BytecodeArrayBuilder {
             args.register_count() >= 1,
             "a property call passes at least the receiver"
         );
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
         self.output(
             Bytecode::CallProperty,
             &[
@@ -553,7 +566,7 @@ impl BytecodeArrayBuilder {
     /// loop. Its own bytecode because it is where the interpreter checks for
     /// interrupts and, in V8, where it decides to tier up.
     pub fn jump_loop(&mut self, loop_header: &BytecodeLoopHeader) -> &mut Self {
-        let slot = self.allocate_feedback_slot();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::JumpLoop);
         let node = BytecodeNode::new(Bytecode::JumpLoop, &[0, 0, slot]);
         self.bytecode_array_writer
             .write_jump_loop(&node, loop_header);
@@ -620,7 +633,8 @@ impl BytecodeArrayBuilder {
         }
         let register_count = self.register_allocator.maximum_register_count();
         let parameter_count = self.parameter_count;
-        let feedback_slot_count = self.feedback_slot_count;
+        let feedback_slot_count = self.feedback_vector_spec.slot_count();
+        let feedback_slot_kinds = self.feedback_vector_spec.to_slot_kinds();
         let (bytecodes, constant_array_builder, source_position_table) =
             self.bytecode_array_writer.finish();
         BytecodeArrayData {
@@ -629,6 +643,7 @@ impl BytecodeArrayBuilder {
             register_count,
             parameter_count,
             feedback_slot_count,
+            feedback_slot_kinds,
             source_position_table,
         }
     }
@@ -732,9 +747,20 @@ mod tests {
         builder.load_named_property(object, "x");
         builder.load_named_property(object, "x");
         let data = builder.to_bytecode_array();
-        assert_eq!(data.feedback_slot_count, 2);
+        // A load site is two slots wide -- one for the map, one for the
+        // handler -- so the second site starts at 2.
+        assert_eq!(data.feedback_slot_count, 4);
         assert_eq!(data.bytecodes[3], 0, "first site: slot 0");
-        assert_eq!(data.bytecodes[7], 1, "second site: slot 1");
+        assert_eq!(data.bytecodes[7], 2, "second site: slot 2");
+        assert_eq!(
+            data.feedback_slot_kinds,
+            vec![
+                FeedbackSlotKind::LoadProperty,
+                FeedbackSlotKind::Invalid,
+                FeedbackSlotKind::LoadProperty,
+                FeedbackSlotKind::Invalid,
+            ]
+        );
     }
 
     #[test]

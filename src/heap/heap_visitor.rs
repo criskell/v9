@@ -77,7 +77,7 @@ impl Isolate {
                 }
             }
 
-            it::TRANSITION_ARRAY_TYPE | it::FEEDBACK_VECTOR_TYPE => {
+            it::TRANSITION_ARRAY_TYPE => {
                 let array = WeakFixedArray::unchecked_cast(object);
                 for i in 0..array.length(&self.heap) {
                     visit(array.element_address(i));
@@ -126,6 +126,24 @@ impl Isolate {
                 let info = SharedFunctionInfo::unchecked_cast(object);
                 visit(info.function_data_address());
                 visit(info.name_address());
+                visit(info.feedback_metadata_address());
+            }
+
+            it::FEEDBACK_VECTOR_TYPE => {
+                use crate::objects::feedback_vector::FeedbackVector;
+                let vector = FeedbackVector::unchecked_cast(object);
+                visit(vector.shared_function_info_address());
+                visit(vector.metadata_address());
+                // The slots hold maps weakly and handlers as Smis, so they
+                // are visited like any other tagged slot -- the weakness is
+                // in the reference, not in how it is traced.
+                for slot in 0..vector.length(&self.heap) {
+                    visit(vector.slot_address(slot));
+                }
+            }
+
+            it::FEEDBACK_METADATA_TYPE => {
+                // Just a run of bytes.
             }
 
             it::FILLER_TYPE => {
@@ -161,6 +179,7 @@ impl Isolate {
         for info in self.shared_function_infos.iter_mut() {
             visit(info);
         }
+        visit(&mut self.script_function);
     }
 }
 

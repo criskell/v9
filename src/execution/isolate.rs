@@ -55,6 +55,20 @@ pub struct Isolate {
 
     /// Where `console.log` writes. Captured so tests can read it.
     pub(crate) output: Vec<String>,
+
+    /// `--trace-ic` counters. The only way to tell a working inline cache
+    /// from a cache-shaped data structure nothing reads.
+    pub(crate) ic_statistics: crate::ic::ic::ICStatistics,
+
+    /// `--trace-ic`. V8 logs each transition as it happens rather than
+    /// dumping the vectors at the end, which is the only way to see the
+    /// caches inside functions whose closures nothing retains.
+    pub trace_ic_enabled: bool,
+    pub(crate) ic_trace: Vec<String>,
+
+    /// The closure of the script last run, so its feedback vector can be
+    /// inspected. This is what `--trace-ic` reports on.
+    pub(crate) script_function: Tagged,
 }
 
 pub use crate::roots::roots::RootsTable;
@@ -73,6 +87,10 @@ impl Isolate {
             call_depth: 0,
             shared_function_infos: Vec::new(),
             output: Vec::new(),
+            ic_statistics: Default::default(),
+            trace_ic_enabled: false,
+            ic_trace: Vec::new(),
+            script_function: Tagged::ZERO,
         };
         isolate.setup_read_only_roots();
         isolate
@@ -89,6 +107,10 @@ impl Isolate {
             call_depth: 0,
             shared_function_infos: Vec::new(),
             output: Vec::new(),
+            ic_statistics: Default::default(),
+            trace_ic_enabled: false,
+            ic_trace: Vec::new(),
+            script_function: Tagged::ZERO,
         };
         isolate.setup_read_only_roots();
         isolate

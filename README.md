@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 414 tests
+$ cargo test        # 438 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -44,7 +44,18 @@ copying garbage collector.
     5 : 5b                   Return
 ```
 
-Commands: `run`, `bytecode`, `ast`, `maps`, `gc`, `heap`, `roots`.
+`cargo run -- ic f.js` reports what the inline caches learned, the way
+`--trace-ic` does:
+
+```
+  LoadProperty slot 0: Uninitialized -> Monomorphic  (map 0xd48, 1 tracked)
+  LoadProperty slot 0: Monomorphic   -> Polymorphic  (map 0xdb8, 2 tracked)
+  LoadProperty slot 0: Polymorphic   -> Megamorphic  (map 0xf08, 0 tracked)
+
+  999 hits, 22 misses (98% hit rate)
+```
+
+Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
 
 ## What works
 
@@ -58,6 +69,11 @@ Commands: `run`, `bytecode`, `ast`, `maps`, `gc`, `heap`, `roots`.
 * **Ignition.** The bytecode is V8's, including the operand-scaling prefixes
   and the constant-pool reservation scheme that makes forward jumps
   encodable.
+* **Inline caches.** A named property access records the shape it saw and
+  the field it found, so the next execution is one map comparison and one
+  indexed read. Sites climb V8's lattice -- monomorphic, polymorphic up to
+  four shapes, then megamorphic -- and the handler is a Smi, exactly as in
+  V8.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
   functions, recursion, objects, property access, method calls, `typeof`.
@@ -65,9 +81,8 @@ Commands: `run`, `bytecode`, `ast`, `maps`, `gc`, `heap`, `roots`.
 ## What does not
 
 No closures over enclosing locals (no contexts), no classes, no
-`try`/`catch`, no generators or `async`, no real arrays, no `for...in`. And
-no inline caches yet: the feedback slots are allocated and encoded, but
-nothing fills them in.
+`try`/`catch`, no generators or `async`, no real arrays, no `for...in`. Inline caches cover named property access only -- globals, prototype loads
+and transitioning stores still do the full lookup.
 
 [`PORTING.md`](PORTING.md) is the ledger — what is ported, at what fidelity,
 and every deviation. `tools/check-layout.sh` checks that every source file

@@ -151,6 +151,9 @@ which is the argument for reading it.
 | `src/interpreter/interpreter-generator.cc` | `src/interpreter/interpreter.rs` | [A] CSA handlers become a dispatch loop |
 | `src/builtins/builtins.h` | `src/builtins/builtins.rs` | [R] a handful, in Rust |
 | `src/init/bootstrapper.cc` | `src/init/bootstrapper.rs` | [R] the global object and the builtins |
+| `src/objects/feedback-vector.h`, `.cc` | `src/objects/feedback_vector.rs` | [T] slot kinds and widths; [A] the nexus and the state encoding |
+| `src/ic/handler-configuration.h` | `src/ic/handler_configuration.rs` | [T] the Smi handler bit layout |
+| `src/ic/ic.h`, `ic.cc` | `src/ic/ic.rs` | [A] the monomorphic/polymorphic/megamorphic lattice |
 | `src/parsing/token.h` | `src/parsing/token.rs` | [T] full token list, precedences and enum order |
 | `src/parsing/scanner.h`, `scanner.cc` | `src/parsing/scanner.rs` | [A] `c0_`, two-token lookahead, ASI line tracking |
 | `src/ast/ast.h` | `src/ast/ast.rs` | [R] node kinds follow `AST_NODE_LIST`; enums replace the class hierarchy |
@@ -160,7 +163,8 @@ which is the argument for reading it.
 
 | V8 | Would become | Notes |
 | --- | --- | --- |
-| `src/ic/*`, `src/objects/feedback-vector.h` | `src/ic/` | inline caches. The feedback slots are already allocated and encoded, and `Map` + field index is already what a load needs -- nothing fills them in |
+| `src/ic/stub-cache.h` | `src/ic/` | the global `(map, name) -> handler` hash table a megamorphic site consults before giving up |
+| `src/objects/property-cell.h` | `src/objects/` | property cells, which is how a *global* access is cached |
 | `src/objects/contexts.h`, `src/ast/scopes.cc` | `src/objects/contexts.rs` | contexts, and therefore closures over locals |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
 | `src/objects/js-array.h`, `elements.cc` | `src/objects/` | real arrays with `length` and elements kinds |
@@ -247,12 +251,38 @@ survive the arena being reallocated — which is why growing old space is a
   `JSObject`, and keyed access converts its key to a string, so `[1,2,3]`
   becomes an object with `"0"`, `"1"`, `"2"` properties and no `length`.
   Real arrays need `JSArray` and elements kinds.
-* **Feedback is allocated but never recorded.** Every property access and
-  call gets a feedback slot index, and the binary operations carry an
-  embedded feedback byte, but no `FeedbackVector` exists to put anything in,
-  so no inline cache ever hits. This is the next thing worth doing: the
-  shape of a load -- check the map, read field N -- is already what
-  `Map::find_property_details` returns.
+* **Inline caches cover named property access only.** A load or store of a
+  known name is cached: one map comparison, then a Smi handler decoded into
+  a field offset. What is *not* cached:
+  * **Globals.** Every `LdaGlobal` does the full lookup. V8 caches these
+    through `PropertyCell`s, which `vx` does not have -- and it shows: a
+    loop over a global variable misses on every iteration.
+  * **A property found on a prototype.** That needs V8's object-form
+    handler, which carries the holder and a validity cell to invalidate the
+    entry if the prototype chain changes.
+  * **A store that adds a property**, because that changes the receiver's
+    map. V8 caches it with a transition handler that performs the map change.
+  * **Keyed access, calls, binary operations.** The slots are allocated and
+    the embedded feedback byte is emitted, but nothing reads them.
+* **No stub cache.** In V8 a megamorphic site still consults a global
+  `(map, name) -> handler` hash table before falling back to the full
+  lookup. In `vx` megamorphic means the full lookup, every time.
+
+### What an inline cache buys, measured
+
+`tools/../cargo run -- ic f.js` reports it. For a thousand reads of one
+shape:
+
+```
+  LoadProperty slot 0: Uninitialized -> Monomorphic  (map 0xd48, 1 tracked)
+  LoadProperty slot 0: Monomorphic   -> Polymorphic  (map 0xdb8, 2 tracked)
+  LoadProperty slot 0: Polymorphic   -> Megamorphic  (map 0xf08, 0 tracked)
+
+  999 hits, 22 misses (98% hit rate)
+```
+
+The misses that remain are the global accesses and the stores that add
+properties -- the two cases listed above as uncached.
 
 ### What the offsets do and do not catch
 

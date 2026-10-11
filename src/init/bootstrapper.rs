@@ -98,6 +98,43 @@ impl Isolate {
         self.new_js_function(shared).tagged()
     }
 
+    /// The feedback vector of the script last run, for `--trace-ic`.
+    pub fn script_feedback_vector(
+        &self,
+    ) -> Option<crate::objects::feedback_vector::FeedbackVector> {
+        let function = self.script_function.to_strong_heap_object()?;
+        let function = JSFunction::unchecked_cast(function);
+        crate::objects::feedback_vector::try_cast_feedback_vector(
+            &self.heap,
+            function.feedback_vector(&self.heap),
+        )
+    }
+
+    /// `--trace-ic`: every feedback site of the script and its state.
+    pub fn trace_ic(&self) -> Vec<String> {
+        let Some(vector) = self.script_feedback_vector() else {
+            return Vec::new();
+        };
+        let mut lines = Vec::new();
+        let mut slot = 0;
+        let length = vector.length(&self.heap);
+        while slot < length {
+            let kind = vector.get_kind(&self.heap, slot);
+            // Skip the sites that never ran: in a script most of them are
+            // global accesses, which `vx` does not cache, and listing them
+            // buries the ones that did learn something.
+            if kind != crate::objects::feedback_vector::FeedbackSlotKind::Invalid {
+                let nexus =
+                    crate::objects::feedback_vector::FeedbackNexus::new(&self.heap, vector, slot);
+                if self.ic_state(nexus) != crate::common::globals::InlineCacheState::Uninitialized {
+                    lines.push(self.describe_ic(vector, slot));
+                }
+            }
+            slot += 1;
+        }
+        lines
+    }
+
     pub(crate) fn write_output(&mut self, line: &str) {
         self.output.push(line.to_string());
     }
@@ -138,6 +175,9 @@ impl Isolate {
                 Some(bytecode),
                 function.declared_parameter_count,
             );
+            let kinds = function.data.feedback_slot_kinds.clone();
+            let metadata = self.new_feedback_metadata(&kinds);
+            shared.set_feedback_metadata(&mut self.heap, metadata.tagged());
             self.shared_function_infos.push(shared.tagged());
         }
 
@@ -153,6 +193,7 @@ impl Isolate {
         }
 
         let script = self.closure_for(0);
+        self.script_function = script;
         let script = JSFunction::unchecked_cast(script.to_strong_heap_object().unwrap());
         let receiver = self.undefined_value();
         match self.execute(script, receiver, &[]) {

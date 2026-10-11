@@ -96,6 +96,41 @@ pub const fn is_aligned(value: u64, alignment: u64) -> bool {
     value & (alignment - 1) == 0
 }
 
+/// `InlineCacheState` from `src/common/globals.h`.
+///
+/// The lattice an inline cache climbs. It only ever moves one way -- a site
+/// that has gone megamorphic never goes back -- which is what makes the
+/// machine terminate instead of thrashing.
+///
+/// ```text
+///   UNINITIALIZED   never executed
+///   MONOMORPHIC     one receiver shape seen; one map check, then a fixed slot
+///   POLYMORPHIC     a few shapes seen; a short linear scan of map checks
+///   MEGAMORPHIC     too many shapes; give up and do the full lookup
+/// ```
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum InlineCacheState {
+    /// No feedback will be collected.
+    NoFeedback,
+    /// Has never been executed.
+    Uninitialized,
+    /// Has been executed and only one receiver type has been seen.
+    Monomorphic,
+    /// Multiple receiver types have been seen.
+    Polymorphic,
+    /// Many receiver types have been seen.
+    Megamorphic,
+    /// A generic handler is installed and no extra feedback is recorded.
+    Generic,
+}
+
+/// `DEFAULT_MAX_POLYMORPHIC_MAP_COUNT` from `src/flags/flag-definitions.h`:
+/// how many shapes a site tracks before giving up.
+///
+/// Four. Small on purpose -- past a handful, the linear scan of map checks
+/// costs more than the lookup it is avoiding.
+pub const K_MAX_POLYMORPHIC_MAP_COUNT: usize = 4;
+
 pub const K_KB: usize = 1024;
 pub const K_MB: usize = K_KB * 1024;
 

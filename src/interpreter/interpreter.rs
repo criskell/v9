@@ -54,6 +54,9 @@ const K_MAX_CALL_DEPTH: usize = 180;
 /// The part of the interpreter frame that is not on the value stack.
 struct InterpreterFrame {
     bytecode: BytecodeArray,
+    /// This closure's feedback vector, where the inline caches live.
+    /// `None` for a function compiled without one.
+    feedback_vector: Option<crate::objects::feedback_vector::FeedbackVector>,
     /// Where the receiver sits on `isolate.stack`; parameter *i* is at
     /// `params_base + i`.
     params_base: usize,
@@ -106,8 +109,18 @@ impl Isolate {
             self.stack.push(undefined);
         }
 
+        // `--trace-ic` and, in V8, the tier-up decision read this.
+        let feedback_vector = crate::objects::feedback_vector::try_cast_feedback_vector(
+            &self.heap,
+            function.feedback_vector(&self.heap),
+        );
+        if let Some(vector) = feedback_vector {
+            vector.increment_invocation_count(&mut self.heap);
+        }
+
         let frame = InterpreterFrame {
             bytecode,
+            feedback_vector,
             params_base,
             params_count,
             registers_base,
@@ -242,7 +255,8 @@ impl Isolate {
                 Bytecode::GetNamedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let name = self.constant_name(bytecode_array, operand(self, 1));
-                    accumulator = self.load_property(object, name)?;
+                    let slot = operand(self, 2);
+                    accumulator = self.load_named_property_ic(frame, object, name, slot)?;
                 }
                 Bytecode::GetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
@@ -252,7 +266,8 @@ impl Isolate {
                 Bytecode::SetNamedProperty | Bytecode::DefineNamedOwnProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let name = self.constant_name(bytecode_array, operand(self, 1));
-                    self.store_property(object, name, accumulator)?;
+                    let slot = operand(self, 2);
+                    self.store_named_property_ic(frame, object, name, accumulator, slot)?;
                     // Both bytecodes clobber the accumulator.
                     accumulator = self.undefined_value();
                 }
@@ -556,6 +571,62 @@ impl Isolate {
         }
         let text = self.to_string(key);
         self.internalize_string(&text).tagged()
+    }
+
+    /// `LoadIC`: the cached path when this site has a feedback vector, and
+    /// the plain lookup when it does not.
+    fn load_named_property_ic(
+        &mut self,
+        frame: &InterpreterFrame,
+        object: Tagged,
+        name: Tagged,
+        slot: i32,
+    ) -> ExecutionResult {
+        let Some(vector) = frame.feedback_vector else {
+            return self.load_property(object, name);
+        };
+        match object.to_strong_heap_object() {
+            Some(receiver)
+                if crate::objects::instance_type::is_js_receiver(
+                    self.heap.instance_type(receiver),
+                ) =>
+            {
+                Ok(self.load_ic(JSObject::unchecked_cast(receiver), name, vector, slot))
+            }
+            // Not an object: the error path, which no cache helps with.
+            _ => self.load_property(object, name),
+        }
+    }
+
+    /// `StoreIC`
+    fn store_named_property_ic(
+        &mut self,
+        frame: &InterpreterFrame,
+        object: Tagged,
+        name: Tagged,
+        value: Tagged,
+        slot: i32,
+    ) -> ExecutionResult {
+        let Some(vector) = frame.feedback_vector else {
+            return self.store_property(object, name, value);
+        };
+        match object.to_strong_heap_object() {
+            Some(receiver)
+                if crate::objects::instance_type::is_js_receiver(
+                    self.heap.instance_type(receiver),
+                ) =>
+            {
+                self.store_ic(
+                    JSObject::unchecked_cast(receiver),
+                    name,
+                    value,
+                    vector,
+                    slot,
+                );
+                Ok(value)
+            }
+            _ => self.store_property(object, name, value),
+        }
     }
 
     fn load_property(&mut self, object: Tagged, name: Tagged) -> ExecutionResult {

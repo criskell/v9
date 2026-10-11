@@ -323,6 +323,69 @@ impl Isolate {
         pool
     }
 
+    /// `Factory::NewFeedbackMetadata`: the slot kinds, shared by every
+    /// closure over one function literal.
+    pub fn new_feedback_metadata(
+        &mut self,
+        kinds: &[crate::objects::feedback_vector::FeedbackSlotKind],
+    ) -> crate::objects::feedback_vector::FeedbackMetadata {
+        use crate::objects::feedback_vector::FeedbackMetadata;
+        let slot_count = kinds.len() as i32;
+        let map = self
+            .roots
+            .feedback_metadata_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.heap.allocate_raw_or_fail(
+            FeedbackMetadata::size_for(slot_count) as usize,
+            AllocationType::Old,
+        );
+        self.heap.set_map(object, map);
+        let metadata = FeedbackMetadata::unchecked_cast(object);
+        metadata.set_slot_count(&mut self.heap, slot_count);
+        for (slot, kind) in kinds.iter().enumerate() {
+            metadata.set_kind(&mut self.heap, slot as i32, *kind);
+        }
+        metadata
+    }
+
+    /// `Factory::NewFeedbackVector`: one per closure.
+    ///
+    /// Every slot starts as the uninitialized sentinel, which is what makes
+    /// a fresh site report `UNINITIALIZED` without a separate state field.
+    pub fn new_feedback_vector(
+        &mut self,
+        shared: crate::objects::shared_function_info::SharedFunctionInfo,
+    ) -> crate::objects::feedback_vector::FeedbackVector {
+        use crate::objects::feedback_vector::{FeedbackMetadata, FeedbackVector};
+
+        let metadata = shared.feedback_metadata(&self.heap);
+        let length = match metadata.to_strong_heap_object() {
+            Some(object) => FeedbackMetadata::unchecked_cast(object).slot_count(&self.heap),
+            None => 0,
+        };
+        let map = self
+            .roots
+            .feedback_vector_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.heap.allocate_raw_or_fail(
+            FeedbackVector::size_for(length) as usize,
+            AllocationType::Old,
+        );
+        self.heap.set_map(object, map);
+        let vector = FeedbackVector::unchecked_cast(object);
+        vector.set_length(&mut self.heap, length);
+        vector.set_invocation_count(&mut self.heap, 0);
+        vector.set_shared_function_info(&mut self.heap, shared.tagged());
+        vector.set_metadata(&mut self.heap, metadata);
+        let uninitialized = self.roots.uninitialized_value;
+        for slot in 0..length {
+            vector.set(&mut self.heap, slot, uninitialized);
+        }
+        vector
+    }
+
     /// `Factory::NewSharedFunctionInfo`
     pub fn new_shared_function_info(
         &mut self,
@@ -347,6 +410,7 @@ impl Isolate {
         info.set_length(&mut self.heap, declared_parameter_count);
         info.set_formal_parameter_count(&mut self.heap, declared_parameter_count + 1);
         info.set_flags(&mut self.heap, 0);
+        info.set_feedback_metadata(&mut self.heap, self.roots.undefined_value);
         match bytecode {
             Some(bytecode) => info.set_function_data(&mut self.heap, bytecode.tagged()),
             None => info.set_function_data(&mut self.heap, self.roots.undefined_value),
@@ -384,7 +448,15 @@ impl Isolate {
         let object = self.new_js_object_from_map(map);
         let function = JSFunction::unchecked_cast(object.object());
         function.set_shared_function_info(&mut self.heap, shared.tagged());
-        function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
+        // Each closure gets its own feedback vector: two closures over the
+        // same literal can be called with different shapes, and sharing one
+        // vector would make each pollute the other's caches.
+        if is_native {
+            function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
+        } else {
+            let vector = self.new_feedback_vector(shared);
+            function.set_feedback_vector(&mut self.heap, vector.tagged());
+        }
         function
     }
 
@@ -459,9 +531,19 @@ impl Isolate {
             it::PROPERTY_ARRAY_TYPE => {
                 PropertyArray::size_for(PropertyArray::unchecked_cast(object).length(&self.heap))
             }
-            it::TRANSITION_ARRAY_TYPE | it::FEEDBACK_VECTOR_TYPE => {
+            it::TRANSITION_ARRAY_TYPE => {
                 use crate::objects::fixed_array::WeakFixedArray;
                 WeakFixedArray::size_for(WeakFixedArray::unchecked_cast(object).length(&self.heap))
+            }
+            it::FEEDBACK_VECTOR_TYPE => {
+                use crate::objects::feedback_vector::FeedbackVector;
+                FeedbackVector::size_for(FeedbackVector::unchecked_cast(object).length(&self.heap))
+            }
+            it::FEEDBACK_METADATA_TYPE => {
+                use crate::objects::feedback_vector::FeedbackMetadata;
+                FeedbackMetadata::size_for(
+                    FeedbackMetadata::unchecked_cast(object).slot_count(&self.heap),
+                )
             }
             it::DESCRIPTOR_ARRAY_TYPE => DescriptorArray::size_for(
                 DescriptorArray::unchecked_cast(object).number_of_all_descriptors(&self.heap),

@@ -42,7 +42,11 @@ const IS_NATIVE_BIT: u32 = 0;
 impl SharedFunctionInfo {
     pub const K_FUNCTION_DATA_OFFSET: i32 = K_TAGGED_SIZE;
     pub const K_NAME_OFFSET: i32 = Self::K_FUNCTION_DATA_OFFSET + K_TAGGED_SIZE;
-    pub const K_LENGTH_OFFSET: i32 = Self::K_NAME_OFFSET + K_TAGGED_SIZE;
+    /// `SharedFunctionInfo::feedback_metadata`. V8 overloads
+    /// `outer_scope_info_or_feedback_metadata` for this; `vx` has no scope
+    /// info, so it is its own field.
+    pub const K_FEEDBACK_METADATA_OFFSET: i32 = Self::K_NAME_OFFSET + K_TAGGED_SIZE;
+    pub const K_LENGTH_OFFSET: i32 = Self::K_FEEDBACK_METADATA_OFFSET + K_TAGGED_SIZE;
     pub const K_FORMAL_PARAMETER_COUNT_OFFSET: i32 = Self::K_LENGTH_OFFSET + 2;
     pub const K_FLAGS_OFFSET: i32 = Self::K_FORMAL_PARAMETER_COUNT_OFFSET + 2;
     /// `SharedFunctionInfo::kSize`
@@ -94,6 +98,23 @@ impl SharedFunctionInfo {
     #[inline]
     pub fn name_address(self) -> Address {
         self.field(Self::K_NAME_OFFSET)
+    }
+
+    /// `SharedFunctionInfo::feedback_metadata`: the slot kinds of this
+    /// function's feedback vector, shared by every closure over it.
+    #[inline]
+    pub fn feedback_metadata(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_FEEDBACK_METADATA_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_feedback_metadata(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_FEEDBACK_METADATA_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn feedback_metadata_address(self) -> Address {
+        self.field(Self::K_FEEDBACK_METADATA_OFFSET)
     }
 
     /// `SharedFunctionInfo::length`: declared parameters, receiver excluded.
@@ -164,9 +185,10 @@ mod tests {
     fn layout() {
         assert_eq!(SharedFunctionInfo::K_FUNCTION_DATA_OFFSET, 8);
         assert_eq!(SharedFunctionInfo::K_NAME_OFFSET, 16);
-        assert_eq!(SharedFunctionInfo::K_LENGTH_OFFSET, 24);
-        assert_eq!(SharedFunctionInfo::K_FORMAL_PARAMETER_COUNT_OFFSET, 26);
-        assert_eq!(SharedFunctionInfo::K_FLAGS_OFFSET, 28);
-        assert_eq!(SharedFunctionInfo::K_SIZE, 32);
+        assert_eq!(SharedFunctionInfo::K_FEEDBACK_METADATA_OFFSET, 24);
+        assert_eq!(SharedFunctionInfo::K_LENGTH_OFFSET, 32);
+        assert_eq!(SharedFunctionInfo::K_FORMAL_PARAMETER_COUNT_OFFSET, 34);
+        assert_eq!(SharedFunctionInfo::K_FLAGS_OFFSET, 36);
+        assert_eq!(SharedFunctionInfo::K_SIZE, 40);
     }
 }
