@@ -132,6 +132,14 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::LdaConstant, &[index])
     }
 
+    pub fn load_class_boilerplate(&mut self, members: &[(i32, String)]) -> &mut Self {
+        let index = self
+            .bytecode_array_writer
+            .constant_array_builder_mut()
+            .insert_class_boilerplate(members) as i32;
+        self.output(Bytecode::LdaConstant, &[index])
+    }
+
     pub fn load_literal_name(&mut self, value: &str) -> &mut Self {
         let index = self.insert_name(value);
         self.output(Bytecode::LdaConstant, &[index])
@@ -527,7 +535,10 @@ impl BytecodeArrayBuilder {
         function_id: crate::runtime::runtime::FunctionId,
         args: RegisterList,
     ) -> &mut Self {
-        debug_assert_eq!(function_id.function().nargs, args.register_count());
+        debug_assert!(
+            function_id.function().nargs == -1
+                || function_id.function().nargs == args.register_count()
+        );
         self.output(
             Bytecode::CallRuntime,
             &[

@@ -198,6 +198,10 @@ fn print_bytecode(_path: &str, source: &str) {
                 ConstantEntry::Number(value) => value.to_string(),
                 ConstantEntry::String(value) => format!("{value:?}"),
                 ConstantEntry::Name(value) => format!("#{value}"),
+                ConstantEntry::ClassBoilerplate(members) => {
+                    let names: Vec<&str> = members.iter().map(|(_, name)| name.as_str()).collect();
+                    format!("<class {{{}}}>", names.join(", "))
+                }
                 ConstantEntry::FunctionLiteral(index) => format!("<function {index}>"),
                 ConstantEntry::ScopeInfo(names) => format!("<scope {}>", names.join(", ")),
                 ConstantEntry::TheHole => "<the_hole>".to_string(),

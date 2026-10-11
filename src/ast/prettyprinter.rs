@@ -326,6 +326,31 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
             }
         }
         Expression::FunctionLiteral { function, .. } => print_function(out, function, depth),
+        Expression::ClassLiteral { class, .. } => {
+            out.push_str(&format!(
+                "CLASS LITERAL {}\n",
+                class.name.as_deref().unwrap_or("(anonymous)")
+            ));
+            if let Some(extends) = &class.extends {
+                indent(out, depth + 1);
+                out.push_str("EXTENDS\n");
+                print_expression(out, extends, depth + 2);
+            }
+            indent(out, depth + 1);
+            out.push_str("CONSTRUCTOR\n");
+            print_function(out, &class.constructor, depth + 2);
+            for property in &class.public_members {
+                indent(out, depth + 1);
+                let kind = match property.kind {
+                    ClassLiteralPropertyKind::Method => "METHOD",
+                    ClassLiteralPropertyKind::Getter => "GETTER",
+                    ClassLiteralPropertyKind::Setter => "SETTER",
+                };
+                let is_static = if property.is_static { "STATIC " } else { "" };
+                out.push_str(&format!("{is_static}{kind}\n"));
+                print_function(out, &property.value, depth + 2);
+            }
+        }
         Expression::Sequence { expressions, .. } => {
             out.push_str("SEQUENCE\n");
             for expression in expressions {

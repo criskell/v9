@@ -285,7 +285,7 @@ impl Parser {
             Token::Switch | Token::With | Token::Debugger => {
                 Err(self.unexpected_token_with_hint("this statement is not implemented"))
             }
-            Token::Class => Err(self.unexpected_token_with_hint("classes are not implemented")),
+            Token::Class => self.parse_class_declaration(),
             _ => self.parse_expression_statement(),
         }
     }
@@ -1067,7 +1067,13 @@ impl Parser {
                     position,
                 })
             }
-            Token::Class => Err(self.unexpected_token_with_hint("classes are not implemented")),
+            Token::Class => {
+                let class = self.parse_class_literal()?;
+                Ok(Expression::ClassLiteral {
+                    class: Box::new(class),
+                    position,
+                })
+            }
             Token::Div | Token::AssignDiv => {
                 Err(self
                     .unexpected_token_with_hint("regular expression literals are not implemented"))
@@ -1144,6 +1150,148 @@ impl Parser {
         self.expect(Token::RightBrace)?;
         Ok(Expression::ObjectLiteral {
             properties,
+            position,
+        })
+    }
+
+    /// `ParserBase::ParseClassDeclaration`
+    fn parse_class_declaration(&mut self) -> Result<Statement> {
+        let position = self.peek_position();
+        let class = self.parse_class_literal()?;
+        let name = class
+            .name
+            .clone()
+            .ok_or_else(|| self.unexpected_token_with_hint("a class declaration needs a name"))?;
+        self.declare_variable(&name, VariableMode::Let);
+        Ok(Statement::Expression {
+            expression: Expression::Assignment {
+                op: Token::Assign,
+                target: Box::new(Expression::VariableProxy {
+                    name,
+                    position,
+                }),
+                value: Box::new(Expression::ClassLiteral {
+                    class: Box::new(class),
+                    position,
+                }),
+                position,
+            },
+            position,
+        })
+    }
+
+    /// `ParserBase::ParseClassLiteral`
+    fn parse_class_literal(&mut self) -> Result<ClassLiteral> {
+        let position = self.peek_position();
+        self.expect(Token::Class)?;
+
+        let name = if self.peek().is_any_identifier() && self.peek() != Token::Extends {
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        let extends = if self.check(Token::Extends) {
+            Some(self.parse_left_hand_side_expression()?)
+        } else {
+            None
+        };
+
+        self.expect(Token::LeftBrace)?;
+        let mut public_members = Vec::new();
+        let mut constructor = None;
+        while self.peek() != Token::RightBrace {
+            if self.check(Token::Semicolon) {
+                continue;
+            }
+            let (property, is_constructor) = self.parse_class_property_definition()?;
+            if is_constructor {
+                if constructor.is_some() {
+                    return Err(self.unexpected_token_with_hint("a class may have one constructor"));
+                }
+                constructor = Some(property.value);
+            } else {
+                public_members.push(property);
+            }
+        }
+        self.expect(Token::RightBrace)?;
+
+        let constructor = match constructor {
+            Some(constructor) => constructor,
+            None => self.default_constructor(name.clone(), position)?,
+        };
+
+        Ok(ClassLiteral {
+            name,
+            extends,
+            constructor,
+            public_members,
+            position,
+        })
+    }
+
+    /// `ParserBase::ParseClassPropertyDefinition`
+    fn parse_class_property_definition(&mut self) -> Result<(ClassLiteralProperty, bool)> {
+        let is_static = self.peek() == Token::Static
+            && !matches!(
+                self.peek_ahead(),
+                Token::LeftParen | Token::Assign | Token::Semicolon | Token::RightBrace
+            );
+        if is_static {
+            self.consume(Token::Static);
+        }
+
+        let mut kind = ClassLiteralPropertyKind::Method;
+        if matches!(self.peek(), Token::Get | Token::Set)
+            && !matches!(
+                self.peek_ahead(),
+                Token::LeftParen | Token::Assign | Token::Semicolon | Token::RightBrace
+            )
+        {
+            kind = if self.next() == Token::Get {
+                ClassLiteralPropertyKind::Getter
+            } else {
+                ClassLiteralPropertyKind::Setter
+            };
+        }
+
+        let position = self.peek_position();
+        if self.peek() == Token::LeftBracket {
+            return Err(self.unexpected_token_with_hint("computed class members are not implemented"));
+        }
+        let name = self.parse_property_name()?;
+        if self.peek() != Token::LeftParen {
+            return Err(self.unexpected_token_with_hint("class fields are not implemented"));
+        }
+        let value = self.parse_function_literal(Some(name.clone()), position)?;
+
+        let is_constructor =
+            !is_static && kind == ClassLiteralPropertyKind::Method && name == "constructor";
+        let property = ClassLiteralProperty {
+            key: PropertyKey::Name(name),
+            value,
+            kind,
+            is_static,
+        };
+        Ok((property, is_constructor))
+    }
+
+    /// `ParserBase::DefaultConstructor`
+    fn default_constructor(
+        &mut self,
+        name: Option<String>,
+        position: Position,
+    ) -> Result<FunctionLiteral> {
+        self.function_state.push(FunctionState::default());
+        self.scope_chain.push(ScopeKind::Function);
+        let scope = self.scope_chain.pop();
+        let state = self.function_state.pop().expect("the function state");
+        Ok(FunctionLiteral {
+            name,
+            parameters: Vec::new(),
+            body: Vec::new(),
+            scope,
+            hoisted_functions: state.hoisted_functions,
             position,
         })
     }

@@ -373,6 +373,10 @@ impl Isolate {
                     let names = names.clone();
                     self.new_scope_info(&names).tagged()
                 }
+                ConstantEntry::ClassBoilerplate(members) => {
+                    let members = members.clone();
+                    self.new_class_boilerplate(&members).tagged()
+                }
                 ConstantEntry::TheHole => self.the_hole_value(),
             };
             let pool = FixedArray::unchecked_cast(pool_handle.object(self));
@@ -401,6 +405,59 @@ impl Isolate {
             info.set_context_local_name(&mut self.heap, index as i32, interned);
         }
         info
+    }
+
+    /// `ClassBoilerplate::New`
+    pub fn new_class_boilerplate(
+        &mut self,
+        members: &[(i32, String)],
+    ) -> crate::objects::literal_objects::ClassBoilerplate {
+        use crate::objects::literal_objects::ClassBoilerplate;
+        use crate::objects::smi::Smi;
+
+        let scope = self.handle_scope();
+        let mut keys = Vec::with_capacity(members.len());
+        for (_, name) in members {
+            let name = name.clone();
+            let interned = self.internalize_string(&name).tagged();
+            keys.push(self.create_handle(interned));
+        }
+
+        let length = ClassBoilerplate::K_FIRST_MEMBER_INDEX
+            + members.len() as i32 * ClassBoilerplate::K_MEMBER_SIZE;
+        let array = self.new_fixed_array_tenured(length);
+        let array_handle = self.create_object_handle(array.object());
+        let arguments_count = ClassBoilerplate::K_FIRST_DYNAMIC_ARGUMENT_INDEX
+            + members.len() as i32;
+        let array = crate::objects::fixed_array::FixedArray::unchecked_cast(
+            array_handle.object(self),
+        );
+        array.set(
+            &mut self.heap,
+            ClassBoilerplate::K_ARGUMENTS_COUNT_INDEX,
+            Smi::from_int(arguments_count),
+        );
+        for (member, (flags, _)) in members.iter().enumerate() {
+            let base = ClassBoilerplate::K_FIRST_MEMBER_INDEX
+                + member as i32 * ClassBoilerplate::K_MEMBER_SIZE;
+            let key = keys[member].get(self);
+            let array = crate::objects::fixed_array::FixedArray::unchecked_cast(
+                array_handle.object(self),
+            );
+            array.set(
+                &mut self.heap,
+                base + ClassBoilerplate::K_MEMBER_FLAGS_OFFSET,
+                Smi::from_int(*flags),
+            );
+            array.set(
+                &mut self.heap,
+                base + ClassBoilerplate::K_MEMBER_KEY_OFFSET,
+                key,
+            );
+        }
+        let boilerplate = ClassBoilerplate::unchecked_cast(array_handle.object(self));
+        self.close_handle_scope(scope);
+        boilerplate
     }
 
     pub fn new_function_context(

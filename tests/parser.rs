@@ -155,6 +155,19 @@ fn shape(expression: &Expression) -> String {
             function.name.as_deref().unwrap_or(""),
             function.parameters.join(", ")
         ),
+        Expression::ClassLiteral { class, .. } => format!(
+            "class {}({})",
+            class.name.as_deref().unwrap_or(""),
+            class
+                .public_members
+                .iter()
+                .map(|property| match &property.key {
+                    PropertyKey::Name(name) => name.clone(),
+                    PropertyKey::Computed(key) => shape(key),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Expression::Sequence { expressions, .. } => format!(
             "({})",
             expressions
@@ -556,7 +569,8 @@ fn lexical_errors_are_reported_and_not_swallowed() {
 fn unimplemented_syntax_fails_loudly_rather_than_silently() {
     // Each of these would be a wrong parse if it were accepted.
     for (source, expected) in [
-        ("class A {}", "classes"),
+        ("class A { [k]() {} }", "computed class members"),
+        ("class A { x = 1; }", "class fields"),
         ("x => x", "arrow functions"),
         ("() => 1", "arrow functions"),
         ("for (var x of y) {}", "for...of"),

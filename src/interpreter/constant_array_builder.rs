@@ -15,6 +15,7 @@ pub enum ConstantEntry {
     Name(String),
     FunctionLiteral(usize),
     ScopeInfo(Vec<String>),
+    ClassBoilerplate(Vec<(i32, String)>),
     TheHole,
 }
 
@@ -185,6 +186,10 @@ impl ConstantArrayBuilder {
             DedupKey::Name(value.to_owned()),
             ConstantEntry::Name(value.to_owned()),
         )
+    }
+
+    pub fn insert_class_boilerplate(&mut self, members: &[(i32, String)]) -> usize {
+        self.allocate_index(ConstantEntry::ClassBoilerplate(members.to_vec()))
     }
 
     pub fn insert_scope_info(&mut self, names: &[String]) -> usize {

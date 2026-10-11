@@ -60,6 +60,32 @@ pub enum PropertyKey {
     Computed(Expression),
 }
 
+/// `ClassLiteralProperty`
+#[derive(Clone, Debug)]
+pub struct ClassLiteralProperty {
+    pub key: PropertyKey,
+    pub value: FunctionLiteral,
+    pub kind: ClassLiteralPropertyKind,
+    pub is_static: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ClassLiteralPropertyKind {
+    Method,
+    Getter,
+    Setter,
+}
+
+/// `ClassLiteral`
+#[derive(Clone, Debug)]
+pub struct ClassLiteral {
+    pub name: Option<String>,
+    pub extends: Option<Expression>,
+    pub constructor: FunctionLiteral,
+    pub public_members: Vec<ClassLiteralProperty>,
+    pub position: Position,
+}
+
 /// `FunctionLiteral`
 #[derive(Clone, Debug)]
 pub struct FunctionLiteral {
@@ -176,6 +202,12 @@ pub enum Expression {
         position: Position,
     },
 
+    /// `ClassLiteral`
+    ClassLiteral {
+        class: Box<ClassLiteral>,
+        position: Position,
+    },
+
     Sequence {
         expressions: Vec<Expression>,
         position: Position,
@@ -207,6 +239,7 @@ impl Expression {
             | Expression::ObjectLiteral { position, .. }
             | Expression::ArrayLiteral { position, .. }
             | Expression::FunctionLiteral { position, .. }
+            | Expression::ClassLiteral { position, .. }
             | Expression::Sequence { position, .. } => *position,
         }
     }

@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn unimplemented_syntax_is_reported_rather_than_mis_run() {
         let mut isolate = Isolate::new();
-        let error = isolate.run_script("class A {}").unwrap_err();
-        assert!(error.contains("classes"), "{error}");
+        let error = isolate.run_script("function* g() {}").unwrap_err();
+        assert!(error.contains("generators"), "{error}");
     }
 }

@@ -619,6 +619,7 @@ impl BytecodeGenerator {
                 callee, arguments, ..
             } => self.visit_call(callee, arguments),
             Expression::ObjectLiteral { properties, .. } => self.visit_object_literal(properties),
+            Expression::ClassLiteral { class, .. } => self.visit_class_literal(class),
             Expression::ArrayLiteral { values, .. } => self.visit_array_literal(values),
             Expression::FunctionLiteral { function, .. } => {
                 let index = self.compile_function(function)?;
@@ -1198,6 +1199,76 @@ impl BytecodeGenerator {
             }
         }
 
+        self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::VisitClassLiteral`
+    fn visit_class_literal(&mut self, class: &ClassLiteral) -> Result<()> {
+        self.build_class_literal(class)
+    }
+
+    /// `BytecodeGenerator::BuildClassLiteral`
+    fn build_class_literal(&mut self, class: &ClassLiteral) -> Result<()> {
+        use crate::objects::literal_objects::{ClassBoilerplate, ValueKind};
+
+        let mut members = Vec::with_capacity(class.public_members.len());
+        for property in &class.public_members {
+            let PropertyKey::Name(name) = &property.key else {
+                unreachable!()
+            };
+            let value_kind = match property.kind {
+                ClassLiteralPropertyKind::Method => ValueKind::ConstantKind,
+                ClassLiteralPropertyKind::Getter => ValueKind::GetterKind,
+                ClassLiteralPropertyKind::Setter => ValueKind::SetterKind,
+            };
+            members.push((
+                ClassBoilerplate::encode_flags(value_kind, property.is_static),
+                name.clone(),
+            ));
+        }
+
+        let mark = self.builder.register_allocator().next_register_index();
+        let class_constructor = self.builder.register_allocator().new_register();
+        let mut args = self.builder.register_allocator().new_growable_register_list();
+
+        let class_boilerplate = self.builder.register_allocator().grow_register_list(&mut args);
+        let class_constructor_in_args =
+            self.builder.register_allocator().grow_register_list(&mut args);
+        let super_class = self.builder.register_allocator().grow_register_list(&mut args);
+        debug_assert_eq!(
+            ClassBoilerplate::K_FIRST_DYNAMIC_ARGUMENT_INDEX,
+            args.register_count()
+        );
+
+        match &class.extends {
+            Some(extends) => self.visit_for_accumulator_value(extends)?,
+            None => {
+                self.builder.load_the_hole();
+            }
+        }
+        self.builder.store_accumulator_in_register(super_class);
+
+        let index = self.compile_function(&class.constructor)?;
+        self.builder.create_closure(index);
+        self.builder
+            .store_accumulator_in_register(class_constructor)
+            .move_register(class_constructor, class_constructor_in_args)
+            .load_class_boilerplate(&members)
+            .store_accumulator_in_register(class_boilerplate);
+
+        for property in &class.public_members {
+            let value = self.builder.register_allocator().grow_register_list(&mut args);
+            let index = self.compile_function(&property.value)?;
+            self.builder
+                .create_closure(index)
+                .store_accumulator_in_register(value);
+        }
+
+        self.builder
+            .call_runtime(crate::runtime::runtime::FunctionId::DefineClass, args);
+
+        self.builder.load_accumulator_with_register(class_constructor);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
     }

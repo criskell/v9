@@ -3,6 +3,7 @@
 #[repr(u16)]
 pub enum FunctionId {
     DefineAccessorPropertyUnchecked,
+    DefineClass,
 }
 
 /// `Runtime::Function`
@@ -13,12 +14,20 @@ pub struct Function {
     pub result_size: i32,
 }
 
-const K_INTRINSIC_FUNCTIONS: &[Function] = &[Function {
-    function_id: FunctionId::DefineAccessorPropertyUnchecked,
-    name: "DefineAccessorPropertyUnchecked",
-    nargs: 5,
-    result_size: 1,
-}];
+const K_INTRINSIC_FUNCTIONS: &[Function] = &[
+    Function {
+        function_id: FunctionId::DefineAccessorPropertyUnchecked,
+        name: "DefineAccessorPropertyUnchecked",
+        nargs: 5,
+        result_size: 1,
+    },
+    Function {
+        function_id: FunctionId::DefineClass,
+        name: "DefineClass",
+        nargs: -1,
+        result_size: 1,
+    },
+];
 
 impl FunctionId {
     pub fn to_u16(self) -> u16 {
@@ -46,6 +55,7 @@ impl crate::execution::isolate::Isolate {
             FunctionId::DefineAccessorPropertyUnchecked => {
                 self.runtime_define_accessor_property_unchecked(args)
             }
+            FunctionId::DefineClass => self.runtime_define_class(args),
         }
     }
 }
