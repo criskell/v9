@@ -92,7 +92,6 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
                 }
             }
         }
-        Statement::FunctionDeclaration { function, .. } => print_function(out, function, depth),
         Statement::If {
             condition,
             then_statement,

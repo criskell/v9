@@ -436,14 +436,18 @@ impl Parser {
         }
         let name = self.parse_identifier()?;
         let function = self.parse_function_literal(Some(name.clone()), position)?;
-        // A function declaration is hoisted with its definition, so it is
-        // callable before the line it is written on.
-        self.state().hoisted_functions.push(function.clone());
+        // `Parser::DeclareFunction`: the function is recorded on the
+        // enclosing scope and an `EmptyStatement` is left in the body.
+        //
+        // It is not a statement, and that is the whole point: the binding is
+        // created and initialized when the scope is entered, which is why a
+        // function can be called above the line that defines it. Leaving a
+        // `FunctionDeclaration` node in the statement list would make the
+        // bytecode generator emit the closure twice -- once at scope entry
+        // and once where it is written.
+        self.state().hoisted_functions.push(function);
         self.declare_hoisted_var(&name);
-        Ok(Statement::FunctionDeclaration {
-            function: Box::new(function),
-            position,
-        })
+        Ok(Statement::Empty { position })
     }
 
     /// `ParserBase::ParseIfStatement`

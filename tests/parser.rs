@@ -308,10 +308,7 @@ fn a_newline_after_return_ends_the_statement() {
     // The classic restricted production: this returns undefined, it does
     // not return `1`.
     let program = parse("function f() {\n  return\n  1\n}");
-    let function = match &program.body[0] {
-        Statement::FunctionDeclaration { function, .. } => function,
-        other => panic!("{other:?}"),
-    };
+    let function = &program.hoisted_functions[0];
     assert_eq!(
         function.body.len(),
         2,
@@ -326,10 +323,7 @@ fn a_newline_after_return_ends_the_statement() {
 
     // On the same line it does return the value.
     let program = parse("function f() { return 1 }");
-    let function = match &program.body[0] {
-        Statement::FunctionDeclaration { function, .. } => function,
-        other => panic!("{other:?}"),
-    };
+    let function = &program.hoisted_functions[0];
     match &function.body[0] {
         Statement::Return { value, .. } => assert!(value.is_some()),
         other => panic!("{other:?}"),
@@ -375,10 +369,7 @@ fn var_declarations_hoist_to_the_enclosing_function() {
     );
     assert_eq!(program.hoisted_vars, vec!["a", "f"]);
 
-    let function = match &program.body[1] {
-        Statement::FunctionDeclaration { function, .. } => function,
-        other => panic!("{other:?}"),
-    };
+    let function = &program.hoisted_functions[0];
     assert_eq!(
         function.hoisted_vars,
         vec!["b", "c", "d"],
@@ -387,13 +378,23 @@ fn var_declarations_hoist_to_the_enclosing_function() {
 }
 
 #[test]
-fn function_declarations_are_hoisted_with_their_bodies() {
-    // Calling before the definition is legal, which is why the declaration
-    // has to be recorded separately from its position in the body.
+fn a_function_declaration_is_not_a_statement() {
+    // Calling before the definition is legal, because the binding is created
+    // when the scope is entered. So the declaration belongs to the scope and
+    // leaves an empty statement where it was written -- V8's
+    // `Parser::DeclareFunction` returns `EmptyStatement`.
     let program = parse("f(); function f() { return 1; }");
     assert_eq!(program.hoisted_functions.len(), 1);
     assert_eq!(program.hoisted_functions[0].name.as_deref(), Some("f"));
     assert_eq!(program.body.len(), 2);
+    assert!(
+        matches!(program.body[1], Statement::Empty { .. }),
+        "the declaration should leave an empty statement, not a second copy \
+         of the function: {:?}",
+        program.body[1]
+    );
+    // The name is still bound, so it is hoisted as a variable too.
+    assert_eq!(program.hoisted_vars, vec!["f"]);
 }
 
 #[test]

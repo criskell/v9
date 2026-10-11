@@ -302,12 +302,6 @@ pub enum Statement {
         position: Position,
     },
 
-    /// `FunctionDeclaration`
-    FunctionDeclaration {
-        function: Box<FunctionLiteral>,
-        position: Position,
-    },
-
     /// `IfStatement`
     If {
         condition: Expression,
@@ -359,7 +353,6 @@ impl Statement {
             | Statement::Expression { position, .. }
             | Statement::Empty { position }
             | Statement::Declaration { position, .. }
-            | Statement::FunctionDeclaration { position, .. }
             | Statement::If { position, .. }
             | Statement::While { position, .. }
             | Statement::DoWhile { position, .. }
@@ -373,6 +366,13 @@ impl Statement {
 
 /// The result of parsing a whole script: V8's top-level `FunctionLiteral`,
 /// whose body is the program.
+///
+/// `hoisted_functions` stands in for V8's scope declaration list. A function
+/// declaration is *not* a statement: `Parser::DeclareFunction` records it on
+/// the scope and leaves an `EmptyStatement` behind in the body, because the
+/// binding is created and initialized when the scope is entered, not when
+/// control reaches the line it was written on. That is what makes calling a
+/// function above its own definition work.
 #[derive(Clone, Debug)]
 pub struct Program {
     pub body: Vec<Statement>,
