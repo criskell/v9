@@ -363,6 +363,334 @@ impl Isolate {
     }
 }
 
+object_type!(
+    /// `NameDictionary`
+    NameDictionary
+);
+
+/// `NameDictionaryShape`
+pub const NAME_DICTIONARY_SHAPE: HashTableShape = HashTableShape {
+    prefix_size: 3,
+    entry_size: 3,
+};
+
+impl NameDictionary {
+    pub const K_ENTRY_KEY_INDEX: i32 = 0;
+    pub const K_ENTRY_VALUE_INDEX: i32 = 1;
+    pub const K_ENTRY_DETAILS_INDEX: i32 = 2;
+
+    pub const K_NEXT_ENUMERATION_INDEX_INDEX: i32 = HashTableBase::K_PREFIX_START_INDEX;
+    pub const K_OBJECT_HASH_INDEX: i32 = Self::K_NEXT_ENUMERATION_INDEX_INDEX + 1;
+    pub const K_FLAGS_INDEX: i32 = Self::K_OBJECT_HASH_INDEX + 1;
+
+    pub const K_INITIAL_CAPACITY: u32 = 2;
+
+    #[inline]
+    pub fn as_hash_table(self) -> HashTableBase {
+        HashTableBase::unchecked_cast(self.object())
+    }
+
+    #[inline]
+    pub fn as_fixed_array(self) -> FixedArray {
+        FixedArray::unchecked_cast(self.object())
+    }
+
+    #[inline]
+    pub fn capacity(self, heap: &Heap) -> u32 {
+        self.as_hash_table().capacity(heap)
+    }
+
+    #[inline]
+    pub fn number_of_elements(self, heap: &Heap) -> i32 {
+        self.as_hash_table().number_of_elements(heap)
+    }
+
+    /// `BaseNameDictionary::next_enumeration_index`
+    #[inline]
+    pub fn next_enumeration_index(self, heap: &Heap) -> i32 {
+        Smi::to_int(
+            self.as_fixed_array()
+                .get(heap, Self::K_NEXT_ENUMERATION_INDEX_INDEX),
+        )
+    }
+
+    /// `BaseNameDictionary::set_next_enumeration_index`
+    #[inline]
+    pub fn set_next_enumeration_index(self, heap: &mut Heap, index: i32) {
+        self.as_fixed_array().set(
+            heap,
+            Self::K_NEXT_ENUMERATION_INDEX_INDEX,
+            Smi::from_int(index),
+        );
+    }
+
+    /// `NameDictionaryShape::Hash`
+    #[inline]
+    pub fn hash(heap: &Heap, key: Tagged) -> u32 {
+        crate::objects::name::Name::unchecked_cast(key.to_strong_heap_object().expect("a Name key"))
+            .raw_hash_field_hash(heap)
+    }
+
+    /// `NameDictionaryShape::IsMatch`
+    #[inline]
+    pub fn is_match(key: Tagged, other: Tagged) -> bool {
+        key == other
+    }
+
+    /// `Dictionary::KeyAt`
+    #[inline]
+    pub fn key_at(self, heap: &Heap, entry: i32) -> Tagged {
+        self.as_hash_table()
+            .key_at(heap, NAME_DICTIONARY_SHAPE, entry)
+    }
+
+    /// `Dictionary::ValueAt`
+    #[inline]
+    pub fn value_at(self, heap: &Heap, entry: i32) -> Tagged {
+        self.as_fixed_array().get(
+            heap,
+            NAME_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_VALUE_INDEX,
+        )
+    }
+
+    #[inline]
+    pub fn value_address(self, entry: i32) -> crate::objects::tagged::Address {
+        self.as_fixed_array().element_address(
+            NAME_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_VALUE_INDEX,
+        )
+    }
+
+    /// `Dictionary::ValueAtPut`
+    #[inline]
+    pub fn value_at_put(self, heap: &mut Heap, entry: i32, value: Tagged) {
+        self.as_fixed_array().set(
+            heap,
+            NAME_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_VALUE_INDEX,
+            value,
+        );
+    }
+
+    /// `Dictionary::DetailsAt`
+    #[inline]
+    pub fn details_at(self, heap: &Heap, entry: i32) -> PropertyDetails {
+        let raw = self.as_fixed_array().get(
+            heap,
+            NAME_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_DETAILS_INDEX,
+        );
+        PropertyDetails::from_raw(Smi::to_int(raw) as u32)
+    }
+
+    /// `Dictionary::DetailsAtPut`
+    #[inline]
+    pub fn details_at_put(self, heap: &mut Heap, entry: i32, details: PropertyDetails) {
+        self.as_fixed_array().set(
+            heap,
+            NAME_DICTIONARY_SHAPE.entry_to_index(entry) + Self::K_ENTRY_DETAILS_INDEX,
+            Smi::from_int(details.raw() as i32),
+        );
+    }
+
+    /// `Dictionary::ClearEntry`
+    pub fn clear_entry(self, heap: &mut Heap, entry: i32) {
+        let the_hole = heap.the_hole_value;
+        self.as_hash_table()
+            .set_key_at(heap, NAME_DICTIONARY_SHAPE, entry, the_hole);
+        self.value_at_put(heap, entry, the_hole);
+        self.details_at_put(heap, entry, PropertyDetails::from_raw(0));
+    }
+
+    /// `HashTable::FindEntry`
+    pub fn find_entry(self, heap: &Heap, key: Tagged) -> i32 {
+        let capacity = self.capacity(heap);
+        if capacity == 0 {
+            return K_NOT_FOUND;
+        }
+        let hash = Self::hash(heap, key);
+        let mut count = 1;
+        let mut entry = HashTableBase::first_probe(hash, capacity);
+        loop {
+            let element = self.key_at(heap, entry as i32);
+            if heap.is_undefined(element) {
+                return K_NOT_FOUND;
+            }
+            if Self::is_match(key, element) {
+                return entry as i32;
+            }
+            entry = HashTableBase::next_probe(entry, count, capacity);
+            count += 1;
+        }
+    }
+
+    /// `HashTable::FindInsertionEntry`
+    pub fn find_insertion_entry(self, heap: &Heap, hash: u32) -> i32 {
+        let capacity = self.capacity(heap);
+        let mut count = 1;
+        let mut entry = HashTableBase::first_probe(hash, capacity);
+        loop {
+            let element = self.key_at(heap, entry as i32);
+            if !HashTableBase::is_key(heap, element) {
+                return entry as i32;
+            }
+            entry = HashTableBase::next_probe(entry, count, capacity);
+            count += 1;
+        }
+    }
+
+    /// `Dictionary::IterateEntries`
+    pub fn iterate_entries(self, heap: &Heap) -> Vec<i32> {
+        (0..self.capacity(heap) as i32)
+            .filter(|entry| HashTableBase::is_key(heap, self.key_at(heap, *entry)))
+            .collect()
+    }
+}
+
+impl Isolate {
+    /// `Factory::NewNameDictionary`
+    pub fn new_name_dictionary(&mut self, at_least_space_for: u32) -> NameDictionary {
+        let capacity = HashTableBase::compute_capacity(at_least_space_for);
+        let length = NAME_DICTIONARY_SHAPE.size_for(capacity);
+        let map = self
+            .roots
+            .name_dictionary_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.heap.allocate_raw_or_fail(
+            FixedArray::size_for(length) as usize,
+            crate::heap::heap::AllocationType::Young,
+        );
+        self.heap.set_map(object, map);
+        let array = FixedArray::unchecked_cast(object);
+        array.set_length(&mut self.heap, length);
+        let undefined = self.undefined_value();
+        for index in 0..length {
+            array.set(&mut self.heap, index, undefined);
+        }
+        let dictionary = NameDictionary::unchecked_cast(object);
+        let table = dictionary.as_hash_table();
+        table.set_number_of_elements(&mut self.heap, 0);
+        table.set_number_of_deleted_elements(&mut self.heap, 0);
+        table.set_capacity(&mut self.heap, capacity);
+        dictionary.set_next_enumeration_index(
+            &mut self.heap,
+            crate::objects::property_details::K_FIRST_INDEX,
+        );
+        dictionary.as_fixed_array().set(
+            &mut self.heap,
+            NameDictionary::K_OBJECT_HASH_INDEX,
+            Smi::from_int(0),
+        );
+        dictionary.as_fixed_array().set(
+            &mut self.heap,
+            NameDictionary::K_FLAGS_INDEX,
+            Smi::from_int(0),
+        );
+        dictionary
+    }
+
+    /// `BaseNameDictionary::Add`
+    pub fn name_dictionary_add(
+        &mut self,
+        dictionary: NameDictionary,
+        key: Tagged,
+        value: Tagged,
+        details: PropertyDetails,
+    ) -> NameDictionary {
+        debug_assert_eq!(dictionary.find_entry(&self.heap, key), K_NOT_FOUND);
+
+        let dictionary = self.name_dictionary_ensure_capacity(dictionary, 1);
+
+        let index = dictionary.next_enumeration_index(&self.heap);
+        let details = details.set_dictionary_index(index as u32);
+        dictionary.set_next_enumeration_index(&mut self.heap, index + 1);
+
+        let hash = NameDictionary::hash(&self.heap, key);
+        let entry = dictionary.find_insertion_entry(&self.heap, hash);
+        dictionary
+            .as_hash_table()
+            .set_key_at(&mut self.heap, NAME_DICTIONARY_SHAPE, entry, key);
+        dictionary.value_at_put(&mut self.heap, entry, value);
+        dictionary.details_at_put(&mut self.heap, entry, details);
+        dictionary.as_hash_table().element_added(&mut self.heap);
+        dictionary
+    }
+
+    /// `Dictionary::Set`
+    pub fn name_dictionary_set(
+        &mut self,
+        dictionary: NameDictionary,
+        key: Tagged,
+        value: Tagged,
+        details: PropertyDetails,
+    ) -> NameDictionary {
+        let entry = dictionary.find_entry(&self.heap, key);
+        if entry == K_NOT_FOUND {
+            return self.name_dictionary_add(dictionary, key, value, details);
+        }
+        dictionary.value_at_put(&mut self.heap, entry, value);
+        dictionary
+    }
+
+    /// `Dictionary::DeleteEntry`
+    pub fn name_dictionary_delete(
+        &mut self,
+        dictionary: NameDictionary,
+        entry: i32,
+    ) -> NameDictionary {
+        dictionary.clear_entry(&mut self.heap, entry);
+        dictionary.as_hash_table().element_removed(&mut self.heap);
+        dictionary
+    }
+
+    /// `HashTable::EnsureCapacity`
+    fn name_dictionary_ensure_capacity(
+        &mut self,
+        dictionary: NameDictionary,
+        number_of_additional: i32,
+    ) -> NameDictionary {
+        if dictionary
+            .as_hash_table()
+            .has_sufficient_capacity_to_add(&self.heap, number_of_additional)
+        {
+            return dictionary;
+        }
+        let at_least_space_for = dictionary.number_of_elements(&self.heap) + number_of_additional;
+        self.name_dictionary_rehash(dictionary, at_least_space_for as u32)
+    }
+
+    fn name_dictionary_rehash(
+        &mut self,
+        dictionary: NameDictionary,
+        at_least_space_for: u32,
+    ) -> NameDictionary {
+        let old_capacity = dictionary.capacity(&self.heap);
+        self.handles.push(dictionary.tagged());
+        let fresh = self.new_name_dictionary(at_least_space_for);
+        let dictionary = NameDictionary::unchecked_cast(
+            self.handles.pop().unwrap().to_strong_heap_object().unwrap(),
+        );
+
+        for entry in 0..old_capacity as i32 {
+            let key = dictionary.key_at(&self.heap, entry);
+            if !HashTableBase::is_key(&self.heap, key) {
+                continue;
+            }
+            let value = dictionary.value_at(&self.heap, entry);
+            let details = dictionary.details_at(&self.heap, entry);
+            let hash = NameDictionary::hash(&self.heap, key);
+            let target = fresh.find_insertion_entry(&self.heap, hash);
+            fresh
+                .as_hash_table()
+                .set_key_at(&mut self.heap, NAME_DICTIONARY_SHAPE, target, key);
+            fresh.value_at_put(&mut self.heap, target, value);
+            fresh.details_at_put(&mut self.heap, target, details);
+            fresh.as_hash_table().element_added(&mut self.heap);
+        }
+        let index = dictionary.next_enumeration_index(&self.heap);
+        fresh.set_next_enumeration_index(&mut self.heap, index);
+        fresh
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -56,6 +56,22 @@ impl JSObject {
         self.field(Self::K_PROPERTIES_OR_HASH_OFFSET)
     }
 
+    /// `JSObject::property_dictionary`
+    #[inline]
+    pub fn property_dictionary(self, heap: &Heap) -> crate::objects::dictionary::NameDictionary {
+        crate::objects::dictionary::NameDictionary::unchecked_cast(
+            self.raw_properties_or_hash(heap)
+                .to_strong_heap_object()
+                .expect("a dictionary-mode JSObject has a NameDictionary"),
+        )
+    }
+
+    /// `JSObject::HasFastProperties`
+    #[inline]
+    pub fn has_fast_properties(self, heap: &Heap) -> bool {
+        !heap.map_of(self.object()).is_dictionary_map(heap)
+    }
+
     /// `JSObject::property_array`
     #[inline]
     pub fn property_array(self, heap: &Heap) -> PropertyArray {

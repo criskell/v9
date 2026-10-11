@@ -1,4 +1,4 @@
-use crate::common::globals::{K_TAGGED_SIZE, K_TAGGED_SIZE_LOG2};
+use crate::common::globals::{StoreOrigin, K_TAGGED_SIZE, K_TAGGED_SIZE_LOG2};
 use crate::execution::isolate::Isolate;
 use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
 use crate::heap::heap::Heap;
@@ -49,6 +49,8 @@ const IS_CONSTRUCTOR_BIT: u8 = 5;
 const fn mask32(bits: u32) -> u32 {
     (1u32 << bits) - 1
 }
+
+const K_FAST_PROPERTIES_SOFT_LIMIT: i32 = 12;
 
 #[inline]
 const fn mask8(bits: u8) -> u8 {
@@ -533,6 +535,35 @@ impl Isolate {
         let _recorded =
             TransitionsAccessor::insert(&mut self.heap, map, name, new_map, transition_array_map);
         new_map
+    }
+
+    /// `Map::TooManyFastProperties`
+    pub(crate) fn too_many_fast_properties(&self, map: Map, store_origin: StoreOrigin) -> bool {
+        if store_origin != StoreOrigin::MaybeKeyed {
+            return false;
+        }
+        if map.is_prototype_map(&self.heap) {
+            return false;
+        }
+        let limit = K_FAST_PROPERTIES_SOFT_LIMIT.max(map.inobject_properties(&self.heap));
+        let external =
+            map.number_of_own_descriptors(&self.heap) - map.inobject_properties(&self.heap);
+        external > limit
+    }
+
+    /// `Map::CopyNormalized`
+    pub(crate) fn copy_normalized(&mut self, map: Map) -> Map {
+        let result = self.copy_map_shell(map);
+        result.set_is_dictionary_map(&mut self.heap, true);
+        let kind = map.elements_kind(&self.heap);
+        result.set_elements_kind(&mut self.heap, kind);
+        result
+    }
+
+    /// `Map::Normalize`
+    pub(crate) fn normalize_map(&mut self, fast_map: Map) -> Map {
+        debug_assert!(!fast_map.is_dictionary_map(&self.heap));
+        self.copy_normalized(fast_map)
     }
 
     pub(crate) fn copy_add_descriptor(

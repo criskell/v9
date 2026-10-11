@@ -57,6 +57,12 @@ pub const fn is_aligned(value: u64, alignment: u64) -> bool {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum StoreOrigin {
+    MaybeKeyed,
+    Named,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VariableLocation {
     Unallocated,
     Parameter,

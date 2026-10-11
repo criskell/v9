@@ -34,6 +34,7 @@ roots_table!(
     fixed_array_map,
     fixed_double_array_map,
     number_dictionary_map,
+    name_dictionary_map,
     property_array_map,
     descriptor_array_map,
     transition_array_map,

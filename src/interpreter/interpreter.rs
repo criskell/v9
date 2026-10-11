@@ -1,4 +1,5 @@
 use crate::builtins::builtins::Builtin;
+use crate::common::globals::StoreOrigin;
 use crate::execution::isolate::Isolate;
 use crate::interpreter::bytecode_operands::OperandScale;
 use crate::interpreter::bytecode_register::Register;
@@ -348,6 +349,13 @@ impl Isolate {
                 }
                 Bytecode::TypeOf => accumulator = self.type_of(accumulator),
 
+                Bytecode::DeletePropertyStrict | Bytecode::DeletePropertySloppy => {
+                    let object = self.read_register(frame, register_operand(self, 0));
+                    let key = self.key_to_name(accumulator);
+                    let deleted = self.delete_property_or_element(object, key)?;
+                    accumulator = self.boolean_value(deleted);
+                }
+
                 // -- conversions ------------------------------------------
                 Bytecode::ToBoolean => {
                     let truthy = self.to_boolean(accumulator);
@@ -651,7 +659,7 @@ impl Isolate {
             }
         }
         let name = self.key_to_name(key);
-        self.store_property(object, name, value)
+        self.store_property_with_origin(object, name, value, StoreOrigin::MaybeKeyed)
     }
 
     /// `JSObject::GetElement`
@@ -687,6 +695,32 @@ impl Isolate {
         }
         self.add_data_element(holder, index, value);
         Ok(true)
+    }
+
+    /// `JSReceiver::DeletePropertyOrElement`
+    fn delete_property_or_element(&mut self, object: Tagged, name: Tagged) -> Result<bool, Thrown> {
+        let Some(receiver) = object.to_strong_heap_object() else {
+            return Ok(true);
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver)) {
+            return Ok(true);
+        }
+        let holder = JSObject::unchecked_cast(receiver);
+        if let Some(index) = self.string_as_array_index(name) {
+            return Ok(self.delete_element(holder, index));
+        }
+        Ok(self.delete_property(holder, name))
+    }
+
+    fn delete_element(&mut self, holder: JSObject, index: u32) -> bool {
+        use crate::objects::elements::ElementsAccessor;
+        let kind = holder.get_elements_kind(&self.heap);
+        let accessor = ElementsAccessor::for_kind(kind);
+        if !accessor.has_element(&self.heap, holder, index) {
+            return true;
+        }
+        self.delete_element_entry(holder, index);
+        true
     }
 
     fn is_js_array(&self, object: JSObject) -> bool {
@@ -769,13 +803,28 @@ impl Isolate {
     }
 
     fn store_property(&mut self, object: Tagged, name: Tagged, value: Tagged) -> ExecutionResult {
+        self.store_property_with_origin(object, name, value, StoreOrigin::Named)
+    }
+
+    fn store_property_with_origin(
+        &mut self,
+        object: Tagged,
+        name: Tagged,
+        value: Tagged,
+        store_origin: StoreOrigin,
+    ) -> ExecutionResult {
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(
                     self.heap.instance_type(receiver),
                 ) =>
             {
-                self.set_property(JSObject::unchecked_cast(receiver), name, value);
+                self.set_property_with_origin(
+                    JSObject::unchecked_cast(receiver),
+                    name,
+                    value,
+                    store_origin,
+                );
                 Ok(value)
             }
             _ => {

@@ -148,7 +148,7 @@ which is the argument for reading it.
 | `src/objects/js-array.h` | `src/objects/js_array.rs` | [T] layout; fast elements only |
 | `src/objects/elements.cc` | `src/objects/elements.rs` | [A] `ElementsAccessor`: get, set, add, grow, convert |
 | `src/objects/hash-table.h` | `src/objects/hash_table.rs` | [T] layout, probing, capacity rules |
-| `src/objects/dictionary.h` | `src/objects/dictionary.rs` | [T] `NumberDictionary`: entries, details, slow-elements flag |
+| `src/objects/dictionary.h` | `src/objects/dictionary.rs` | [T] `NumberDictionary` and `NameDictionary` |
 | `src/base/hashing.h` | `src/base/hashing.rs` | [T] `hash64`, the rapidhash mum mixer |
 | `src/utils/utils.h`, `utils.cc` | `src/utils/utils.rs` | [T] `SmiHash64`, `ComputeSeededHash` |
 | `src/builtins/accessors.cc` | `src/builtins/accessors.rs` | [R] `ArrayLength` getter and setter, nothing else |
@@ -197,7 +197,7 @@ which is the argument for reading it.
 | --- | --- | --- |
 | `src/objects/scope-info.h` (the rest) | `src/objects/scope_info.rs` | `with`, `catch`, block and module scopes |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
-| `src/objects/dictionary.h` (`NameDictionary`) | `src/objects/dictionary.rs` | dictionary-mode *properties*; the elements half is done |
+| `src/objects/swiss-name-dictionary.h` | — | V8's newer open-addressed property dictionary |
 | `src/compiler/`, `src/maglev/`, `src/baseline/` | — | optimizing tiers; not planned |
 
 ## Deviations
@@ -335,7 +335,7 @@ maps to.
 | `ic/ic.rs` | No `RECOMPUTE_HANDLER` (it exists for prototype-chain invalidation via validity cells) and no MEGADOM. A property found on a prototype is not cached, because that needs the object-form handler. |
 | `init/bootstrapper.rs` | V8 installs the standard library through a `NativeContext` holding the realm's prototypes, constructors and intrinsics. `vx` has a global object with a handful of builtins, so realms and per-realm prototypes do not exist. |
 | `interpreter/bytecode_register.rs` | V8 derives the fixed slot indices from `InterpreterFrameConstants`, because a `Register` is an offset into a machine frame that generated code also reads. `vx` interprets in a `Vec<Tagged>` and defines the layout here, keeping V8's ordering, which is what the encoding depends on. |
-| `interpreter/bytecodes.rs` | 103 of V8's 196 bytecodes. No debug-break bytecodes, no `*Constant` jump variants, no generators, no `for...in`, no class or template literals, no runtime calls or intrinsics. |
+| `interpreter/bytecodes.rs` | 105 of V8's 196 bytecodes. No debug-break bytecodes, no `*Constant` jump variants, no generators, no `for...in`, no class or template literals, no runtime calls or intrinsics. |
 | `interpreter/control_flow_builders.rs` | V8's builders hold a pointer to the `BytecodeArrayBuilder` and bind their targets in a destructor. `vx`'s hold only labels and take the builder as a parameter: two mutable borrows cannot coexist, and an explicit `finish` is clearer than a `Drop` that needs an argument it cannot have. |
 | `interpreter/interpreter.rs` | A call recurses into `execute` rather than pushing a machine frame, so JavaScript recursion is bounded by Rust's stack and is checked explicitly. Keyed property access converts its key to a string name, so an array is an object with `"0"`, `"1"` … properties and has no `length`. |
 | `objects/bytecode_array.rs` | No handler table (no `try`/`catch`), no `incoming_new_target_or_generator_register`, no sandbox wrapper. V8 also puts this in trusted space so corrupting it cannot forge bytecode; `vx` has one heap. |
@@ -355,7 +355,9 @@ maps to.
 | `objects/elements.rs` | V8 generates one `ElementsAccessor` subclass per kind through CRTP, so the kind is a compile-time constant and every access is monomorphic. `vx` has one struct carrying the kind and matches on it — the same decomposition, with the dispatch moved to run time, which costs nothing here because the interpreter is not generated code. No `Push`/`Pop`/`Shift`/`Unshift`/`Fill`/`Reverse`/`CopyElements`, no `KeyAccumulator`, no typed arrays, no dictionary elements. |
 | `objects/js_array.rs` | Fast elements only, and `length` is always a Smi: V8 allows a HeapNumber length up to 2^32-1, and a `JSArray` whose length does not fit a Smi cannot be built here. No read-only length, no `ArraySetLength` per ES 15.4.5.2 (so `length` assignment never rejects), no allocation sites or pretenuring. |
 | `objects/js_objects.rs` | `BestFittingFastElementsKind` always answers `HOLEY_ELEMENTS` instead of scanning the dictionary for the narrowest kind that fits, so an array that comes back from dictionary mode is tagged-holey rather than, say, packed-Smi. No `JSArgumentsObject` or string-wrapper branches in the slow/fast decision. |
-| `objects/dictionary.rs` | `NumberDictionary` only: no `NameDictionary`, `GlobalDictionary`, `SimpleNumberDictionary` or `OrderedHashTable`, so dictionary-mode *properties* do not exist — only dictionary-mode elements. The hash seed is zero, where V8 seeds per isolate from a random source to make collision attacks from script impractical. No shrinking (`ComputeCapacityWithShrink`), and deleting is only reached through `length` truncation. |
+| `objects/dictionary.rs` | `NumberDictionary` and `NameDictionary` only: no `GlobalDictionary`, `SimpleNumberDictionary`, `SwissNameDictionary` or `OrderedHashTable`. The hash seed is zero, where V8 seeds per isolate from a random source to make collision attacks from script impractical. No shrinking (`ComputeCapacityWithShrink`), and no `IterationIndices`, so insertion order is recorded in the details but nothing reads it back yet. |
+| `objects/lookup.rs` | Normalization happens in `set_property_ignoring_cells` rather than in `Map::TransitionToDataProperty`, and `Map::TooManyFastProperties` drops V8's `UnusedPropertyFields() != 0` guard because `vx` does not track property-array slack — so `vx` normalizes at the soft limit where V8 waits for the slack to run out. The store origin *is* ported: a named store never normalizes, only a possibly-keyed one, which is what keeps `o.f0 … o.f39` fast. `MigrateSlowToFast` is missing, so an object that goes slow stays slow. |
+| `ic/ic.rs` | A dictionary-mode receiver is not cached at all: V8 forms a `kNormal` handler whose stub does the dictionary lookup at run time, while `vx`'s handler is a Smi carrying a field offset and has nowhere to put "look it up". Every load and store on a slow object is therefore a miss. |
 | `objects/hash_table.rs` | V8's `HashTable<Derived, Shape>` is a template whose shape supplies the entry size, prefix size and hashing; `vx` passes a `HashTableShape` value instead, so the arithmetic is the same but not constant-folded. No `kDoHashSpreading` in `FirstProbe`, which V8 uses when the hash has fewer bits than the table has slots. |
 | `base/hashing.rs` | Only `hash64` and the rapidhash mum mixer, with the default secrets; V8 can be built with SipHash or with a per-process random secret, and has `hash32` plus the `hash_combine` family for everything else. |
 | `builtins/accessors.rs` | Two accessors out of V8's thirty-odd, and they are reached by name rather than through an `AccessorInfo` in the array map's descriptors, since `vx` has no accessor properties. The load IC still caches the result with a `kNativeDataProperty` handler, which is the kind V8 uses for it. |

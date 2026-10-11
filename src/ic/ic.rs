@@ -107,6 +107,11 @@ impl Isolate {
             return self.get_property(receiver, name);
         }
 
+        if !receiver.has_fast_properties(&self.heap) {
+            self.ic_statistics.property.misses += 1;
+            return self.get_property(receiver, name);
+        }
+
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
         debug_assert!(nexus.kind().is_load_ic() || nexus.kind().is_global_ic());
         let map = receiver.map(&self.heap);
@@ -142,14 +147,15 @@ impl Isolate {
 
         let found = self.lookup_property(receiver, name);
         let value = match &found {
-            Some(found) => found
-                .holder
-                .fast_property_at(&self.heap, found.details.field_index() as i32),
+            Some(found) => self.property_value_at(found),
             None => self.undefined_value(),
         };
 
         if let Some(found) = found {
-            if found.holder == receiver && found.details.location() == PropertyLocation::Field {
+            if found.holder == receiver
+                && found.dictionary_entry == crate::objects::hash_table::K_NOT_FOUND
+                && found.details.location() == PropertyLocation::Field
+            {
                 let handler = self.handler_for_field(map, found.details);
                 self.update_ic(nexus, map, handler.as_smi(), name);
             }
@@ -167,6 +173,11 @@ impl Isolate {
         slot: i32,
     ) -> bool {
         if self.is_global_object(receiver) {
+            self.ic_statistics.property.misses += 1;
+            return self.set_property(receiver, name, value);
+        }
+
+        if !receiver.has_fast_properties(&self.heap) {
             self.ic_statistics.property.misses += 1;
             return self.set_property(receiver, name, value);
         }

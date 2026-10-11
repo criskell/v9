@@ -832,7 +832,7 @@ impl BytecodeGenerator {
                 self.builder.unary_operation(op);
                 Ok(())
             }
-            Token::Delete => self.unsupported("`delete`"),
+            Token::Delete => self.visit_delete(expression),
             other => unreachable!("{other} is not a unary operator"),
         }
     }
@@ -1147,6 +1147,35 @@ impl BytecodeGenerator {
         self.builder.load_accumulator_with_register(object);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
+    }
+
+    /// `BytecodeGenerator::VisitDelete`
+    fn visit_delete(&mut self, expression: &Expression) -> Result<()> {
+        match expression {
+            // Delete of an object property is allowed both in sloppy
+            // and strict modes.
+            Expression::Property { object, key, .. } => {
+                let mark = self.builder.register_allocator().next_register_index();
+                let register = self.visit_for_register_value(object)?;
+                match key.as_ref() {
+                    PropertyAccess::Named(name) => {
+                        let name = name.clone();
+                        self.builder.load_literal_string(&name);
+                    }
+                    PropertyAccess::Keyed(key) => {
+                        self.visit_for_accumulator_value(key)?;
+                    }
+                }
+                self.builder.delete(register, false);
+                self.builder.register_allocator().release_registers(mark);
+                Ok(())
+            }
+            _ => {
+                self.visit_for_effect(expression)?;
+                self.builder.load_true();
+                Ok(())
+            }
+        }
     }
 
     /// `BytecodeGenerator::VisitArrayLiteral`

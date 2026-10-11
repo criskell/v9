@@ -281,6 +281,32 @@ impl Isolate {
         dictionary
     }
 
+    pub(crate) fn delete_element_entry(&mut self, object: JSObject, index: u32) {
+        let kind = object.get_elements_kind(&self.heap);
+        if elements_kind::is_dictionary_elements_kind(kind) {
+            let dictionary = NumberDictionary::unchecked_cast(
+                object
+                    .elements(&self.heap)
+                    .to_strong_heap_object()
+                    .expect("a dictionary"),
+            );
+            let entry = dictionary.find_entry(&self.heap, index);
+            if entry == K_NOT_FOUND {
+                return;
+            }
+            dictionary.clear_entry(&mut self.heap, entry);
+            dictionary.as_hash_table().element_removed(&mut self.heap);
+            object.set_elements(&mut self.heap, dictionary.tagged());
+            return;
+        }
+        if elements_kind::is_fast_packed_elements_kind(kind) {
+            let holey = elements_kind::get_holey_elements_kind(kind);
+            self.transition_elements_kind(object, holey);
+        }
+        let kind = object.get_elements_kind(&self.heap);
+        self.fill_elements_with_holes(object, kind, index, index + 1);
+    }
+
     /// `DictionaryElementsAccessor::SetLengthImpl`
     fn set_dictionary_length(&mut self, array: JSArray, length: u32) {
         let object = array.as_js_object();

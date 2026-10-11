@@ -30,10 +30,15 @@ pub enum PropertyConstness {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PropertyCellType {
-    Mutable = 0,
-    Undefined = 1,
-    Constant = 2,
-    ConstantType = 3,
+    Mutable = 0,      // Cell will no longer be tracked as constant.
+    Undefined = 1,    // The PREMONOMORPHIC of property cells.
+    Constant = 2,     // Cell has been assigned only once.
+    ConstantType = 3, // Cell has been assigned only one type.
+}
+
+impl PropertyCellType {
+    // Value for dictionaries not holding cells, must be 0:
+    pub const NO_CELL: PropertyCellType = PropertyCellType::Mutable;
 }
 
 impl PropertyCellType {
@@ -161,6 +166,35 @@ impl PropertyDetails {
         )
     }
 
+    // Property details for dictionary mode properties/elements.
+    pub fn new_dictionary(
+        kind: PropertyKind,
+        attributes: PropertyAttributes,
+        constness: PropertyConstness,
+        dictionary_index: u32,
+    ) -> PropertyDetails {
+        PropertyDetails(
+            encode(kind as u32, KIND_SHIFT, KIND_BITS)
+                | encode(
+                    PropertyLocation::Field as u32,
+                    LOCATION_SHIFT,
+                    LOCATION_BITS,
+                )
+                | encode(attributes, ATTRIBUTES_SHIFT, ATTRIBUTES_BITS)
+                | encode(constness as u32, CONSTNESS_SHIFT, CONSTNESS_BITS)
+                | encode(
+                    dictionary_index,
+                    DICTIONARY_STORAGE_SHIFT,
+                    DICTIONARY_STORAGE_BITS,
+                )
+                | encode(
+                    PropertyCellType::NO_CELL as u32,
+                    CELL_TYPE_SHIFT,
+                    CELL_TYPE_BITS,
+                ),
+        )
+    }
+
     #[inline]
     pub const fn from_raw(value: u32) -> PropertyDetails {
         PropertyDetails(value)
@@ -283,11 +317,20 @@ impl PropertyDetails {
         decode(self.0, DICTIONARY_STORAGE_SHIFT, DICTIONARY_STORAGE_BITS)
     }
 
+    /// `PropertyDetails::set_index`
+    pub fn set_dictionary_index(self, index: u32) -> PropertyDetails {
+        let cleared = self.0 & !(mask(DICTIONARY_STORAGE_BITS) << DICTIONARY_STORAGE_SHIFT);
+        PropertyDetails(cleared | encode(index, DICTIONARY_STORAGE_SHIFT, DICTIONARY_STORAGE_BITS))
+    }
+
     pub fn with_constness(self, constness: PropertyConstness) -> PropertyDetails {
         let cleared = self.0 & !(mask(CONSTNESS_BITS) << CONSTNESS_SHIFT);
         PropertyDetails(cleared | encode(constness as u32, CONSTNESS_SHIFT, CONSTNESS_BITS))
     }
 }
+
+/// `PropertyDetails::kInitialIndex`
+pub const K_FIRST_INDEX: i32 = 1;
 
 impl std::fmt::Debug for PropertyDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

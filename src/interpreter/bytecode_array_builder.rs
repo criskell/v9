@@ -350,6 +350,16 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::TypeOf, &[slot])
     }
 
+    /// `BytecodeArrayBuilder::Delete`
+    pub fn delete(&mut self, object: Register, strict: bool) -> &mut Self {
+        let bytecode = if strict {
+            Bytecode::DeletePropertyStrict
+        } else {
+            Bytecode::DeletePropertySloppy
+        };
+        self.output(bytecode, &[object.to_operand()])
+    }
+
     pub fn compare_operation(&mut self, op: Token, register: Register) -> &mut Self {
         let bytecode = match op {
             Token::Eq => Bytecode::TestEqual,

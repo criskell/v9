@@ -100,6 +100,8 @@ bytecode_list! {
     ToBooleanLogicalNot,      Use::READ_WRITE_ACCUMULATOR;
     LogicalNot,               Use::READ_WRITE_ACCUMULATOR;
     TypeOf,                   Use::READ_WRITE_ACCUMULATOR, FeedbackSlot;
+    DeletePropertyStrict,     Use::READ_WRITE_ACCUMULATOR, Reg;
+    DeletePropertySloppy,     Use::READ_WRITE_ACCUMULATOR, Reg;
 
     // -- Calls
     CallAnyReceiver,          Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;

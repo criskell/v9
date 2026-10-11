@@ -66,6 +66,14 @@ impl Name {
         hash
     }
 
+    /// `Name::RawHash`
+    #[inline]
+    pub fn raw_hash_field_hash(self, heap: &Heap) -> u32 {
+        let raw = self.raw_hash_field(heap);
+        debug_assert!(Name::is_hash_field_computed(raw));
+        raw >> HASH_SHIFT
+    }
+
     #[inline]
     pub fn from_heap_object(object: HeapObject) -> Name {
         Name::unchecked_cast(object)

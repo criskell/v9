@@ -1,4 +1,6 @@
+use crate::common::globals::StoreOrigin;
 use crate::execution::isolate::Isolate;
+use crate::objects::hash_table::K_NOT_FOUND;
 use crate::objects::instance_type;
 use crate::objects::js_objects::JSObject;
 use crate::objects::map::Map;
@@ -10,6 +12,7 @@ pub struct PropertyLocationInfo {
     pub holder_map: Map,
     pub holder: JSObject,
     pub details: PropertyDetails,
+    pub dictionary_entry: i32,
 }
 
 impl Isolate {
@@ -27,11 +30,25 @@ impl Isolate {
         name: Tagged,
     ) -> Option<PropertyLocationInfo> {
         let map = object.map(&self.heap);
+        if map.is_dictionary_map(&self.heap) {
+            let dictionary = object.property_dictionary(&self.heap);
+            let entry = dictionary.find_entry(&self.heap, name);
+            if entry == K_NOT_FOUND {
+                return None;
+            }
+            return Some(PropertyLocationInfo {
+                holder_map: map,
+                holder: object,
+                details: dictionary.details_at(&self.heap, entry),
+                dictionary_entry: entry,
+            });
+        }
         let details = map.find_property_details(&self.heap, name)?;
         Some(PropertyLocationInfo {
             holder_map: map,
             holder: object,
             details,
+            dictionary_entry: K_NOT_FOUND,
         })
     }
 
@@ -70,20 +87,26 @@ impl Isolate {
 
     pub(crate) fn get_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
         let found = self.lookup_property(object, name)?;
-        Some(
-            found
-                .holder
-                .fast_property_at(&self.heap, found.details.field_index() as i32),
-        )
+        Some(self.property_value_at(&found))
     }
 
     pub(crate) fn get_own_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
         let found = self.lookup_own_property(object, name)?;
-        Some(
-            found
+        Some(self.property_value_at(&found))
+    }
+
+    /// `LookupIterator::GetDataValue`
+    #[inline]
+    pub(crate) fn property_value_at(&self, found: &PropertyLocationInfo) -> Tagged {
+        if found.dictionary_entry != K_NOT_FOUND {
+            return found
                 .holder
-                .fast_property_at(&self.heap, found.details.field_index() as i32),
-        )
+                .property_dictionary(&self.heap)
+                .value_at(&self.heap, found.dictionary_entry);
+        }
+        found
+            .holder
+            .fast_property_at(&self.heap, found.details.field_index() as i32)
     }
 
     pub(crate) fn array_length_if_requested(
@@ -120,6 +143,17 @@ impl Isolate {
     }
 
     pub fn set_property(&mut self, object: JSObject, name: Tagged, value: Tagged) -> bool {
+        self.set_property_with_origin(object, name, value, StoreOrigin::Named)
+    }
+
+    /// `Object::SetProperty`
+    pub fn set_property_with_origin(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+        store_origin: StoreOrigin,
+    ) -> bool {
         if self.array_length_if_requested(object, name).is_some() {
             self.array_length_setter(object, value);
             return true;
@@ -128,7 +162,7 @@ impl Isolate {
             self.store_global(name, value);
             return true;
         }
-        self.set_property_ignoring_cells(object, name, value)
+        self.set_property_ignoring_cells(object, name, value, store_origin)
     }
 
     pub(crate) fn set_property_ignoring_cells(
@@ -136,8 +170,13 @@ impl Isolate {
         object: JSObject,
         name: Tagged,
         value: Tagged,
+        store_origin: StoreOrigin,
     ) -> bool {
         let map = object.map(&self.heap);
+
+        if map.is_dictionary_map(&self.heap) {
+            return self.set_dictionary_property(object, name, value);
+        }
 
         if let Some(details) = map.find_property_details(&self.heap, name) {
             if details.is_read_only() {
@@ -151,6 +190,11 @@ impl Isolate {
 
         if !map.is_extensible(&self.heap) {
             return false;
+        }
+
+        if self.too_many_fast_properties(map, store_origin) {
+            self.normalize_properties(object);
+            return self.set_dictionary_property(object, name, value);
         }
 
         let representation = Representation::for_value(value);
@@ -167,6 +211,80 @@ impl Isolate {
 
         self.heap.set_map(object.object(), new_map.object());
         object.set_fast_property_at(&mut self.heap, field_index, value);
+        true
+    }
+
+    /// `JSObject::NormalizeProperties`
+    pub(crate) fn normalize_properties(&mut self, object: JSObject) {
+        let map = object.map(&self.heap);
+        if map.is_dictionary_map(&self.heap) {
+            return;
+        }
+        let number_of_own = map.number_of_own_descriptors(&self.heap);
+        let mut dictionary = self.new_name_dictionary(number_of_own as u32);
+        let descriptors = map.instance_descriptors(&self.heap);
+        for index in 0..number_of_own {
+            let key = descriptors.get_key(&self.heap, index);
+            let details = descriptors.get_details(&self.heap, index);
+            let value = object.fast_property_at(&self.heap, details.field_index() as i32);
+            let slow_details = PropertyDetails::new_dictionary(
+                details.kind(),
+                details.attributes(),
+                crate::objects::property_details::PropertyConstness::Mutable,
+                0,
+            );
+            dictionary = self.name_dictionary_add(dictionary, key, value, slow_details);
+        }
+        let new_map = self.normalize_map(map);
+        self.heap.set_map(object.object(), new_map.object());
+        object.set_raw_properties_or_hash(&mut self.heap, dictionary.tagged());
+    }
+
+    pub(crate) fn set_dictionary_property(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+    ) -> bool {
+        let dictionary = object.property_dictionary(&self.heap);
+        let entry = dictionary.find_entry(&self.heap, name);
+        if entry != K_NOT_FOUND {
+            if dictionary.details_at(&self.heap, entry).is_read_only() {
+                return false;
+            }
+            dictionary.value_at_put(&mut self.heap, entry, value);
+            return true;
+        }
+        if !object.map(&self.heap).is_extensible(&self.heap) {
+            return false;
+        }
+        let details = PropertyDetails::new_dictionary(
+            crate::objects::property_details::PropertyKind::Data,
+            crate::objects::property_details::NONE,
+            crate::objects::property_details::PropertyConstness::Mutable,
+            0,
+        );
+        let updated = self.name_dictionary_add(dictionary, name, value, details);
+        object.set_raw_properties_or_hash(&mut self.heap, updated.tagged());
+        true
+    }
+
+    /// `JSReceiver::DeleteProperty`
+    pub(crate) fn delete_property(&mut self, object: JSObject, name: Tagged) -> bool {
+        if self.lookup_own_property(object, name).is_none() {
+            return true;
+        }
+        self.normalize_properties(object);
+        let dictionary = object.property_dictionary(&self.heap);
+        let entry = dictionary.find_entry(&self.heap, name);
+        if entry == K_NOT_FOUND {
+            return true;
+        }
+        if !dictionary.details_at(&self.heap, entry).is_configurable() {
+            return false;
+        }
+        let updated = self.name_dictionary_delete(dictionary, entry);
+        object.set_raw_properties_or_hash(&mut self.heap, updated.tagged());
         true
     }
 
@@ -594,7 +712,7 @@ impl Isolate {
         }
         let cell = self.new_property_cell(name, value);
         let global = self.global_object();
-        self.set_property_ignoring_cells(global, name, cell.tagged());
+        self.set_property_ignoring_cells(global, name, cell.tagged(), StoreOrigin::Named);
         cell
     }
 

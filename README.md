@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 524 tests
+$ cargo test        # 534 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -111,16 +111,23 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
   rapidhash mixer. `a[1000000] = 2` costs two entries, not a million slots,
   and filling the array back in returns it to a dense store once the
   dictionary stops saving half the space.
+* **Dictionary-mode properties.** Hidden classes pay off while a shape is
+  shared, so an object whose keys are computed, or that has had a property
+  deleted, moves its properties into a `NameDictionary` and gets a map that
+  says so. V8's trigger is ported exactly, including the part that is easy
+  to get wrong: a store written `o.x = v` never normalizes, only one that
+  might be keyed, which is why `o.f0 … o.f39` stays fast while thirty
+  `o['k' + i]` writes do not.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
-  functions, recursion, closures, objects, arrays, property access, method calls, `typeof`.
+  functions, recursion, closures, objects, arrays, `delete`, property access, method calls, `typeof`.
 
 ## What does not
 
 No classes, no `try`/`catch`, no generators or `async`, no `for...in`, no
-array methods (`push`, `map`, …). Properties never go to dictionary mode —
-only elements do — so an object with thousands of them keeps growing its
-descriptor array. Contexts are function contexts only: no `with`, no `catch`
+array methods (`push`, `map`, …). An object that goes to dictionary mode
+stays there — `MigrateSlowToFast` is missing — and a slow object's property
+accesses are never cached. Contexts are function contexts only: no `with`, no `catch`
 scope, no per-iteration `let` binding in a loop. Inline caches cover named property access and globals; prototype loads,
 transitioning stores and `globalThis.x` still do the full lookup.
 
