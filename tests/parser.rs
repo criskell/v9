@@ -119,6 +119,13 @@ fn shape(expression: &Expression) -> String {
             PropertyAccess::Named(name) => format!("{}.{}", shape(object), name),
             PropertyAccess::Keyed(key) => format!("{}[{}]", shape(object), shape(key)),
         },
+        Expression::CallNew {
+            callee, arguments, ..
+        } => format!(
+            "new {}({})",
+            shape(callee),
+            arguments.iter().map(shape).collect::<Vec<_>>().join(", ")
+        ),
         Expression::Call {
             callee, arguments, ..
         } => format!(
@@ -552,7 +559,6 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
         ("class A {}", "classes"),
         ("x => x", "arrow functions"),
         ("() => 1", "arrow functions"),
-        ("new A()", "`new`"),
         ("for (var x of y) {}", "for...of"),
         ("for (var a, b in y) {}", "single variable"),
         ("switch (a) { }", "not implemented"),

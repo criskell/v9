@@ -1,5 +1,4 @@
 use crate::execution::isolate::Isolate;
-use crate::handles::handles::*;
 use crate::objects::fixed_array::FixedArray;
 use crate::objects::js_objects::JSObject;
 use crate::objects::tagged::Tagged;

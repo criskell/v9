@@ -270,6 +270,15 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
                 print_expression(out, key, depth + 1);
             }
         }
+        Expression::CallNew {
+            callee, arguments, ..
+        } => {
+            out.push_str("CALL NEW\n");
+            print_expression(out, callee, depth + 1);
+            for argument in arguments {
+                print_expression(out, argument, depth + 1);
+            }
+        }
         Expression::Call {
             callee, arguments, ..
         } => {

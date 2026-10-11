@@ -354,6 +354,20 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::TypeOf, &[slot])
     }
 
+    /// `BytecodeArrayBuilder::Construct`
+    pub fn construct(&mut self, constructor: Register, args: RegisterList) -> &mut Self {
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::Call);
+        self.output(
+            Bytecode::Construct,
+            &[
+                constructor.to_operand(),
+                args.first_register().to_operand(),
+                args.register_count(),
+                slot,
+            ],
+        )
+    }
+
     /// `BytecodeArrayBuilder::ForInEnumerate`
     pub fn for_in_enumerate(&mut self, receiver: Register) -> &mut Self {
         self.output(Bytecode::ForInEnumerate, &[receiver.to_operand()])

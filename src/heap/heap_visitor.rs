@@ -83,6 +83,7 @@ impl Isolate {
                 visit(function.field(JSFunction::K_SHARED_FUNCTION_INFO_OFFSET));
                 visit(function.field(JSFunction::K_CONTEXT_OFFSET));
                 visit(function.field(JSFunction::K_FEEDBACK_VECTOR_OFFSET));
+                visit(function.prototype_or_initial_map_address());
             }
 
             _ if it::is_js_object(instance_type) => {

@@ -561,6 +561,9 @@ impl BytecodeGenerator {
                 ..
             } => self.visit_conditional(condition, then_expression, else_expression),
             Expression::Property { object, key, .. } => self.visit_property(object, key),
+            Expression::CallNew {
+                callee, arguments, ..
+            } => self.visit_call_new(callee, arguments),
             Expression::Call {
                 callee, arguments, ..
             } => self.visit_call(callee, arguments),
@@ -1065,6 +1068,24 @@ impl BytecodeGenerator {
                 self.builder.load_keyed_property(object_register);
             }
         }
+        self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::VisitCallNew`
+    fn visit_call_new(&mut self, callee: &Expression, arguments: &[Expression]) -> Result<()> {
+        let mark = self.builder.register_allocator().next_register_index();
+        let constructor = self.visit_for_register_value(callee)?;
+        let args = self
+            .builder
+            .register_allocator()
+            .new_register_list(arguments.len() as i32);
+        for (index, argument) in arguments.iter().enumerate() {
+            self.visit_for_accumulator_value(argument)?;
+            self.builder
+                .store_accumulator_in_register(args.at(index as i32));
+        }
+        self.builder.construct(constructor, args);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
     }

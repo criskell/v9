@@ -108,6 +108,8 @@ bytecode_list! {
     CallProperty,             Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
     CallUndefinedReceiver,    Use::WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
 
+    Construct,                Use::READ_WRITE_ACCUMULATOR, Reg, RegList, RegCount, FeedbackSlot;
+
     // -- Comparisons
     TestEqual,                Use::READ_WRITE_ACCUMULATOR, Reg, EmbeddedFeedback;
     TestEqualStrict,          Use::READ_WRITE_ACCUMULATOR, Reg, EmbeddedFeedback;

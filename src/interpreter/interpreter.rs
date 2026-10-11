@@ -667,6 +667,19 @@ impl Isolate {
                     next_offset = opcode_offset - delta;
                 }
 
+                Bytecode::Construct => {
+                    let constructor = self.read_register(frame, register_operand(self, 0));
+                    let first_argument = register_operand(self, 1);
+                    let argument_count = operand(self, 2);
+                    let mut arguments = Vec::with_capacity(argument_count as usize);
+                    for index in 0..argument_count {
+                        let register = Register::new(first_argument.index() + index);
+                        arguments.push(self.read_register(frame, register));
+                    }
+                    let value = self.construct(constructor, &arguments)?;
+                    self.set_accumulator(frame, value);
+                }
+
                 // -- for...in ---------------------------------------------
                 Bytecode::ForInEnumerate => {
                     let receiver = self.read_register(frame, register_operand(self, 0));
@@ -1002,6 +1015,9 @@ impl Isolate {
     }
 
     fn load_property(&mut self, object: Tagged, name: Tagged) -> ExecutionResult {
+        if let Some(function) = self.function_prototype_if_requested(object, name) {
+            return Ok(self.function_prototype_getter(function));
+        }
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(
@@ -1055,6 +1071,10 @@ impl Isolate {
         value: Tagged,
         store_origin: StoreOrigin,
     ) -> ExecutionResult {
+        if let Some(function) = self.function_prototype_if_requested(object, name) {
+            self.function_prototype_setter(function, value);
+            return Ok(value);
+        }
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(

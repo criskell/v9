@@ -112,6 +112,11 @@ impl Isolate {
             return self.get_property(receiver, name);
         }
 
+        if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {
+            self.ic_statistics.property.misses += 1;
+            return self.function_prototype_getter(function);
+        }
+
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
         debug_assert!(nexus.kind().is_load_ic() || nexus.kind().is_global_ic());
         let map = receiver.map(&self.heap);
@@ -180,6 +185,12 @@ impl Isolate {
         if !receiver.has_fast_properties(&self.heap) {
             self.ic_statistics.property.misses += 1;
             return self.set_property(receiver, name, value);
+        }
+
+        if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {
+            self.ic_statistics.property.misses += 1;
+            self.function_prototype_setter(function, value);
+            return true;
         }
 
         if self.array_length_if_requested(receiver, name).is_some() {

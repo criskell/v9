@@ -873,7 +873,23 @@ impl Parser {
     /// `ParserBase::ParseMemberExpression`
     fn parse_member_expression(&mut self) -> Result<Expression> {
         if self.peek() == Token::New {
-            return Err(self.unexpected_token_with_hint("`new` is not implemented"));
+            let position = self.peek_position();
+            self.consume(Token::New);
+            let callee = Box::new(self.parse_member_expression()?);
+            let arguments = if self.peek() == Token::LeftParen {
+                self.parse_arguments()?
+            } else {
+                Vec::new()
+            };
+            let mut expression = Expression::CallNew {
+                callee,
+                arguments,
+                position,
+            };
+            while self.peek().is_property() {
+                expression = self.parse_property_access(expression)?;
+            }
+            return Ok(expression);
         }
         let mut expression = self.parse_primary_expression()?;
         while self.peek().is_property() {

@@ -124,6 +124,18 @@ impl Isolate {
         array
     }
 
+    /// `JSFunction::CalculateInstanceSizeHelper`
+    pub(crate) fn new_js_object_map_for_constructor(&mut self) -> Map {
+        use crate::objects::instance_type::JS_OBJECT_TYPE;
+        use crate::objects::js_objects::JSObject;
+        let header_words = JSObject::K_HEADER_SIZE / K_TAGGED_SIZE;
+        let inobject_properties = Map::K_INITIAL_INOBJECT_SLACK;
+        let instance_size = (header_words + inobject_properties) * K_TAGGED_SIZE;
+        let map = self.new_map(JS_OBJECT_TYPE, instance_size, header_words);
+        map.set_prototype(&mut self.heap, self.roots.null_value);
+        map
+    }
+
     /// `Factory::NewJSArray`
     pub fn new_js_array(&mut self, capacity: i32) -> JSArray {
         let kind = elements_kind::get_initial_fast_elements_kind();
@@ -580,6 +592,7 @@ impl Isolate {
         let shared_value = shared_handle.get(self);
         function.set_shared_function_info(&mut self.heap, shared_value);
         function.set_context(&mut self.heap, self.roots.undefined_value);
+        function.set_prototype_or_initial_map(&mut self.heap, self.roots.undefined_value);
         if is_native {
             function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
         } else {

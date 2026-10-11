@@ -137,6 +137,13 @@ pub enum Expression {
         position: Position,
     },
 
+    /// `CallNew`
+    CallNew {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+        position: Position,
+    },
+
     /// `Call`
     Call {
         callee: Box<Expression>,
@@ -187,6 +194,7 @@ impl Expression {
             | Expression::Count { position, .. }
             | Expression::Conditional { position, .. }
             | Expression::Property { position, .. }
+            | Expression::CallNew { position, .. }
             | Expression::Call { position, .. }
             | Expression::ObjectLiteral { position, .. }
             | Expression::ArrayLiteral { position, .. }
