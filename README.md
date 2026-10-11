@@ -1,46 +1,81 @@
 # vx
 
-A JavaScript engine in Rust, built by porting V8 — structure, object model and
-algorithms from V8, written as safe Rust. An experiment.
+A JavaScript engine in Rust, built by porting V8 — same module tree, same
+method names, same algorithms, written as safe Rust. An experiment.
 
 ```
-cargo test        # 162 tests
-cargo run -- demo
+$ cargo run -- run demo.js
+factorials: 873
+sqrt(total) floor = 29
+
+$ cargo test        # 414 tests
 ```
 
-No dependencies: `std` only.
+No dependencies: `std` only. No `unsafe`.
+
+## It runs JavaScript
+
+```js
+function factorial(n) {
+  if (n <= 1) return 1;
+  return n * factorial(n - 1);
+}
+var total = 0;
+for (var i = 1; i <= 6; i++) {
+  total += factorial(i);
+}
+console.log({ total: total, label: "factorials" }.label + ":", total);
+```
+
+The whole V8 pipeline is there: **scanner → parser → AST → Ignition bytecode →
+register-machine interpreter**, over a real heap with hidden classes and a
+copying garbage collector.
+
+`cargo run -- bytecode f.js` disassembles, the way `--print-bytecode` does:
+
+```
+=== [add] parameters: 2, registers: 0, feedback slots: 0 ===
+    0 : 02 08                Ldar a1
+    2 : 1a 07 00             Add a0, 0
+    5 : 5b                   Return
+```
+
+Commands: `run`, `bytecode`, `ast`, `maps`, `gc`, `heap`, `roots`.
 
 ## What works
 
-The heap and the object model — which is to say, the part of V8 that makes
-JavaScript fast:
-
-* **Pointer tagging** exactly as V8 encodes it: Smis immediate, strong and
+* **Pointer tagging** exactly as V8 encodes it — Smis immediate, strong and
   weak references distinguished, forwarding addresses in the map word.
-* **Hidden classes.** `Map`, `DescriptorArray`, `TransitionArray`. Adding a
-  property moves an object to a new shape along a cached transition, so a
-  thousand objects built the same way share one `Map` and one field layout.
-* **Property storage** split between inline object slots and a
-  `PropertyArray`, decided by the map.
-* **A copying garbage collector.** Cheney over two semi-spaces, forwarding
-  addresses, promotion out of the nursery on second survival via the heap's
-  `age_mark`.
-* **Strings** one and two byte, internalized through a string table so
-  property names compare by address.
+* **Hidden classes.** Adding a property moves an object to a new shape along
+  a cached transition, so a thousand objects built the same way share one
+  `Map` and one field layout.
+* **A copying garbage collector.** Cheney over two semi-spaces, with
+  promotion out of the nursery on second survival via the heap's `age_mark`.
+* **Ignition.** The bytecode is V8's, including the operand-scaling prefixes
+  and the constant-pool reservation scheme that makes forward jumps
+  encodable.
+* **The language:** numbers and strings, `var`/`let`/`const`, operators with
+  JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
+  functions, recursion, objects, property access, method calls, `typeof`.
 
-## What does not work yet
+## What does not
 
-There is no parser, no bytecode and no interpreter, so `vx` cannot run
-JavaScript source. The engine is driven through its API. See
-[`PORTING.md`](PORTING.md) for the ledger and the roadmap.
+No closures over enclosing locals (no contexts), no classes, no
+`try`/`catch`, no generators or `async`, no real arrays, no `for...in`. And
+no inline caches yet: the feedback slots are allocated and encoded, but
+nothing fills them in.
+
+[`PORTING.md`](PORTING.md) is the ledger — what is ported, at what fidelity,
+and every deviation. `tools/check-layout.sh` checks that every source file
+still maps to a V8 file at the same path.
 
 ## Why offsets instead of pointers
 
 V8 is built on dereferencing tagged pointers. `vx` keeps the tagging and the
 layouts but makes an address an offset into a heap arena, so every field
 access goes through the `Heap` that owns it and is bounds checked. A stale
-address panics with a message instead of corrupting memory. Nothing in `vx`
-needs `unsafe`.
+address panics with a message instead of corrupting memory.
 
-The trade is documented in [`PORTING.md`](PORTING.md), along with every other
-place `vx` departs from V8.
+What that does *not* buy is type safety — see the end of `PORTING.md` for a
+bug this port hit where a too-small instance size wrote past an object and
+nothing complained.

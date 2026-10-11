@@ -132,7 +132,25 @@ which is the argument for reading it.
 | `src/heap/factory.h`, `factory.cc` | `src/heap/factory.rs` | [A] the objects `vx` can build |
 | `src/heap/heap-visitor.h` | `src/heap/visitor.rs` | [A] switches on instance type, not `visitor_id` |
 | `src/heap/scavenger.h`, `scavenger.cc` | `src/heap/scavenger.rs` | [A] Cheney copying collector with `age_mark` promotion |
-| `src/numbers/conversions.cc` | `src/objects/conversions.rs` | [A] `Number::toString` per ECMA-262 §6.1.6.1.20 |
+| `src/numbers/conversions.cc` | `src/numbers/conversions.rs` | [A] `Number::toString` per ECMA-262 §6.1.6.1.20 |
+| `src/objects/objects.h`, `objects.cc` | `src/objects/objects.rs` | [A] the abstract operations: `ToNumber`, `Add`, the comparisons |
+| `src/objects/bytecode-array.h` | `src/objects/bytecode_array.rs` | [T] layout; no handler table |
+| `src/objects/shared-function-info.h` | `src/objects/shared_function_info.rs` | [T] layout; no `ScopeInfo`, no sandbox split |
+| `src/interpreter/bytecode-operands.h` | `src/interpreter/bytecode_operands.rs` | [T] operand types, scales, accumulator use |
+| `src/interpreter/bytecode-register.h` | `src/interpreter/bytecode_register.rs` | [T] `Register`, `RegisterList` |
+| `src/interpreter/bytecodes.h`, `.cc` | `src/interpreter/bytecodes.rs` | [T] `BYTECODE_LIST` for the ported subset |
+| `src/interpreter/constant-array-builder.cc` | `src/interpreter/constant_array_builder.rs` | [A] three slices, reservations |
+| `src/interpreter/bytecode-node.h` | `src/interpreter/bytecode_node.rs` | [A] |
+| `src/interpreter/bytecode-label.h` | `src/interpreter/bytecode_label.rs` | [A] |
+| `src/interpreter/bytecode-array-writer.cc` | `src/interpreter/bytecode_array_writer.rs` | [A] encoding, jump patching, dead-code elision |
+| `src/interpreter/bytecode-register-allocator.h` | `src/interpreter/bytecode_register_allocator.rs` | [A] |
+| `src/interpreter/bytecode-array-builder.cc` | `src/interpreter/bytecode_array_builder.rs` | [A] the generator's interface |
+| `src/interpreter/bytecode-array-iterator.cc` | `src/interpreter/bytecode_array_iterator.rs` | [A] decoding, plus `--print-bytecode` |
+| `src/interpreter/control-flow-builders.cc` | `src/interpreter/control_flow_builders.rs` | [A] break/continue label bookkeeping |
+| `src/interpreter/bytecode-generator.cc` | `src/interpreter/bytecode_generator.rs` | [A] AST to bytecode, with V8's result scopes |
+| `src/interpreter/interpreter-generator.cc` | `src/interpreter/interpreter.rs` | [A] CSA handlers become a dispatch loop |
+| `src/builtins/builtins.h` | `src/builtins/builtins.rs` | [R] a handful, in Rust |
+| `src/init/bootstrapper.cc` | `src/init/bootstrapper.rs` | [R] the global object and the builtins |
 | `src/parsing/token.h` | `src/parsing/token.rs` | [T] full token list, precedences and enum order |
 | `src/parsing/scanner.h`, `scanner.cc` | `src/parsing/scanner.rs` | [A] `c0_`, two-token lookahead, ASI line tracking |
 | `src/ast/ast.h` | `src/ast/ast.rs` | [R] node kinds follow `AST_NODE_LIST`; enums replace the class hierarchy |
@@ -142,13 +160,12 @@ which is the argument for reading it.
 
 | V8 | Would become | Notes |
 | --- | --- | --- |
-| `src/interpreter/bytecodes.h` | `src/interpreter/bytecodes.rs` | the opcode table |
-| `src/interpreter/bytecode-array-builder.cc` | `src/interpreter/` | register allocation, jump patching |
-| `src/interpreter/bytecode-generator.cc` | `src/interpreter/` | 9k lines: AST → bytecode |
-| `src/interpreter/interpreter-generator.cc` | `src/interpreter/interpreter.rs` | CSA in V8; becomes a Rust dispatch loop |
-| `src/ic/*`, `src/objects/feedback-vector.h` | `src/ic/` | inline caches — the `Map` + field index are already what a load needs |
+| `src/ic/*`, `src/objects/feedback-vector.h` | `src/ic/` | inline caches. The feedback slots are already allocated and encoded, and `Map` + field index is already what a load needs -- nothing fills them in |
+| `src/objects/contexts.h`, `src/ast/scopes.cc` | `src/objects/contexts.rs` | contexts, and therefore closures over locals |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
-| `src/compiler/`, `src/maglev/` | — | optimizing tiers; not planned |
+| `src/objects/js-array.h`, `elements.cc` | `src/objects/` | real arrays with `length` and elements kinds |
+| `src/objects/dictionary.h` | `src/objects/` | dictionary-mode objects |
+| `src/compiler/`, `src/maglev/`, `src/baseline/` | — | optimizing tiers; not planned |
 
 ## Deviations
 
@@ -221,5 +238,30 @@ survive the arena being reallocated — which is why growing old space is a
   representations rather than reshaping the model.
 * **Lookup handles data properties only.** No accessors, proxies,
   interceptors or indexed elements.
-* **`JSFunction` is a placeholder.** No `SharedFunctionInfo`, no `Context`.
-  Those arrive with the bytecode pipeline.
+* **No `Context`.** A `JSFunction` has a real `SharedFunctionInfo` but no
+  captured scope, so a function can reach its own parameters and locals and
+  the globals, and nothing else. A closure over an enclosing local does not
+  work, and `let`/`const` are compiled as function-scoped, so their block
+  scoping and temporal dead zone are not enforced.
+* **An array is a plain object.** `CreateEmptyArrayLiteral` makes a
+  `JSObject`, and keyed access converts its key to a string, so `[1,2,3]`
+  becomes an object with `"0"`, `"1"`, `"2"` properties and no `length`.
+  Real arrays need `JSArray` and elements kinds.
+* **Feedback is allocated but never recorded.** Every property access and
+  call gets a feedback slot index, and the binary operations carry an
+  embedded feedback byte, but no `FeedbackVector` exists to put anything in,
+  so no inline cache ever hits. This is the next thing worth doing: the
+  shape of a load -- check the map, read field N -- is already what
+  `Map::find_property_details` returns.
+
+### What the offsets do and do not catch
+
+Addressing the heap by offset makes a *stale or out-of-arena* address a panic.
+It does **not** make an out-of-*object* write a panic: writing past the end of
+one object lands inside the next one, which is still inside the arena.
+
+That bit during this port. `JSFunction`'s map was created with a plain
+`JSObject`'s instance size, so storing its `SharedFunctionInfo` wrote four
+words past the end of the object. Nothing complained; the symptom was a
+builtin whose `is_native` flag read back false. The fix was to size the map
+correctly, and the lesson is that bounds checks are not type checks.

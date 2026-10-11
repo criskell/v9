@@ -246,14 +246,22 @@ impl RegisterList {
         self.register_count == 0
     }
 
-    /// `RegisterList::first_register`
+    /// `RegisterList::first_register`.
+    ///
+    /// Valid whenever the list has a base, which a *growable* list does even
+    /// while its count is still zero -- that base is where its first
+    /// register will land. Only the sentinel from [`RegisterList::empty`] has
+    /// no base.
     #[inline]
     pub const fn first_register(self) -> Register {
-        if self.register_count == 0 {
-            Register::invalid_value()
-        } else {
-            Register::new(self.first_reg_index)
-        }
+        Register::new(self.first_reg_index)
+    }
+
+    /// `RegisterList::last_register`
+    #[inline]
+    pub fn last_register(self) -> Register {
+        debug_assert!(self.register_count > 0);
+        Register::new(self.first_reg_index + self.register_count - 1)
     }
 
     /// `RegisterList::operator[]`
@@ -429,11 +437,21 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_list_has_no_first_register() {
+    fn the_empty_sentinel_has_no_base_but_a_growable_list_does() {
         let empty = RegisterList::empty();
         assert!(empty.is_empty());
         assert_eq!(empty.register_count(), 0);
-        assert!(!empty.first_register().is_valid());
+        assert!(
+            !empty.first_register().is_valid(),
+            "the sentinel names no registers at all"
+        );
+
+        // A growable list is also empty, but it knows where its first
+        // register will go -- which is what makes appending to it work.
+        let growable = RegisterList::new(Register::new(4), 0);
+        assert!(growable.is_empty());
+        assert_eq!(growable.first_register(), Register::new(4));
+        assert!(growable.first_register().is_valid());
     }
 
     #[test]

@@ -58,6 +58,8 @@ roots_table!(
     descriptor_array_map,
     transition_array_map,
     feedback_vector_map,
+    bytecode_array_map,
+    shared_function_info_map,
     /// The map stamped on a region of free space, so the heap stays walkable.
     filler_map,
     seq_one_byte_string_map,

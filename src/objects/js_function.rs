@@ -10,20 +10,22 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::tagged::Tagged;
 
 object_type!(
-    /// `JSFunction`.
+    /// `JSFunction`: a closure.
     ///
-    /// Deviation: V8's `JSFunction` points at a `SharedFunctionInfo` (the
-    /// per-function-literal data) and a `Context` (the captured scope). `vx`
-    /// has neither yet -- the bytecode pipeline is where they arrive -- so
-    /// this carries the shared-info *index* as a Smi into a side table and a
-    /// feedback vector. See `PORTING.md`.
+    /// Points at the [`SharedFunctionInfo`] holding the code, which is what
+    /// every closure over the same function literal shares.
+    ///
+    /// Deviation: V8 also stores the captured `Context` here. `vx` has no
+    /// contexts yet, so a function can only reach its own locals and the
+    /// globals. See `PORTING.md`.
+    ///
+    /// [`SharedFunctionInfo`]: crate::objects::shared_function_info::SharedFunctionInfo
     JSFunction
 );
 
 impl JSFunction {
     pub const K_PROPERTIES_OR_HASH_OFFSET: i32 = JSObject::K_PROPERTIES_OR_HASH_OFFSET;
     pub const K_ELEMENTS_OFFSET: i32 = JSObject::K_ELEMENTS_OFFSET;
-    /// Index into the isolate's code store, or a builtin id for natives.
     pub const K_SHARED_FUNCTION_INFO_OFFSET: i32 = JSObject::K_HEADER_SIZE;
     pub const K_FEEDBACK_VECTOR_OFFSET: i32 = Self::K_SHARED_FUNCTION_INFO_OFFSET + K_TAGGED_SIZE;
     pub const K_SIZE: i32 = Self::K_FEEDBACK_VECTOR_OFFSET + K_TAGGED_SIZE;
@@ -34,8 +36,18 @@ impl JSFunction {
     }
 
     #[inline]
-    pub fn shared_function_info(self, heap: &Heap) -> Tagged {
+    pub fn raw_shared_function_info(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_SHARED_FUNCTION_INFO_OFFSET))
+    }
+
+    /// `JSFunction::shared`
+    #[inline]
+    pub fn shared(self, heap: &Heap) -> crate::objects::shared_function_info::SharedFunctionInfo {
+        crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
+            self.raw_shared_function_info(heap)
+                .to_strong_heap_object()
+                .expect("a JSFunction always has a SharedFunctionInfo"),
+        )
     }
 
     #[inline]

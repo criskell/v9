@@ -46,6 +46,15 @@ impl Isolate {
         self.roots.property_array_map = self.new_bare_map(PROPERTY_ARRAY_TYPE, 0).tagged();
         self.roots.transition_array_map = self.new_bare_map(TRANSITION_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_vector_map = self.new_bare_map(FEEDBACK_VECTOR_TYPE, 0).tagged();
+        // Variable sized: its instructions are inline, so the size comes
+        // from the length field (V8's kVariableSizeSentinel).
+        self.roots.bytecode_array_map = self.new_bare_map(BYTECODE_ARRAY_TYPE, 0).tagged();
+        self.roots.shared_function_info_map = self
+            .new_bare_map(
+                SHARED_FUNCTION_INFO_TYPE,
+                crate::objects::shared_function_info::SharedFunctionInfo::K_SIZE,
+            )
+            .tagged();
         self.roots.filler_map = self.new_bare_map(FILLER_TYPE, 0).tagged();
 
         // 3. The shared empty collections. `empty_descriptor_array` has to
@@ -66,6 +75,8 @@ impl Isolate {
             self.roots.property_array_map,
             self.roots.transition_array_map,
             self.roots.feedback_vector_map,
+            self.roots.bytecode_array_map,
+            self.roots.shared_function_info_map,
             self.roots.filler_map,
         ];
         for map in built_so_far {
@@ -128,9 +139,13 @@ impl Isolate {
         self.roots.js_global_object_map = self
             .new_js_object_map(JS_GLOBAL_OBJECT_TYPE, Map::K_INITIAL_INOBJECT_SLACK)
             .tagged();
-        self.roots.js_function_map = self.new_js_object_map(JS_FUNCTION_TYPE, 0).tagged();
+        // A JSFunction carries its own fields after the JSObject header, so
+        // its instance size is JSFunction::kSize and its inline property
+        // slots start after that. Sizing it as a plain JSObject would put
+        // the first inline property on top of `shared_function_info`.
+        self.roots.js_function_map = self.new_js_function_map(JS_FUNCTION_TYPE).tagged();
         self.roots.js_native_function_map =
-            self.new_js_object_map(JS_NATIVE_FUNCTION_TYPE, 0).tagged();
+            self.new_js_function_map(JS_NATIVE_FUNCTION_TYPE).tagged();
 
         // Functions are callable; the map bit is what `typeof` reads.
         for map in [
@@ -242,6 +257,19 @@ impl Isolate {
         array.set_number_of_descriptors(&mut self.heap, 0);
         array.set_enum_cache(&mut self.heap, Tagged::ZERO);
         array
+    }
+
+    /// A map for a callable: large enough for `JSFunction`'s own fields,
+    /// with the inline property slots starting after them.
+    fn new_js_function_map(&mut self, instance_type: InstanceType) -> Map {
+        use crate::objects::js_function::JSFunction;
+        let header_words = JSFunction::K_SIZE / crate::common::globals::K_TAGGED_SIZE;
+        let slack = Map::K_INITIAL_INOBJECT_SLACK;
+        let instance_size = (header_words + slack) * crate::common::globals::K_TAGGED_SIZE;
+        let map = self.new_bare_map(instance_type, instance_size);
+        map.set_inobject_properties_start_in_words(&mut self.heap, header_words);
+        map.set_prototype(&mut self.heap, self.roots.null_value);
+        map
     }
 
     /// A map for ordinary JavaScript objects, with `inobject_properties`

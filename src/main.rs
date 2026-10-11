@@ -32,13 +32,9 @@ fn main() {
         "gc" | "trace-gc" => trace_gc(),
         "heap" | "print-heap" => print_heap(),
         "roots" => print_roots(),
-        "ast" | "parse" => match std::env::args().nth(2) {
-            Some(path) => print_ast(&path),
-            None => {
-                eprintln!("vx: usage: vx ast <file.js>");
-                std::process::exit(2);
-            }
-        },
+        "ast" | "parse" => with_file("ast", print_ast),
+        "run" => with_file("run", run_file),
+        "bytecode" | "print-bytecode" => with_file("bytecode", print_bytecode),
         other => {
             eprintln!("vx: unknown command `{other}`");
             eprintln!();
@@ -49,31 +45,120 @@ fn main() {
             eprintln!("  gc      a scavenge, with what survived and what moved");
             eprintln!("  heap    space occupancy");
             eprintln!("  roots   the root table");
+            eprintln!("  run <file.js>");
+            eprintln!("          run a script");
             eprintln!("  ast <file.js>");
             eprintln!("          parse a file and print its syntax tree");
+            eprintln!("  bytecode <file.js>");
+            eprintln!("          compile a file and disassemble it");
             eprintln!();
-            eprintln!("vx can parse JavaScript but not yet run it: the bytecode");
-            eprintln!("pipeline is not built. See PORTING.md.");
+            eprintln!("See PORTING.md for what vx does and does not support.");
             std::process::exit(2);
         }
     }
 }
 
-/// `--print-ast`: parse a file and print the tree.
-fn print_ast(path: &str) {
-    let source = match std::fs::read_to_string(path) {
+fn with_file(command: &str, action: fn(&str, &str)) {
+    let Some(path) = std::env::args().nth(2) else {
+        eprintln!("vx: usage: vx {command} <file.js>");
+        std::process::exit(2);
+    };
+    let source = match std::fs::read_to_string(&path) {
         Ok(source) => source,
         Err(error) => {
             eprintln!("vx: cannot read {path}: {error}");
             std::process::exit(1);
         }
     };
-    match vx::parsing::parser::Parser::parse_program(&source) {
+    action(&path, &source);
+}
+
+/// `--print-ast`
+fn print_ast(_path: &str, source: &str) {
+    match vx::parsing::parser::Parser::parse_program(source) {
         Ok(program) => print!("{}", AstPrinter::print_program(&program)),
         Err(error) => {
-            eprintln!("{}", error.display(&source));
+            eprintln!("{}", error.display(source));
             std::process::exit(1);
         }
+    }
+}
+
+/// Runs a script, the way `d8 file.js` does.
+fn run_file(_path: &str, source: &str) {
+    let mut isolate = Isolate::new();
+    let result = isolate.run_script(source);
+    // Whatever the script printed comes out even if it then threw.
+    for line in isolate.take_output() {
+        println!("{line}");
+    }
+    match result {
+        Ok(value) => {
+            // A completion value of undefined is not worth printing, the way
+            // a REPL suppresses it.
+            if value != isolate.undefined_value() {
+                println!("{}", isolate.to_string(value));
+            }
+        }
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `--print-bytecode`
+fn print_bytecode(_path: &str, source: &str) {
+    use vx::interpreter::bytecode_array_iterator::disassemble;
+    use vx::interpreter::bytecode_generator::BytecodeGenerator;
+    use vx::interpreter::constant_array_builder::ConstantEntry;
+
+    let program = match vx::parsing::parser::Parser::parse_program(source) {
+        Ok(program) => program,
+        Err(error) => {
+            eprintln!("{}", error.display(source));
+            std::process::exit(1);
+        }
+    };
+    let compiled = match BytecodeGenerator::generate(&program) {
+        Ok(compiled) => compiled,
+        Err(error) => {
+            eprintln!("vx: {}", error.message);
+            std::process::exit(1);
+        }
+    };
+
+    for function in &compiled.functions {
+        let name = if function.name.is_empty() {
+            "<anonymous>".to_string()
+        } else {
+            function.name.clone()
+        };
+        println!(
+            "=== [{}] parameters: {}, registers: {}, feedback slots: {} ===",
+            name,
+            function.declared_parameter_count,
+            function.data.register_count,
+            function.data.feedback_slot_count
+        );
+        let constants: Vec<String> = function
+            .data
+            .constants
+            .iter()
+            .map(|entry| match entry {
+                ConstantEntry::Smi(value) => value.to_string(),
+                ConstantEntry::Number(value) => value.to_string(),
+                ConstantEntry::String(value) => format!("{value:?}"),
+                ConstantEntry::Name(value) => format!("#{value}"),
+                ConstantEntry::FunctionLiteral(index) => format!("<function {index}>"),
+                ConstantEntry::TheHole => "<the_hole>".to_string(),
+            })
+            .collect();
+        print!("{}", disassemble(&function.data.bytecodes, &constants));
+        if !constants.is_empty() {
+            println!("constant pool: [{}]", constants.join(", "));
+        }
+        println!();
     }
 }
 

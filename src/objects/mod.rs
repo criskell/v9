@@ -4,6 +4,7 @@
 #[macro_use]
 pub mod object_macros;
 
+pub mod bytecode_array;
 pub mod descriptor_array;
 pub mod fixed_array;
 pub mod heap_number;
@@ -15,8 +16,10 @@ pub mod map;
 pub mod map_updater;
 pub mod map_word;
 pub mod name;
+pub mod objects;
 pub mod oddball;
 pub mod property_details;
+pub mod shared_function_info;
 pub mod smi;
 pub mod string;
 pub mod string_table;

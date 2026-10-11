@@ -11,9 +11,11 @@
 //! that owns it. Nothing in `vx` needs `unsafe`.
 
 pub mod ast;
+pub mod builtins;
 pub mod common;
 pub mod execution;
 pub mod heap;
+pub mod init;
 pub mod interpreter;
 pub mod numbers;
 pub mod objects;

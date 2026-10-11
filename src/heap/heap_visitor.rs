@@ -16,6 +16,7 @@
 //! non-slot and it will try to follow a float as a pointer.
 
 use crate::execution::isolate::Isolate;
+use crate::objects::bytecode_array::BytecodeArray;
 use crate::objects::descriptor_array::DescriptorArray;
 use crate::objects::fixed_array::{FixedArray, PropertyArray, WeakFixedArray};
 use crate::objects::instance_type as it;
@@ -23,6 +24,7 @@ use crate::objects::js_function::JSFunction;
 use crate::objects::js_objects::JSObject;
 use crate::objects::map::Map;
 use crate::objects::oddball::Oddball;
+use crate::objects::shared_function_info::SharedFunctionInfo;
 use crate::objects::tagged::{Address, HeapObject};
 
 impl Isolate {
@@ -112,6 +114,20 @@ impl Isolate {
                 }
             }
 
+            it::BYTECODE_ARRAY_TYPE => {
+                let array = BytecodeArray::unchecked_cast(object);
+                visit(array.source_position_table_address());
+                visit(array.constant_pool_address());
+                // The instruction bytes are not slots. Tracing them would
+                // mean following opcodes as pointers.
+            }
+
+            it::SHARED_FUNCTION_INFO_TYPE => {
+                let info = SharedFunctionInfo::unchecked_cast(object);
+                visit(info.function_data_address());
+                visit(info.name_address());
+            }
+
             it::FILLER_TYPE => {
                 // Free space: nothing to trace.
             }
@@ -136,6 +152,14 @@ impl Isolate {
         self.iterate_string_table(visit);
         for handle in self.handles.iter_mut() {
             visit(handle);
+        }
+        // The interpreter's register file, which is why an object held only
+        // in a register is not collected.
+        for slot in self.stack.iter_mut() {
+            visit(slot);
+        }
+        for info in self.shared_function_infos.iter_mut() {
+            visit(info);
         }
     }
 }
@@ -246,5 +270,14 @@ mod tests {
         assert!(seen.contains(&name), "the string table is a root set");
         assert!(seen.contains(&Smi::from_int(99)), "handles are roots");
         assert!(seen.len() > 20, "the root table itself should be in there");
+
+        // And the interpreter's registers.
+        isolate.stack.push(Smi::from_int(7));
+        let mut seen: Vec<Tagged> = Vec::new();
+        isolate.iterate_roots(&mut |slot| seen.push(*slot));
+        assert!(
+            seen.contains(&Smi::from_int(7)),
+            "a value live only in a register must be a root"
+        );
     }
 }

@@ -110,7 +110,8 @@ pub const DESCRIPTOR_ARRAY_TYPE: InstanceType = 134;
 pub const TRANSITION_ARRAY_TYPE: InstanceType = 135;
 pub const FEEDBACK_VECTOR_TYPE: InstanceType = 136;
 pub const SHARED_FUNCTION_INFO_TYPE: InstanceType = 137;
-pub const FILLER_TYPE: InstanceType = 138;
+pub const BYTECODE_ARRAY_TYPE: InstanceType = 138;
+pub const FILLER_TYPE: InstanceType = 139;
 
 pub const JS_OBJECT_TYPE: InstanceType = 1058;
 pub const FIRST_JS_RECEIVER_TYPE: InstanceType = JS_OBJECT_TYPE;
@@ -232,6 +233,7 @@ pub fn instance_type_name(t: InstanceType) -> &'static str {
         DESCRIPTOR_ARRAY_TYPE => "DESCRIPTOR_ARRAY",
         TRANSITION_ARRAY_TYPE => "TRANSITION_ARRAY",
         FEEDBACK_VECTOR_TYPE => "FEEDBACK_VECTOR",
+        BYTECODE_ARRAY_TYPE => "BYTECODE_ARRAY",
         SHARED_FUNCTION_INFO_TYPE => "SHARED_FUNCTION_INFO",
         FILLER_TYPE => "FILLER",
         JS_OBJECT_TYPE => "JS_OBJECT",

@@ -37,6 +37,24 @@ pub struct Isolate {
     /// as well as in to-space. Parked on the isolate rather than passed
     /// around because the two drain loops feed each other.
     pub(crate) promoted_scan: crate::objects::tagged::Address,
+
+    /// The interpreter's register file. Every frame's parameters and
+    /// registers live here, which is what makes them roots: a value held
+    /// only in a register survives a collection.
+    pub stack: Vec<Tagged>,
+
+    /// How deep JavaScript calls are nested. Each one is a Rust frame, so
+    /// this stands in for V8's stack guard.
+    pub(crate) call_depth: usize,
+
+    /// The `SharedFunctionInfo` of each compiled function, by the index the
+    /// bytecode's `CreateClosure` names. V8 reaches these through the
+    /// constant pool directly; `vx` keeps the table because a function
+    /// literal is compiled before the array that would hold it exists.
+    pub(crate) shared_function_infos: Vec<Tagged>,
+
+    /// Where `console.log` writes. Captured so tests can read it.
+    pub(crate) output: Vec<String>,
 }
 
 pub use crate::roots::roots::RootsTable;
@@ -51,6 +69,10 @@ impl Isolate {
             string_table: StringTable::new(),
             handles: Vec::new(),
             promoted_scan: 0,
+            stack: Vec::new(),
+            call_depth: 0,
+            shared_function_infos: Vec::new(),
+            output: Vec::new(),
         };
         isolate.setup_read_only_roots();
         isolate
@@ -63,6 +85,10 @@ impl Isolate {
             string_table: StringTable::new(),
             handles: Vec::new(),
             promoted_scan: 0,
+            stack: Vec::new(),
+            call_depth: 0,
+            shared_function_infos: Vec::new(),
+            output: Vec::new(),
         };
         isolate.setup_read_only_roots();
         isolate

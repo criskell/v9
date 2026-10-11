@@ -249,6 +249,186 @@ impl Isolate {
         object.set_raw_properties_or_hash(&mut self.heap, grown.tagged());
     }
 
+    // -- code ---------------------------------------------------------------
+
+    /// `Factory::NewBytecodeArray`: materialises what the bytecode generator
+    /// produced into the heap.
+    ///
+    /// Tenured, along with its constant pool: a function's code outlives the
+    /// nursery by construction, and the pool is reachable from a
+    /// `SharedFunctionInfo` that nothing collects yet.
+    pub fn new_bytecode_array(
+        &mut self,
+        data: &crate::interpreter::bytecode_array_builder::BytecodeArrayData,
+    ) -> crate::objects::bytecode_array::BytecodeArray {
+        use crate::objects::bytecode_array::BytecodeArray;
+
+        // The constant pool first: its entries are heap objects, and the
+        // BytecodeArray has to be able to point at a finished one.
+        let constant_pool = self.new_constant_pool(&data.constants);
+
+        let length = data.bytecodes.len() as i32;
+        let map = self
+            .roots
+            .bytecode_array_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.heap.allocate_raw_or_fail(
+            BytecodeArray::size_for(length) as usize,
+            AllocationType::Old,
+        );
+        self.heap.set_map(object, map);
+        let array = BytecodeArray::unchecked_cast(object);
+        array.set_length(&mut self.heap, length);
+        array.set_constant_pool(&mut self.heap, constant_pool.tagged());
+        array.set_source_position_table(&mut self.heap, self.roots.empty_fixed_array);
+        array.set_register_count(&mut self.heap, data.register_count);
+        array.set_parameter_count(&mut self.heap, data.parameter_count);
+        array.set_max_arguments(&mut self.heap, 0);
+        let bytes = data.bytecodes.clone();
+        self.heap
+            .write_bytes(array.first_bytecode_address(), &bytes);
+        array
+    }
+
+    /// Materialises the deferred constant pool entries.
+    ///
+    /// A `Name` entry becomes an *internalized* string and a `String` entry
+    /// does not: that distinction is why they are separate entry kinds, and
+    /// it is what lets a property load compare its name by address.
+    fn new_constant_pool(
+        &mut self,
+        entries: &[crate::interpreter::constant_array_builder::ConstantEntry],
+    ) -> FixedArray {
+        use crate::interpreter::constant_array_builder::ConstantEntry;
+
+        let pool = self.new_fixed_array_tenured(entries.len() as i32);
+        for (index, entry) in entries.iter().enumerate() {
+            let value = match entry {
+                ConstantEntry::Smi(value) => Smi::from_int(*value),
+                ConstantEntry::Number(value) => self.new_heap_number_tenured(*value).tagged(),
+                ConstantEntry::String(value) => {
+                    let string = value.clone();
+                    self.new_string_tenured(&string).tagged()
+                }
+                ConstantEntry::Name(value) => {
+                    let name = value.clone();
+                    self.internalize_string(&name).tagged()
+                }
+                ConstantEntry::FunctionLiteral(code_index) => Smi::from_int(*code_index as i32),
+                ConstantEntry::TheHole => self.the_hole_value(),
+            };
+            pool.set(&mut self.heap, index as i32, value);
+        }
+        pool
+    }
+
+    /// `Factory::NewSharedFunctionInfo`
+    pub fn new_shared_function_info(
+        &mut self,
+        name: &str,
+        bytecode: Option<crate::objects::bytecode_array::BytecodeArray>,
+        declared_parameter_count: i32,
+    ) -> crate::objects::shared_function_info::SharedFunctionInfo {
+        use crate::objects::shared_function_info::SharedFunctionInfo;
+
+        let name = self.internalize_string(name).tagged();
+        let map = self
+            .roots
+            .shared_function_info_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(SharedFunctionInfo::K_SIZE as usize, AllocationType::Old);
+        self.heap.set_map(object, map);
+        let info = SharedFunctionInfo::unchecked_cast(object);
+        info.set_name(&mut self.heap, name);
+        info.set_length(&mut self.heap, declared_parameter_count);
+        info.set_formal_parameter_count(&mut self.heap, declared_parameter_count + 1);
+        info.set_flags(&mut self.heap, 0);
+        match bytecode {
+            Some(bytecode) => info.set_function_data(&mut self.heap, bytecode.tagged()),
+            None => info.set_function_data(&mut self.heap, self.roots.undefined_value),
+        }
+        info
+    }
+
+    /// A native function: no bytecode, a builtin id in `function_data`.
+    pub fn new_native_shared_function_info(
+        &mut self,
+        name: &str,
+        builtin_id: i32,
+        declared_parameter_count: i32,
+    ) -> crate::objects::shared_function_info::SharedFunctionInfo {
+        let info = self.new_shared_function_info(name, None, declared_parameter_count);
+        info.set_is_native(&mut self.heap, true);
+        info.set_function_data(&mut self.heap, Smi::from_int(builtin_id));
+        info
+    }
+
+    /// `Factory::NewFunctionFromSharedFunctionInfo`
+    pub fn new_js_function(
+        &mut self,
+        shared: crate::objects::shared_function_info::SharedFunctionInfo,
+    ) -> crate::objects::js_function::JSFunction {
+        use crate::objects::js_function::JSFunction;
+
+        let is_native = shared.is_native(&self.heap);
+        let map = if is_native {
+            self.roots.js_native_function_map
+        } else {
+            self.roots.js_function_map
+        };
+        let map = Map::unchecked_cast(map.to_strong_heap_object().unwrap());
+        let object = self.new_js_object_from_map(map);
+        let function = JSFunction::unchecked_cast(object.object());
+        function.set_shared_function_info(&mut self.heap, shared.tagged());
+        function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
+        function
+    }
+
+    // -- tenured variants, for things reachable from code -------------------
+
+    fn new_fixed_array_tenured(&mut self, length: i32) -> FixedArray {
+        if length == 0 {
+            return self.empty_fixed_array();
+        }
+        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(FixedArray::size_for(length) as usize, AllocationType::Old);
+        self.heap.set_map(object, map);
+        let array = FixedArray::unchecked_cast(object);
+        array.set_length(&mut self.heap, length);
+        let undefined = self.undefined_value();
+        for i in 0..length {
+            array.set(&mut self.heap, i, undefined);
+        }
+        array
+    }
+
+    fn new_heap_number_tenured(&mut self, value: f64) -> HeapNumber {
+        let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(HeapNumber::K_SIZE as usize, AllocationType::Old);
+        self.heap.set_map(object, map);
+        let number = HeapNumber::unchecked_cast(object);
+        number.set_value(&mut self.heap, value);
+        number
+    }
+
+    fn new_string_tenured(&mut self, s: &str) -> VxString {
+        let one_byte = VxString::is_one_byte_content(s);
+        let map = if one_byte {
+            self.roots.seq_one_byte_string_map
+        } else {
+            self.roots.seq_two_byte_string_map
+        };
+        self.allocate_string_raw(s, map, one_byte, AllocationType::Old)
+    }
+
     /// Size in bytes of `object`, which the heap walker and the collector
     /// need in order to step over it.
     ///
@@ -286,6 +466,10 @@ impl Isolate {
             it::DESCRIPTOR_ARRAY_TYPE => DescriptorArray::size_for(
                 DescriptorArray::unchecked_cast(object).number_of_all_descriptors(&self.heap),
             ),
+            it::BYTECODE_ARRAY_TYPE => {
+                use crate::objects::bytecode_array::BytecodeArray;
+                BytecodeArray::size_for(BytecodeArray::unchecked_cast(object).length(&self.heap))
+            }
             it::MAP_TYPE => Map::K_SIZE,
             other => panic!(
                 "object at 0x{:x} has variable-size map but unknown instance type {} ({})",
