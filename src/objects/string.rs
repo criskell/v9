@@ -1,5 +1,4 @@
-//! Ported from `src/objects/name.h`, `src/objects/string.h`, `string.tq` and
-//! `src/strings/string-hasher-inl.h`.
+//! Ported from `src/objects/string.h` and `string.tq`.
 //!
 //! Layout, following V8's `Name` -> `String` -> `SeqString` chain:
 //!
@@ -26,100 +25,8 @@
 use crate::common::globals::object_pointer_align;
 use crate::heap::heap::Heap;
 use crate::objects::instance_type::{self, InstanceType};
+use crate::objects::name::Name;
 use crate::objects::tagged::{HeapObject, Tagged};
-
-object_type!(
-    /// `Name`: a string or a symbol -- the things that can be property keys.
-    Name
-);
-
-/// `Name::HashFieldType`. The low bit says whether the field can be used as a
-/// hash at all, which is why `kEmpty` and `kForwardingIndex` both have it set.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum HashFieldType {
-    Hash = 0b10,
-    IntegerIndex = 0b00,
-    ForwardingIndex = 0b01,
-    Empty = 0b11,
-}
-
-const HASH_FIELD_TYPE_BITS: u32 = 2;
-const HASH_FIELD_TYPE_MASK: u32 = (1 << HASH_FIELD_TYPE_BITS) - 1;
-const HASH_SHIFT: u32 = HASH_FIELD_TYPE_BITS;
-
-/// `Name::kHashNotComputedMask`
-pub const K_HASH_NOT_COMPUTED_MASK: u32 = 1;
-
-/// `Name::kEmptyHashField`: the hash has not been computed yet.
-pub const K_EMPTY_HASH_FIELD: u32 = HashFieldType::Empty as u32;
-
-/// `String::HashBits::kMax`
-pub const K_MAX_HASH: u32 = u32::MAX >> HASH_SHIFT;
-
-impl Name {
-    pub const K_RAW_HASH_FIELD_OFFSET: i32 = 8;
-
-    #[inline]
-    pub fn raw_hash_field(self, heap: &Heap) -> u32 {
-        heap.read_u32(self.field(Self::K_RAW_HASH_FIELD_OFFSET))
-    }
-
-    #[inline]
-    pub fn set_raw_hash_field(self, heap: &mut Heap, value: u32) {
-        heap.write_u32(self.field(Self::K_RAW_HASH_FIELD_OFFSET), value);
-    }
-
-    /// `Name::IsHashFieldComputed`
-    #[inline]
-    pub fn is_hash_field_computed(raw_hash_field: u32) -> bool {
-        raw_hash_field & K_HASH_NOT_COMPUTED_MASK == 0
-    }
-
-    /// `Name::HashFieldTypeBits::decode`: what the hash field currently holds.
-    #[inline]
-    pub fn hash_field_type(raw_hash_field: u32) -> HashFieldType {
-        match raw_hash_field & HASH_FIELD_TYPE_MASK {
-            0b10 => HashFieldType::Hash,
-            0b00 => HashFieldType::IntegerIndex,
-            0b01 => HashFieldType::ForwardingIndex,
-            _ => HashFieldType::Empty,
-        }
-    }
-
-    /// `Name::hash`: the cached hash, computing it on first use.
-    pub fn hash(self, heap: &mut Heap) -> u32 {
-        let raw = self.raw_hash_field(heap);
-        if Name::is_hash_field_computed(raw) {
-            return raw >> HASH_SHIFT;
-        }
-        let string = String::unchecked_cast(self.object());
-        let hash = string_hash(&string.to_rust_string(heap));
-        self.set_raw_hash_field(heap, (hash << HASH_SHIFT) | (HashFieldType::Hash as u32));
-        hash
-    }
-}
-
-/// `RunningStringHasher` plus `Finalize` from `string-hasher-inl.h` -- the
-/// Jenkins one-at-a-time hash, with V8's exact mixing steps.
-pub fn string_hash(s: &str) -> u32 {
-    let mut running_hash: u32 = 0;
-    for c in s.encode_utf16() {
-        running_hash = running_hash.wrapping_add(c as u32);
-        running_hash = running_hash.wrapping_add(running_hash << 10);
-        running_hash ^= running_hash >> 6;
-    }
-    running_hash = running_hash.wrapping_add(running_hash << 3);
-    running_hash ^= running_hash >> 11;
-    running_hash = running_hash.wrapping_add(running_hash << 15);
-    // `ConvertRawHashToUsableHash`: mask to the available bits, and never
-    // return zero -- zero is reserved to mean "no hash".
-    let hash = running_hash & K_MAX_HASH;
-    if hash == 0 {
-        1
-    } else {
-        hash
-    }
-}
 
 object_type!(
     /// `String`
@@ -292,6 +199,7 @@ mod tests {
         INTERNALIZED_ONE_BYTE_STRING_TYPE, SEQ_ONE_BYTE_STRING_TYPE, SEQ_TWO_BYTE_STRING_TYPE,
     };
     use crate::objects::map::Map;
+    use crate::objects::name::K_EMPTY_HASH_FIELD;
 
     struct World {
         heap: Heap,
@@ -425,37 +333,6 @@ mod tests {
         assert_eq!(s.get(&w.heap, 0), 0xd83d);
         assert_eq!(s.get(&w.heap, 1), 0xde00);
         assert_eq!(s.to_rust_string(&w.heap), "😀");
-    }
-
-    #[test]
-    fn the_hash_is_computed_once_and_cached() {
-        let mut w = World::new();
-        let map = w.one_byte_map;
-        let s = w.new_string("length", map);
-        let name = s.as_name();
-
-        let raw = name.raw_hash_field(&w.heap);
-        assert_eq!(raw, K_EMPTY_HASH_FIELD);
-        assert!(!Name::is_hash_field_computed(raw));
-        assert_eq!(Name::hash_field_type(raw), HashFieldType::Empty);
-
-        let hash = name.hash(&mut w.heap);
-        assert_ne!(hash, 0, "zero is reserved for 'no hash'");
-        assert!(Name::is_hash_field_computed(name.raw_hash_field(&w.heap)));
-        assert_eq!(
-            Name::hash_field_type(name.raw_hash_field(&w.heap)),
-            HashFieldType::Hash
-        );
-        assert_eq!(name.hash(&mut w.heap), hash, "second read must be cached");
-    }
-
-    #[test]
-    fn equal_contents_hash_equally_across_representations() {
-        // "a" fits in one byte but may also be stored as two; the hash is
-        // over code units, so it must not depend on the representation.
-        assert_eq!(string_hash("abc"), string_hash("abc"));
-        assert_ne!(string_hash("abc"), string_hash("abd"));
-        assert_ne!(string_hash(""), 0);
     }
 
     #[test]

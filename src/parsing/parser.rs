@@ -1206,7 +1206,7 @@ impl Parser {
             }
             Token::Number => {
                 self.next();
-                crate::objects::conversions::number_to_string(self.scanner.number_value())
+                crate::numbers::conversions::number_to_string(self.scanner.number_value())
             }
             token if token.is_property_name() => {
                 self.next();

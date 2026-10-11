@@ -1,31 +1,20 @@
-//! Ported from `src/objects/lookup.h` / `lookup.cc` (property lookup) and the
-//! transition half of `src/objects/map.cc` -- `Map::TransitionToDataProperty`,
-//! `Map::CopyAddDescriptor`, `Map::ShareDescriptor`.
+//! Ported from `src/objects/lookup.h` / `lookup.cc`.
 //!
-//! This is where hidden classes earn their keep. Adding a property does not
-//! mutate a shape, it *moves the object to a different shape*:
+//! Finding a property, and storing one. Lookup is the mirror image of a map
+//! transition: the map's descriptors say which slot a property occupies, and
+//! reading it is a map check plus one indexed load. A miss walks the
+//! prototype chain.
 //!
-//! ```text
-//!   {}            o.x = 1          o.y = 2
-//!   Map0  --x-->  Map1    --y-->   Map2
-//!   0 props       1 prop           2 props
-//! ```
-//!
-//! The arrows are transitions, cached on the source map. The second object to
-//! take the same path finds `Map1` already there and reuses it, so every
-//! `{x, y}` in a program shares one `Map2` -- and therefore one field layout,
-//! which is what makes `o.x` compile to "check the map, load slot 0".
-//!
-//! Lookup is the mirror image: find the property's descriptor in the map, and
-//! the descriptor says which slot to read. A miss walks the prototype chain.
+//! Adding a property is not done here -- that is a shape change, and it
+//! lives with the shapes in [`crate::objects::map`]. This file decides
+//! *whether* a property is already there, and `set_property` calls
+//! `Map::TransitionToDataProperty` when it is not.
 
 use crate::execution::isolate::Isolate;
-use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
-use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
 use crate::objects::instance_type;
 use crate::objects::js_objects::JSObject;
 use crate::objects::map::Map;
-use crate::objects::property_details::{default_data_field, PropertyDetails, Representation};
+use crate::objects::property_details::{PropertyDetails, Representation};
 use crate::objects::tagged::Tagged;
 
 /// Where a property was found, for the inline cache to remember.
@@ -47,96 +36,6 @@ impl Isolate {
     // -----------------------------------------------------------------------
     // Transitions
     // -----------------------------------------------------------------------
-
-    /// `Map::TransitionToDataProperty`: the map you get by adding `name` to
-    /// an object whose map is `map`.
-    ///
-    /// Reuses an existing transition when the same shape has been built
-    /// before, which is the common case and the whole reason transitions are
-    /// recorded.
-    pub fn transition_to_data_property(
-        &mut self,
-        map: Map,
-        name: Tagged,
-        representation: Representation,
-    ) -> Map {
-        debug_assert!(
-            instance_type::is_name(self.heap.instance_type_of(name).unwrap()),
-            "a property key must be a Name"
-        );
-        debug_assert_eq!(
-            map.find_descriptor(&self.heap, name),
-            K_NOT_FOUND,
-            "the property is already on this map"
-        );
-
-        use crate::objects::transitions::TransitionsAccessor;
-        if let Some(target) = TransitionsAccessor::search_transition(&self.heap, map, name) {
-            return target;
-        }
-
-        let new_map = self.copy_add_descriptor(map, name, representation);
-
-        // Record the edge so the next object down this path reuses the map.
-        // If the array cannot be allocated the transition is simply not
-        // cached: the cost is a duplicate map, never a wrong answer.
-        let transition_array_map = self.roots.transition_array_map();
-        let _recorded =
-            TransitionsAccessor::insert(&mut self.heap, map, name, new_map, transition_array_map);
-        new_map
-    }
-
-    /// `Map::CopyAddDescriptor`, including the `Map::ShareDescriptor` fast
-    /// path.
-    ///
-    /// The sharing is what keeps a long shape chain cheap. If `map` owns its
-    /// descriptor array and sits at its tip with slack left over, the new
-    /// descriptor is appended *in place* and the child map shares the same
-    /// array, reading one entry further into it. Ownership moves to the
-    /// child, because the child is now the one allowed to append.
-    fn copy_add_descriptor(
-        &mut self,
-        map: Map,
-        name: Tagged,
-        representation: Representation,
-    ) -> Map {
-        let number_of_own = map.number_of_own_descriptors(&self.heap);
-        let field_index = number_of_own as u32;
-        let details = default_data_field(field_index, representation);
-        let hole = self.the_hole_value();
-
-        let descriptors = map.instance_descriptors(&self.heap);
-        let can_share = map.owns_descriptors(&self.heap)
-            && descriptors.number_of_descriptors(&self.heap) == number_of_own
-            && descriptors.number_of_slack_descriptors(&self.heap) > 0;
-
-        let new_descriptors = if can_share {
-            descriptors.append(&mut self.heap, name, details, hole);
-            map.set_owns_descriptors(&mut self.heap, false);
-            descriptors
-        } else {
-            // Copy into a fresh array with slack for the next few properties.
-            let capacity = number_of_own + 1 + K_DESCRIPTOR_ARRAY_SLACK;
-            let fresh = self.new_descriptor_array(capacity);
-            for i in 0..number_of_own {
-                let key = descriptors.get_key(&self.heap, i);
-                let entry_details = descriptors.get_details(&self.heap, i);
-                let value = descriptors.get_value(&self.heap, i);
-                fresh.append(&mut self.heap, key, entry_details, value);
-            }
-            fresh.append(&mut self.heap, name, details, hole);
-            fresh
-        };
-
-        let new_map = self.copy_map_shell(map);
-        new_map.set_instance_descriptors(&mut self.heap, new_descriptors.tagged());
-        new_map.set_number_of_own_descriptors(&mut self.heap, number_of_own + 1);
-        new_map.set_owns_descriptors(&mut self.heap, true);
-        // The back pointer is how the engine walks a shape's history, and the
-        // field it shares with the constructor.
-        new_map.set_constructor_or_back_pointer(&mut self.heap, map.tagged());
-        new_map
-    }
 
     // -----------------------------------------------------------------------
     // Lookup
@@ -246,31 +145,6 @@ impl Isolate {
         true
     }
 
-    /// `MapUpdater::ReconfigureToDataField`, in the narrow sense `vx` needs:
-    /// a field that has held a Smi and is now assigned an object has to be
-    /// recorded as tagged, or a future optimisation would trust a stale
-    /// representation.
-    ///
-    /// Deviation: V8 generalises by building a *new* map and deprecating the
-    /// old one, so that code which already specialised on the narrow
-    /// representation gets invalidated. `vx` widens the descriptor in place,
-    /// which is sound only because nothing specialises on representation yet.
-    /// The map is marked unstable to record that it happened.
-    fn widen_field_representation(&mut self, map: Map, name: Tagged, value: Tagged) {
-        let index = map.find_descriptor(&self.heap, name);
-        if index == K_NOT_FOUND {
-            return;
-        }
-        let descriptors: DescriptorArray = map.instance_descriptors(&self.heap);
-        let details = descriptors.get_details(&self.heap, index);
-        let current = details.representation();
-        let widened = current.generalize(Representation::for_value(value));
-        if widened != current {
-            descriptors.set_details(&mut self.heap, index, details.with_representation(widened));
-            map.set_is_unstable(&mut self.heap, true);
-        }
-    }
-
     // -- convenience for tests and for the builtins -------------------------
 
     /// `o[name] = value` with a Rust string key, internalizing the name.
@@ -288,6 +162,7 @@ impl Isolate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::objects::descriptor_array::K_NOT_FOUND;
     use crate::objects::heap_number::number_value;
     use crate::objects::smi::Smi;
     use crate::objects::transitions::TransitionsAccessor;

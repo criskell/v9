@@ -33,9 +33,12 @@
 //! than stubbed, so that adding a JIT has to confront them honestly.
 
 use crate::common::globals::{K_TAGGED_SIZE, K_TAGGED_SIZE_LOG2};
+use crate::execution::isolate::Isolate;
+use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
 use crate::heap::heap::Heap;
-use crate::objects::descriptor_array::DescriptorArray;
+use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
 use crate::objects::instance_type::{self, InstanceType};
+use crate::objects::property_details::{default_data_field, Representation};
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
 object_type!(
@@ -524,6 +527,118 @@ impl Heap {
     #[inline]
     pub fn instance_type_of(&self, value: Tagged) -> Option<InstanceType> {
         Some(self.instance_type(value.to_strong_heap_object()?))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The transition half of `src/objects/map.cc`.
+//
+// Adding a property does not mutate a shape, it *moves the object to a
+// different shape*:
+//
+//   {}            o.x = 1          o.y = 2
+//   Map0  --x-->  Map1    --y-->   Map2
+//   0 props       1 prop           2 props
+//
+// The arrows are transitions, cached on the source map. The second object to
+// take the same path finds `Map1` already there and reuses it, so every
+// `{x, y}` in a program shares one `Map2` -- and therefore one field layout,
+// which is what makes `o.x` compile to "check the map, load slot 0".
+//
+// These hang off `Isolate` rather than `Map` because they allocate, and
+// allocation needs the heap, the roots and the factory at once. V8 passes the
+// isolate into the equivalent static methods for the same reason.
+// ---------------------------------------------------------------------------
+
+impl Isolate {
+    /// `Map::TransitionToDataProperty`: the map you get by adding `name` to
+    /// an object whose map is `map`.
+    ///
+    /// Reuses an existing transition when the same shape has been built
+    /// before, which is the common case and the whole reason transitions are
+    /// recorded.
+    pub fn transition_to_data_property(
+        &mut self,
+        map: Map,
+        name: Tagged,
+        representation: Representation,
+    ) -> Map {
+        debug_assert!(
+            instance_type::is_name(self.heap.instance_type_of(name).unwrap()),
+            "a property key must be a Name"
+        );
+        debug_assert_eq!(
+            map.find_descriptor(&self.heap, name),
+            K_NOT_FOUND,
+            "the property is already on this map"
+        );
+
+        use crate::objects::transitions::TransitionsAccessor;
+        if let Some(target) = TransitionsAccessor::search_transition(&self.heap, map, name) {
+            return target;
+        }
+
+        let new_map = self.copy_add_descriptor(map, name, representation);
+
+        // Record the edge so the next object down this path reuses the map.
+        // If the array cannot be allocated the transition is simply not
+        // cached: the cost is a duplicate map, never a wrong answer.
+        let transition_array_map = self.roots.transition_array_map();
+        let _recorded =
+            TransitionsAccessor::insert(&mut self.heap, map, name, new_map, transition_array_map);
+        new_map
+    }
+
+    /// `Map::CopyAddDescriptor`, including the `Map::ShareDescriptor` fast
+    /// path.
+    ///
+    /// The sharing is what keeps a long shape chain cheap. If `map` owns its
+    /// descriptor array and sits at its tip with slack left over, the new
+    /// descriptor is appended *in place* and the child map shares the same
+    /// array, reading one entry further into it. Ownership moves to the
+    /// child, because the child is now the one allowed to append.
+    pub(crate) fn copy_add_descriptor(
+        &mut self,
+        map: Map,
+        name: Tagged,
+        representation: Representation,
+    ) -> Map {
+        let number_of_own = map.number_of_own_descriptors(&self.heap);
+        let field_index = number_of_own as u32;
+        let details = default_data_field(field_index, representation);
+        let hole = self.the_hole_value();
+
+        let descriptors = map.instance_descriptors(&self.heap);
+        let can_share = map.owns_descriptors(&self.heap)
+            && descriptors.number_of_descriptors(&self.heap) == number_of_own
+            && descriptors.number_of_slack_descriptors(&self.heap) > 0;
+
+        let new_descriptors = if can_share {
+            descriptors.append(&mut self.heap, name, details, hole);
+            map.set_owns_descriptors(&mut self.heap, false);
+            descriptors
+        } else {
+            // Copy into a fresh array with slack for the next few properties.
+            let capacity = number_of_own + 1 + K_DESCRIPTOR_ARRAY_SLACK;
+            let fresh = self.new_descriptor_array(capacity);
+            for i in 0..number_of_own {
+                let key = descriptors.get_key(&self.heap, i);
+                let entry_details = descriptors.get_details(&self.heap, i);
+                let value = descriptors.get_value(&self.heap, i);
+                fresh.append(&mut self.heap, key, entry_details, value);
+            }
+            fresh.append(&mut self.heap, name, details, hole);
+            fresh
+        };
+
+        let new_map = self.copy_map_shell(map);
+        new_map.set_instance_descriptors(&mut self.heap, new_descriptors.tagged());
+        new_map.set_number_of_own_descriptors(&mut self.heap, number_of_own + 1);
+        new_map.set_owns_descriptors(&mut self.heap, true);
+        // The back pointer is how the engine walks a shape's history, and the
+        // field it shares with the constructor.
+        new_map.set_constructor_or_back_pointer(&mut self.heap, map.tagged());
+        new_map
     }
 }
 

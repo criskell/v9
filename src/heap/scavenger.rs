@@ -1,25 +1,30 @@
 //! Ported from `src/heap/scavenger.h` / `scavenger.cc`.
 //!
 //! The young generation collector: a Cheney-style copying collector over the
-//! two semi-spaces.
+//! two semi-spaces, with V8's decomposition --
+//! [`ScavengerCollector::CollectGarbage`](Isolate::collect_garbage) drives
+//! the phases, `Scavenger::ScavengeObject` handles one slot,
+//! `Scavenger::EvacuateObject` decides where a survivor goes, and
+//! `Scavenger::ShouldBePromoted` is the age-mark test that decides it.
 //!
 //! ```text
 //!   1. swap           to-space and from-space exchange roles
 //!   2. scan roots     every root pointing into from-space is evacuated,
 //!                     and the root is updated to the copy
-//!   3. scan old       old and read-only space are swept for references
+//!   3. scan tenured   old and read-only space are swept for references
 //!                     into from-space (vx has no remembered set yet)
-//!   4. drain          every object copied into to-space is itself scanned,
+//!   4. process        every object copied into to-space is itself scanned,
 //!                     breadth-first, until the scan pointer catches the
-//!                     allocation pointer -- Cheney's trick: the to-space
+//!                     allocation pointer -- Cheney's trick: to-space
 //!                     doubles as the work queue
-//!   5. reset          from-space is dropped whole
+//!   5. reset          from-space is dropped whole, and the age mark is set
+//!                     to where the survivors end
 //! ```
 //!
 //! Evacuating an object leaves a forwarding address in its old map word, so a
 //! second reference to the same object finds the copy instead of making
 //! another ([`MapWord`]). An object that has already survived one scavenge --
-//! it sits below the heap's `age_mark` -- is promoted to old space rather
+//! it sits below the nursery's `age_mark` -- is promoted to old space rather
 //! than copied again.
 //!
 //! Why this is safe here
@@ -37,6 +42,8 @@
 //!   references so a scavenge touches only those. `vx` instead walks old and
 //!   read-only space linearly, which is correct but O(old space) per
 //!   collection.
+//! * **Single threaded.** V8 scavenges in parallel, with per-worker
+//!   `Scavenger` instances and a shared work list. `vx` has one.
 //! * **Weak references are treated as strong.** V8's scavenger processes weak
 //!   references in a separate phase and clears the ones whose target died.
 //!   `vx` keeps them alive one cycle longer, preserving weakness in the
@@ -72,7 +79,7 @@ impl ScavengeStats {
 }
 
 impl Isolate {
-    /// `Heap::CollectGarbage(NEW_SPACE)`.
+    /// `ScavengerCollector::CollectGarbage`.
     ///
     /// Only safe to call at a point where every live object is reachable from
     /// the root set -- the roots table, the string table and the handle
@@ -86,41 +93,29 @@ impl Isolate {
 
         // 1. Swap. What was being allocated into becomes the space to
         //    evacuate; the empty one becomes the allocation target.
-        self.heap.swap_semi_spaces();
-        self.heap.new_space_mut().reset();
-        let age_mark = self.heap.age_mark();
+        self.heap.new_space_mut().swap_semi_spaces();
+        self.heap.new_space_mut().to_space_mut().reset();
+
         // Promoted objects land above whatever old space already holds, so
         // that is where scanning them starts.
         self.promoted_scan = self.heap.old_space().top();
 
-        // 2. Roots. Collected first into a list of (slot address, value) so
-        //    that the visitor closure does not need to borrow the isolate
-        //    while the evacuator mutates it.
-        let mut root_values: Vec<Tagged> = Vec::new();
-        self.iterate_roots(&mut |slot| root_values.push(*slot));
-        for value in root_values.iter_mut() {
-            *value = self.evacuate_reference(*value, age_mark, &mut stats);
-        }
-        let mut index = 0;
-        self.iterate_roots(&mut |slot| {
-            *slot = root_values[index];
-            index += 1;
-        });
+        // 2. Roots.
+        self.iterate_and_scavenge_roots(&mut stats);
 
         // 3. Old and read-only space: no remembered set, so sweep them for
         //    references into the space being evacuated.
-        self.scavenge_tenured_spaces(age_mark, &mut stats);
+        self.scavenge_tenured_spaces(&mut stats);
 
-        // 4. Drain. Cheney: to-space is the work queue, and the scan pointer
-        //    chases the allocation pointer until they meet.
-        self.drain_to_space(age_mark, &mut stats);
+        // 4. Drain the work list.
+        self.process(&mut stats);
 
         // 5. Drop from-space whole, and record where the survivors end so the
         //    next scavenge can tell them from objects allocated after this
         //    one.
-        self.heap.from_space_mut().reset();
+        self.heap.new_space_mut().from_space_mut().reset();
         let survivors_end = self.heap.new_space().top();
-        self.heap.set_age_mark(survivors_end);
+        self.heap.new_space_mut().set_age_mark(survivors_end);
 
         stats.new_space_after = self.heap.new_space().size();
         self.heap.gc_count += 1;
@@ -129,76 +124,93 @@ impl Isolate {
         stats
     }
 
-    /// Walks old and read-only space object by object, updating any slot that
-    /// points into from-space.
-    fn scavenge_tenured_spaces(&mut self, age_mark: Address, stats: &mut ScavengeStats) {
-        for space in [
+    /// `ScavengerCollector::IterateRoots` plus `Scavenger::ScavengeObject` on
+    /// each one.
+    ///
+    /// The root values are collected into a list first, because the visitor
+    /// borrows the isolate and evacuating mutates it. V8 can scavenge in
+    /// place because it is holding raw pointers; here the two-pass shape is
+    /// what makes the borrow check work out, and it visits exactly the same
+    /// slots in the same order.
+    fn iterate_and_scavenge_roots(&mut self, stats: &mut ScavengeStats) {
+        let mut root_values: Vec<Tagged> = Vec::new();
+        self.iterate_roots(&mut |slot| root_values.push(*slot));
+        for value in root_values.iter_mut() {
+            *value = self.scavenge_object(*value, stats);
+        }
+        let mut index = 0;
+        self.iterate_roots(&mut |slot| {
+            *slot = root_values[index];
+            index += 1;
+        });
+    }
+
+    /// Stands in for V8's remembered set: walks old and read-only space
+    /// object by object, updating any slot that points into from-space.
+    fn scavenge_tenured_spaces(&mut self, stats: &mut ScavengeStats) {
+        for range in [
             self.heap.old_space().start()..self.heap.old_space().top(),
             self.heap.read_only_space().start()..self.heap.read_only_space().top(),
         ] {
-            let mut address = space.start;
-            while address < space.end {
+            let mut address = range.start;
+            while address < range.end {
                 let object = HeapObject::from_address(address);
                 let size = self.object_size(object);
-                self.scavenge_object_slots(object, age_mark, stats);
-                address += crate::common::globals::object_pointer_align(size as u64);
+                self.visit_object(object, stats);
+                address += object_pointer_align(size as u64);
             }
         }
     }
 
-    /// Cheney's scan loop. Objects copied into to-space are scanned in
-    /// allocation order; scanning one may copy more, which appends to the
-    /// very region being scanned.
-    fn drain_to_space(&mut self, age_mark: Address, stats: &mut ScavengeStats) {
+    /// `Scavenger::Process`: Cheney's scan loop.
+    ///
+    /// Objects copied into to-space are scanned in allocation order, and
+    /// scanning one may copy more, which appends to the very region being
+    /// scanned. Promotion appends to old space instead, so that has its own
+    /// scan pointer and the two feed each other until both are exhausted.
+    fn process(&mut self, stats: &mut ScavengeStats) {
         let mut scan = self.heap.new_space().start();
         loop {
             let top = self.heap.new_space().top();
             if scan >= top {
-                // Promotion can also append to old space, whose new tail has
-                // to be scanned too; `scavenge_promoted` handles that and may
-                // in turn copy more into to-space, so re-check.
-                let promoted_scanned = self.drain_promoted(age_mark, stats);
-                if !promoted_scanned && scan >= self.heap.new_space().top() {
+                let promoted_work = self.process_promoted(stats);
+                if !promoted_work && scan >= self.heap.new_space().top() {
                     break;
                 }
                 continue;
             }
             let object = HeapObject::from_address(scan);
             let size = self.object_size(object);
-            self.scavenge_object_slots(object, age_mark, stats);
-            scan += crate::common::globals::object_pointer_align(size as u64);
+            self.visit_object(object, stats);
+            scan += object_pointer_align(size as u64);
         }
         debug_assert_eq!(scan, self.heap.new_space().top());
     }
 
-    /// Scans objects that were promoted into old space during this
-    /// collection. Returns whether any work was done.
-    fn drain_promoted(&mut self, age_mark: Address, stats: &mut ScavengeStats) -> bool {
+    /// Scans the objects promoted into old space during this collection.
+    /// Returns whether any work was done.
+    fn process_promoted(&mut self, stats: &mut ScavengeStats) -> bool {
         let mut did_work = false;
         while self.promoted_scan < self.heap.old_space().top() {
             let object = HeapObject::from_address(self.promoted_scan);
             let size = self.object_size(object);
-            self.scavenge_object_slots(object, age_mark, stats);
-            self.promoted_scan += crate::common::globals::object_pointer_align(size as u64);
+            self.visit_object(object, stats);
+            self.promoted_scan += object_pointer_align(size as u64);
             did_work = true;
         }
         did_work
     }
 
-    /// Updates every reference inside `object`.
-    fn scavenge_object_slots(
-        &mut self,
-        object: HeapObject,
-        age_mark: Address,
-        stats: &mut ScavengeStats,
-    ) {
-        // Collect the slots first: the visitor borrows the isolate, and
-        // evacuating mutates it.
+    /// `ScavengeVisitor::VisitPointers`: update every reference inside
+    /// `object`.
+    fn visit_object(&mut self, object: HeapObject, stats: &mut ScavengeStats) {
+        // The slots are collected first for the same borrow reason as the
+        // roots: the visitor reads the isolate, evacuating writes it.
         let mut slots: Vec<Address> = Vec::new();
         self.visit_object_slots(object, &mut |address| slots.push(address));
         for slot in slots {
             let value = self.heap.read_tagged(slot);
-            let updated = self.evacuate_reference(value, age_mark, stats);
+            let updated = self.scavenge_object(value, stats);
             if updated != value {
                 self.heap.write_tagged(slot, updated);
             }
@@ -208,12 +220,7 @@ impl Isolate {
     /// `Scavenger::ScavengeObject`: if `value` points into the space being
     /// evacuated, copy the target (or find the copy already made) and return
     /// a reference to it. Anything else is returned unchanged.
-    fn evacuate_reference(
-        &mut self,
-        value: Tagged,
-        age_mark: Address,
-        stats: &mut ScavengeStats,
-    ) -> Tagged {
+    fn scavenge_object(&mut self, value: Tagged, stats: &mut ScavengeStats) -> Tagged {
         let Some(object) = value.to_heap_object() else {
             // A Smi or a cleared weak reference: nothing to update.
             return value;
@@ -221,7 +228,7 @@ impl Isolate {
         if !self.heap.in_from_space(object) {
             return value;
         }
-        let copy = self.evacuate(object, age_mark, stats);
+        let copy = self.evacuate_object(object, stats);
         // Preserve weakness: a weak slot must stay weak after the update, or
         // the reference would start keeping its target alive.
         if value.is_weak_or_cleared() {
@@ -231,63 +238,87 @@ impl Isolate {
         }
     }
 
-    /// `Scavenger::EvacuateObject`. Idempotent: the forwarding address left
-    /// in the old map word means the second caller gets the first caller's
-    /// copy rather than making another.
-    fn evacuate(
-        &mut self,
-        object: HeapObject,
-        age_mark: Address,
-        stats: &mut ScavengeStats,
-    ) -> HeapObject {
+    /// `Scavenger::EvacuateObject`.
+    ///
+    /// Idempotent: the forwarding address left in the old map word means the
+    /// second caller gets the first caller's copy rather than making another.
+    fn evacuate_object(&mut self, object: HeapObject, stats: &mut ScavengeStats) -> HeapObject {
         let map_word = self.heap.map_word(object);
         if map_word.is_forwarding_address() {
             return map_word.to_forwarding_address();
         }
 
         let size = self.object_size(object) as usize;
-        // Already survived one scavenge? Graduate it instead of copying it
-        // around the nursery again.
-        let promote = object.address() < age_mark;
+        if self.should_be_promoted(object.address()) {
+            return self.promote_object(object, size, stats);
+        }
+        match self.semi_space_copy_object(object, size, stats) {
+            Some(target) => target,
+            // The survivors do not fit in a semi-space. V8 handles this by
+            // promoting the overflow rather than failing the collection.
+            // Unreachable while both halves are the same size, since a copy
+            // is the same size as its original.
+            None => self.promote_object(object, size, stats),
+        }
+    }
 
-        let target = if promote {
-            let target = self
-                .heap
-                .allocate_raw(size, AllocationType::Old)
-                .expect("old space must accept a promotion");
-            stats.bytes_promoted += size;
-            stats.objects_promoted += 1;
-            target
-        } else {
-            match self.heap.allocate_raw(size, AllocationType::Young) {
-                Some(target) => {
-                    stats.bytes_evacuated += size;
-                    stats.objects_evacuated += 1;
-                    target
-                }
-                None => {
-                    // The survivors do not fit in a semi-space. V8 handles
-                    // this by promoting the overflow too, rather than failing
-                    // the collection.
-                    let target = self
-                        .heap
-                        .allocate_raw(size, AllocationType::Old)
-                        .expect("old space must accept an overflowing survivor");
-                    stats.bytes_promoted += size;
-                    stats.objects_promoted += 1;
-                    target
-                }
-            }
-        };
+    /// `Scavenger::ShouldBePromoted`: has this object already survived a
+    /// collection?
+    ///
+    /// Survivors are copied to the bottom of to-space and fresh allocation
+    /// continues above them, so the age mark recorded at the end of the last
+    /// scavenge separates the two generations inside the nursery with a
+    /// single address comparison.
+    #[inline]
+    fn should_be_promoted(&self, object_address: Address) -> bool {
+        object_address < self.heap.new_space().age_mark()
+    }
 
-        self.heap
-            .copy_within(object.address(), target.address(), size);
-        // Leave the trail. From here on the original is a tombstone.
-        self.heap
-            .set_map_word(object, MapWord::from_forwarding_address(target));
+    /// `Scavenger::SemiSpaceCopyObject`: copy within the nursery.
+    fn semi_space_copy_object(
+        &mut self,
+        object: HeapObject,
+        size: usize,
+        stats: &mut ScavengeStats,
+    ) -> Option<HeapObject> {
+        let target = self.heap.allocate_raw(size, AllocationType::Young)?;
+        self.try_migrate_object(object, target, size);
+        stats.bytes_evacuated += size;
+        stats.objects_evacuated += 1;
+        Some(target)
+    }
+
+    /// `Scavenger::PromoteObject`: graduate out of the nursery.
+    fn promote_object(
+        &mut self,
+        object: HeapObject,
+        size: usize,
+        stats: &mut ScavengeStats,
+    ) -> HeapObject {
+        let target = self
+            .heap
+            .allocate_raw(size, AllocationType::Old)
+            .expect("old space must accept a promotion");
+        self.try_migrate_object(object, target, size);
+        stats.bytes_promoted += size;
+        stats.objects_promoted += 1;
         target
     }
+
+    /// `Scavenger::TryMigrateObject`: copy the bytes and leave the trail.
+    ///
+    /// After this the original is a tombstone whose map word is a forwarding
+    /// address, which is what makes a shared reference resolve to one copy
+    /// and a cycle terminate.
+    fn try_migrate_object(&mut self, object: HeapObject, target: HeapObject, size: usize) {
+        self.heap
+            .copy_within(object.address(), target.address(), size);
+        self.heap
+            .set_map_word(object, MapWord::from_forwarding_address(target));
+    }
 }
+
+use crate::common::globals::object_pointer_align;
 
 #[cfg(test)]
 mod tests {

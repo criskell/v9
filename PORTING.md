@@ -32,6 +32,47 @@ Reference checkout: `~/devel/v8` at `a74948bb81a5` (2026-10-10).
 | `V8_MAP_PACKING` | off |
 | Smi | `SmiTagging<8>`: full `i32`, in the upper half of the word |
 
+## Layout
+
+Every `vx` source file maps to a V8 source file **at the same path**, with
+`snake_case` for V8's `kebab-case`. `tools/check-layout.sh <v8-checkout>`
+enforces it:
+
+```
+src/objects/map.rs          <- src/objects/{map.h, map.cc, map.tq}
+src/heap/scavenger.rs       <- src/heap/{scavenger.h, scavenger.cc}
+src/parsing/token.rs        <- src/parsing/{token.h, token.cc}
+```
+
+Function and method names follow suit: `Map::TransitionToDataProperty`
+becomes `transition_to_data_property`, `Scavenger::ShouldBePromoted` becomes
+`should_be_promoted`. Where V8 decomposes a job into several methods, `vx`
+keeps the same decomposition even when one Rust function would do, because
+the decomposition is how the original is navigated.
+
+### Splits `vx` deliberately does not copy
+
+Three kinds of file boundary in V8 exist because of C++, not because of the
+engine's structure, and reproducing them would be cargo cult:
+
+* **`*-inl.h`** — inline definitions split out of the header so other
+  headers can include the declarations without the bodies. Rust has no
+  separate declaration, so these fold into the one module.
+* **`*.tq`** — Torque sources, which *generate* C++ layout accessors. `vx`
+  reads them for the layouts and writes the accessors by hand, so they fold
+  into the corresponding module.
+* **`parser-base.h` vs `parser.cc`** — `ParserBase` is a CRTP template so
+  that `Parser` and `PreParser` can share the grammar while instantiating
+  different node types. `vx` has no preparser, so there is nothing to share
+  and the split would be two files with one implementation. If lazy parsing
+  is ever added, this is where it reappears.
+
+Where a C++ class lives in a header `vx` does not have (`Scavenger` and
+`ScavengerCollector` in `scavenger.h`, `StringTable` in `string-table.h`),
+its methods hang off `Isolate` in the matching module. That is because they
+all need the heap, the roots and the factory at once; V8 passes the isolate
+into the equivalent static methods for exactly the same reason.
+
 ## Fidelity
 
 "Ported" does not mean the same thing in every row below, and the difference

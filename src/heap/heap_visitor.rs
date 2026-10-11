@@ -1,4 +1,5 @@
-//! Ported from `src/heap/heap-visitor.h` / `heap-visitor-inl.h`.
+//! Ported from `src/heap/heap-visitor.h`, `heap-visitor.cc` and
+//! `heap-visitor-inl.h`.
 //!
 //! Given an object, enumerate the slots in it that hold tagged values. This
 //! is the one piece of knowledge the garbage collector cannot derive: a word
@@ -18,7 +19,8 @@ use crate::execution::isolate::Isolate;
 use crate::objects::descriptor_array::DescriptorArray;
 use crate::objects::fixed_array::{FixedArray, PropertyArray, WeakFixedArray};
 use crate::objects::instance_type as it;
-use crate::objects::js_objects::{JSFunction, JSObject};
+use crate::objects::js_function::JSFunction;
+use crate::objects::js_objects::JSObject;
 use crate::objects::map::Map;
 use crate::objects::oddball::Oddball;
 use crate::objects::tagged::{Address, HeapObject};

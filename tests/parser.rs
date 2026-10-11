@@ -8,6 +8,7 @@
 //! getting the language wrong.
 
 use vx::ast::ast::*;
+use vx::ast::prettyprinter::AstPrinter;
 use vx::parsing::parser::Parser;
 
 fn parse(source: &str) -> Program {
@@ -610,7 +611,7 @@ fn a_realistic_program_parses() {
     );
     // The printer runs over the whole tree without panicking, which is a
     // cheap exhaustiveness check on the node kinds.
-    let printed = program.print();
+    let printed = AstPrinter::print_program(&program);
     assert!(printed.contains("FUNC factorial(n)"));
     assert!(printed.contains("OBJECT LITERAL"));
     assert!(printed.contains("CONDITIONAL"));

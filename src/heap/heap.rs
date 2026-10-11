@@ -1,26 +1,8 @@
-//! Ported from `src/heap/heap.h` / `src/heap/heap.cc` (the allocation and raw
-//! access parts; the collector lives in `scavenger.rs`).
-//!
-//! The arena
-//! ---------
-//! V8 reserves virtual address space per space and dereferences tagged
-//! pointers into it directly. `vx` reserves one contiguous `Vec<u8>` and
-//! treats an [`Address`] as an offset into it. The consequences:
-//!
-//! * Every field access is bounds checked, so a stale or malformed address is
-//!   a panic with a message instead of undefined behaviour. That is the whole
-//!   reason for the detour.
-//! * Addresses survive the arena being reallocated, because they are offsets.
-//!   Growing old space is therefore just a `Vec::resize`, where V8 needs to
-//!   have reserved the range in advance.
-//! * Field access costs one subtraction and one bounds check rather than a
-//!   bare load. That is the price paid for the two points above.
-//!
-//! Address 0 is left permanently unallocated so that `kNullAddress` can never
-//! be mistaken for a real object.
-
 use crate::common::globals::*;
-use crate::heap::spaces::{AllocationSpace, Space};
+use crate::heap::new_spaces::SemiSpaceNewSpace;
+use crate::heap::paged_spaces::PagedSpace;
+use crate::heap::read_only_spaces::ReadOnlySpace;
+use crate::heap::spaces::AllocationSpace;
 use crate::objects::map_word::MapWord;
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
@@ -46,7 +28,7 @@ pub enum AllocationType {
 #[derive(Copy, Clone, Debug)]
 pub struct HeapConfig {
     pub read_only_space_size: usize,
-    /// Size of *each* semi-space. New space capacity is twice this.
+    /// Size of *each* semi-space. New space commits twice this.
     pub semi_space_size: usize,
     pub initial_old_space_size: usize,
     pub max_old_space_size: usize,
@@ -68,24 +50,12 @@ pub struct Heap {
     memory: Vec<u8>,
     config: HeapConfig,
 
-    read_only_space: Space,
-    /// New space's to-space: where young objects are allocated.
-    new_space: Space,
-    /// New space's from-space: holds the previous generation during a
-    /// scavenge, idle otherwise.
-    from_space: Space,
-    old_space: Space,
-
-    /// `SemiSpaceNewSpace::age_mark_`: the address in new space up to which
-    /// everything has already survived one scavenge.
-    ///
-    /// Survivors are evacuated to the start of to-space, and fresh
-    /// allocations continue above them, so one address separates the two
-    /// generations inside the nursery. On the next scavenge, anything below
-    /// the mark has survived once already and gets promoted to old space --
-    /// which is how an object graduates out of the nursery instead of being
-    /// copied back and forth forever.
-    age_mark: Address,
+    read_only_space: ReadOnlySpace,
+    /// `Heap::new_space_`: both halves of the nursery, and the age mark that
+    /// separates the survivors from the objects allocated since.
+    new_space: SemiSpaceNewSpace,
+    /// `Heap::old_space_`
+    old_space: PagedSpace,
 
     /// Statistics, for `--trace-gc`.
     pub gc_count: usize,
@@ -103,49 +73,32 @@ impl Heap {
         // never a valid object address.
         let guard = K_OBJECT_ALIGNMENT as usize;
 
-        let ro_start = guard as Address;
-        let new_start = ro_start + config.read_only_space_size as u64;
-        let from_start = new_start + config.semi_space_size as u64;
-        let old_start = from_start + config.semi_space_size as u64;
+        let read_only_start = guard as Address;
+        let to_space_start = read_only_start + config.read_only_space_size as u64;
+        let from_space_start = to_space_start + config.semi_space_size as u64;
+        let old_space_start = from_space_start + config.semi_space_size as u64;
 
-        let total = old_start as usize + config.initial_old_space_size;
+        let total = old_space_start as usize + config.initial_old_space_size;
 
         Heap {
             memory: vec![0u8; total],
             config,
-            read_only_space: Space::new(
-                AllocationSpace::ReadOnlySpace,
-                ro_start,
-                config.read_only_space_size,
-            ),
-            new_space: Space::new(AllocationSpace::NewSpace, new_start, config.semi_space_size),
-            from_space: Space::new(
-                AllocationSpace::FromSpace,
-                from_start,
+            read_only_space: ReadOnlySpace::new(read_only_start, config.read_only_space_size),
+            new_space: SemiSpaceNewSpace::new(
+                to_space_start,
+                from_space_start,
                 config.semi_space_size,
             ),
-            old_space: Space::new(
+            old_space: PagedSpace::new(
                 AllocationSpace::OldSpace,
-                old_start,
+                old_space_start,
                 config.initial_old_space_size,
+                config.max_old_space_size,
             ),
-            age_mark: new_start,
             gc_count: 0,
             bytes_promoted: 0,
             bytes_evacuated: 0,
         }
-    }
-
-    /// `SemiSpaceNewSpace::age_mark`
-    #[inline]
-    pub fn age_mark(&self) -> Address {
-        self.age_mark
-    }
-
-    /// `SemiSpaceNewSpace::set_age_mark`
-    #[inline]
-    pub(crate) fn set_age_mark(&mut self, address: Address) {
-        self.age_mark = address;
     }
 
     pub fn config(&self) -> &HeapConfig {
@@ -154,48 +107,37 @@ impl Heap {
 
     // -- Spaces -------------------------------------------------------------
 
-    pub fn read_only_space(&self) -> &Space {
+    pub fn read_only_space(&self) -> &ReadOnlySpace {
         &self.read_only_space
     }
-    pub fn new_space(&self) -> &Space {
+
+    /// `Heap::new_space`
+    pub fn new_space(&self) -> &SemiSpaceNewSpace {
         &self.new_space
     }
-    pub fn from_space(&self) -> &Space {
-        &self.from_space
-    }
-    pub fn old_space(&self) -> &Space {
+
+    /// `Heap::old_space`
+    pub fn old_space(&self) -> &PagedSpace {
         &self.old_space
     }
 
-    pub(crate) fn new_space_mut(&mut self) -> &mut Space {
+    pub(crate) fn new_space_mut(&mut self) -> &mut SemiSpaceNewSpace {
         &mut self.new_space
-    }
-    pub(crate) fn from_space_mut(&mut self) -> &mut Space {
-        &mut self.from_space
-    }
-
-    /// `SemiSpaceNewSpace::Swap`: to-space and from-space change roles. Called
-    /// at the start of a scavenge, after which the surviving objects are
-    /// evacuated out of from-space.
-    pub(crate) fn swap_semi_spaces(&mut self) {
-        std::mem::swap(&mut self.new_space, &mut self.from_space);
-        // The spaces keep their own address ranges; only their roles swap. Fix
-        // the ids back up so `space_of` and diagnostics stay truthful.
-        self.new_space.set_id_for_swap(AllocationSpace::NewSpace);
-        self.from_space.set_id_for_swap(AllocationSpace::FromSpace);
     }
 
     /// Which space holds `address`, or `None` if it is not a heap address.
     pub fn space_of(&self, address: Address) -> Option<AllocationSpace> {
-        for space in [
-            &self.read_only_space,
-            &self.new_space,
-            &self.from_space,
-            &self.old_space,
-        ] {
-            if space.contains(address) {
-                return Some(space.id());
-            }
+        if self.read_only_space.contains(address) {
+            return Some(AllocationSpace::ReadOnlySpace);
+        }
+        if self.new_space.to_space().contains(address) {
+            return Some(self.new_space.to_space().id());
+        }
+        if self.new_space.from_space().contains(address) {
+            return Some(self.new_space.from_space().id());
+        }
+        if self.old_space.contains(address) {
+            return Some(AllocationSpace::OldSpace);
         }
         None
     }
@@ -205,13 +147,13 @@ impl Heap {
     /// updating at all.
     #[inline]
     pub fn in_young_generation(&self, object: HeapObject) -> bool {
-        self.new_space.contains(object.address()) || self.from_space.contains(object.address())
+        self.new_space.contains(object.address())
     }
 
-    /// Whether `object` lives in the space currently being evacuated.
+    /// Whether `object` lives in the half currently being evacuated.
     #[inline]
     pub fn in_from_space(&self, object: HeapObject) -> bool {
-        self.from_space.contains(object.address())
+        self.new_space.from_space().contains(object.address())
     }
 
     #[inline]
@@ -251,16 +193,10 @@ impl Heap {
         if let Some(address) = self.old_space.allocate_raw(size_in_bytes) {
             return Some(address);
         }
-        let needed = object_pointer_align(size_in_bytes as u64) as usize;
-        let current = self.old_space.capacity();
-        let grow_by = std::cmp::max(current, needed).next_power_of_two();
-        let new_capacity = current.saturating_add(grow_by);
-        if new_capacity > self.config.max_old_space_size {
-            return None;
-        }
+        let new_capacity = self.old_space.capacity_needed_to_grow(size_in_bytes)?;
         let new_limit = self.old_space.start() + new_capacity as u64;
         self.memory.resize(new_limit as usize, 0);
-        self.old_space.set_limit(new_limit);
+        self.old_space.grow_to(new_capacity);
         self.old_space.allocate_raw(size_in_bytes)
     }
 
@@ -504,19 +440,29 @@ mod tests {
     #[test]
     fn spaces_do_not_overlap() {
         let heap = small_heap();
-        let spaces = [
-            heap.read_only_space(),
-            heap.new_space(),
-            heap.from_space(),
-            heap.old_space(),
+        let ranges = [
+            (
+                "read_only",
+                heap.read_only_space().start(),
+                heap.read_only_space().limit(),
+            ),
+            (
+                "to_space",
+                heap.new_space().to_space().start(),
+                heap.new_space().to_space().limit(),
+            ),
+            (
+                "from_space",
+                heap.new_space().from_space().start(),
+                heap.new_space().from_space().limit(),
+            ),
+            ("old", heap.old_space().start(), heap.old_space().limit()),
         ];
-        for (i, a) in spaces.iter().enumerate() {
-            for b in spaces.iter().skip(i + 1) {
+        for (i, (a_name, a_start, a_limit)) in ranges.iter().enumerate() {
+            for (b_name, b_start, b_limit) in ranges.iter().skip(i + 1) {
                 assert!(
-                    a.limit() <= b.start() || b.limit() <= a.start(),
-                    "{} and {} overlap",
-                    a.id().name(),
-                    b.id().name()
+                    a_limit <= b_start || b_limit <= a_start,
+                    "{a_name} and {b_name} overlap"
                 );
             }
         }
@@ -702,23 +648,24 @@ mod tests {
     }
 
     #[test]
-    fn swapping_semi_spaces_exchanges_roles_not_addresses() {
+    fn swapping_semi_spaces_moves_an_object_into_the_space_being_evacuated() {
         let mut heap = small_heap();
-        let to_start = heap.new_space().start();
-        let from_start = heap.from_space().start();
-
         let young = heap.allocate_raw_or_fail(16, AllocationType::Young);
-        assert!(heap.new_space().contains(young.address()));
-
-        heap.swap_semi_spaces();
-
-        assert_eq!(heap.new_space().start(), from_start);
-        assert_eq!(heap.from_space().start(), to_start);
-        assert_eq!(heap.new_space().id(), AllocationSpace::NewSpace);
-        assert_eq!(heap.from_space().id(), AllocationSpace::FromSpace);
-        // The object did not move, but it is now in the space being evacuated.
-        assert!(heap.in_from_space(young));
         assert!(heap.in_young_generation(young));
+        assert!(!heap.in_from_space(young));
+
+        heap.new_space_mut().swap_semi_spaces();
+
+        // The object did not move; its half changed role.
+        assert!(heap.in_from_space(young));
+        assert!(
+            heap.in_young_generation(young),
+            "either half is the nursery"
+        );
+        assert_eq!(
+            heap.space_of(young.address()),
+            Some(AllocationSpace::FromSpace)
+        );
     }
 
     #[test]

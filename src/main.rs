@@ -5,6 +5,7 @@
 //! model are actually doing -- the equivalent of V8's `--trace-maps`,
 //! `--trace-gc` and `--print-heap` output, on a worked example.
 
+use vx::ast::prettyprinter::AstPrinter;
 use vx::execution::isolate::Isolate;
 use vx::heap::heap::Heap;
 use vx::objects::instance_type;
@@ -31,6 +32,13 @@ fn main() {
         "gc" | "trace-gc" => trace_gc(),
         "heap" | "print-heap" => print_heap(),
         "roots" => print_roots(),
+        "ast" | "parse" => match std::env::args().nth(2) {
+            Some(path) => print_ast(&path),
+            None => {
+                eprintln!("vx: usage: vx ast <file.js>");
+                std::process::exit(2);
+            }
+        },
         other => {
             eprintln!("vx: unknown command `{other}`");
             eprintln!();
@@ -41,10 +49,30 @@ fn main() {
             eprintln!("  gc      a scavenge, with what survived and what moved");
             eprintln!("  heap    space occupancy");
             eprintln!("  roots   the root table");
+            eprintln!("  ast <file.js>");
+            eprintln!("          parse a file and print its syntax tree");
             eprintln!();
-            eprintln!("vx cannot run JavaScript source yet: there is no parser.");
-            eprintln!("See PORTING.md.");
+            eprintln!("vx can parse JavaScript but not yet run it: the bytecode");
+            eprintln!("pipeline is not built. See PORTING.md.");
             std::process::exit(2);
+        }
+    }
+}
+
+/// `--print-ast`: parse a file and print the tree.
+fn print_ast(path: &str) {
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) => {
+            eprintln!("vx: cannot read {path}: {error}");
+            std::process::exit(1);
+        }
+    };
+    match vx::parsing::parser::Parser::parse_program(&source) {
+        Ok(program) => print!("{}", AstPrinter::print_program(&program)),
+        Err(error) => {
+            eprintln!("{}", error.display(&source));
+            std::process::exit(1);
         }
     }
 }

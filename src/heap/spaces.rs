@@ -1,11 +1,17 @@
-//! Ported from `src/heap/spaces.h`, `src/heap/new-spaces.h` and
-//! `src/heap/paged-spaces.h`.
+//! Ported from `src/heap/spaces.h`.
 //!
 //! V8 reserves virtual memory per space and hands out pages from it. `vx`
 //! reserves one contiguous arena up front and gives each space a disjoint
 //! sub-range of it, so an address still identifies its space by value alone.
 //! Within a space, allocation is the same bump pointer V8 uses: `top` walks
 //! up towards `limit`, and running out is what triggers a collection.
+//!
+//! `Space` is the base class every space derives from; the derived spaces
+//! live in the files V8 puts them in -- [`SemiSpace`] and
+//! [`SemiSpaceNewSpace`](crate::heap::new_spaces::SemiSpaceNewSpace) in
+//! `new_spaces`, [`PagedSpace`](crate::heap::paged_spaces::PagedSpace) in
+//! `paged_spaces`, [`ReadOnlySpace`](crate::heap::read_only_spaces::ReadOnlySpace)
+//! in `read_only_spaces`.
 //!
 //! Deviation: there are no pages. A space is one run of bytes, not a list of
 //! `MemoryChunk`s. Pages buy V8 incremental sweeping, per-page remembered
