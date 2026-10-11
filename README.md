@@ -1,6 +1,10 @@
 # vx
 
-A JavaScript engine in Rust, built by porting V8 — same module tree, same
+Testing the power of LLMs.
+
+---
+
+A JavaScript engine in Rust, built by porting V8, same module tree, same
 method names, same algorithms, written as safe Rust. An experiment.
 
 ```
