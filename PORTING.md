@@ -153,7 +153,8 @@ which is the argument for reading it.
 | `src/init/bootstrapper.cc` | `src/init/bootstrapper.rs` | [R] the global object and the builtins |
 | `src/objects/feedback-vector.h`, `.cc` | `src/objects/feedback_vector.rs` | [T] slot kinds and widths; [A] the nexus and the state encoding |
 | `src/ic/handler-configuration.h` | `src/ic/handler_configuration.rs` | [T] the Smi handler bit layout |
-| `src/ic/ic.h`, `ic.cc` | `src/ic/ic.rs` | [A] the monomorphic/polymorphic/megamorphic lattice |
+| `src/ic/ic.h`, `ic.cc` | `src/ic/ic.rs` | [A] the monomorphic/polymorphic/megamorphic lattice, plus the global ICs |
+| `src/objects/property-cell.h` | `src/objects/property_cell.rs` | [T] layout; [A] the cell-type lattice |
 | `src/parsing/token.h` | `src/parsing/token.rs` | [T] full token list, precedences and enum order |
 | `src/parsing/scanner.h`, `scanner.cc` | `src/parsing/scanner.rs` | [A] `c0_`, two-token lookahead, ASI line tracking |
 | `src/ast/ast.h` | `src/ast/ast.rs` | [R] node kinds follow `AST_NODE_LIST`; enums replace the class hierarchy |
@@ -164,7 +165,6 @@ which is the argument for reading it.
 | V8 | Would become | Notes |
 | --- | --- | --- |
 | `src/ic/stub-cache.h` | `src/ic/` | the global `(map, name) -> handler` hash table a megamorphic site consults before giving up |
-| `src/objects/property-cell.h` | `src/objects/` | property cells, which is how a *global* access is cached |
 | `src/objects/contexts.h`, `src/ast/scopes.cc` | `src/objects/contexts.rs` | contexts, and therefore closures over locals |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
 | `src/objects/js-array.h`, `elements.cc` | `src/objects/` | real arrays with `length` and elements kinds |
@@ -254,16 +254,29 @@ survive the arena being reallocated — which is why growing old space is a
 * **Inline caches cover named property access only.** A load or store of a
   known name is cached: one map comparison, then a Smi handler decoded into
   a field offset. What is *not* cached:
-  * **Globals.** Every `LdaGlobal` does the full lookup. V8 caches these
-    through `PropertyCell`s, which `vx` does not have -- and it shows: a
-    loop over a global variable misses on every iteration.
   * **A property found on a prototype.** That needs V8's object-form
     handler, which carries the holder and a validity cell to invalidate the
     entry if the prototype chain changes.
+  * **`globalThis.x`.** A property load whose receiver is the global object
+    finds a `PropertyCell`, not a value, so V8 caches it with a `kGlobal`
+    handler -- which is an object-form handler carrying the cell. `vx` has
+    only the Smi form, so this path is left uncached rather than cached
+    wrongly. (`x` on its own, which compiles to `LdaGlobal`, *is* cached.)
   * **A store that adds a property**, because that changes the receiver's
     map. V8 caches it with a transition handler that performs the map change.
   * **Keyed access, calls, binary operations.** The slots are allocated and
     the embedded feedback byte is emitted, but nothing reads them.
+* **Globals are cached through property cells.** A global's value lives in
+  a `PropertyCell`, and a global access caches a weak reference to the cell
+  -- so declaring another global cannot invalidate it. V8 keeps the cells in
+  a `GlobalDictionary` on `JSGlobalObject`, so adding a global does not
+  reshape it at all; `vx` stores each cell as an ordinary fast property,
+  which does reshape the global object. That costs nothing here precisely
+  *because* the caches hold cells rather than maps, which is the point the
+  indirection exists to make.
+* **`PropertyCell::dependent_code` is always empty.** It exists so that
+  assigning to a global that an optimizing compiler had inlined as a
+  constant can throw that code away. There is no such code.
 * **No stub cache.** In V8 a megamorphic site still consults a global
   `(map, name) -> handler` hash table before falling back to the full
   lookup. In `vx` megamorphic means the full lookup, every time.
@@ -274,15 +287,18 @@ survive the arena being reallocated — which is why growing old space is a
 shape:
 
 ```
-  LoadProperty slot 0: Uninitialized -> Monomorphic  (map 0xd48, 1 tracked)
-  LoadProperty slot 0: Monomorphic   -> Polymorphic  (map 0xdb8, 2 tracked)
-  LoadProperty slot 0: Polymorphic   -> Megamorphic  (map 0xf08, 0 tracked)
+  LoadProperty slot 0: Uninitialized -> Monomorphic (map 0xd80, 1 tracked)
+  LoadProperty slot 0: Monomorphic -> Polymorphic (map 0xdf0, 2 tracked)
+  LoadProperty slot 0: Polymorphic -> Megamorphic (map 0xf40, 0 tracked)
 
-  999 hits, 22 misses (98% hit rate)
+  property (map + field)      999 hits     22 misses   97.8% hit rate
+  global   (cell)            6994 hits     17 misses   99.8% hit rate
 ```
 
-The misses that remain are the global accesses and the stores that add
-properties -- the two cases listed above as uncached.
+The two are counted apart because the mechanisms are different: a property
+site caches a map and climbs the lattice, a global site caches a cell and has
+nowhere to climb to. Summing them would hide which one is working. The misses
+that remain are one per site, plus the stores that add a property.
 
 ### What the offsets do and do not catch
 

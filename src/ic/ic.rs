@@ -53,18 +53,59 @@ use crate::objects::map::Map;
 use crate::objects::property_details::PropertyLocation;
 use crate::objects::tagged::Tagged;
 
-/// How a site was resolved, for `--trace-ic` and for the tests that prove the
-/// cache is actually being used.
+/// How the sites of one kind were resolved.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub struct ICStatistics {
-    /// The cached handler answered.
+pub struct SiteStatistics {
+    /// The cached entry answered.
     pub hits: usize,
     /// The site had to do the full lookup, and then recorded what it found.
     pub misses: usize,
-    /// The site gave up on caching.
-    pub megamorphic_transitions: usize,
     pub monomorphic_transitions: usize,
     pub polymorphic_transitions: usize,
+    /// The site gave up on caching.
+    pub megamorphic_transitions: usize,
+}
+
+impl SiteStatistics {
+    pub fn total(&self) -> usize {
+        self.hits + self.misses
+    }
+
+    pub fn hit_rate(&self) -> f64 {
+        if self.total() == 0 {
+            0.0
+        } else {
+            self.hits as f64 / self.total() as f64
+        }
+    }
+}
+
+/// `--trace-ic` counters, split by what the site caches.
+///
+/// Kept apart because the two mechanisms are different: a property site
+/// caches a *map* and climbs the monomorphic/polymorphic/megamorphic
+/// lattice, while a global site caches a *cell* and has nowhere to climb to.
+/// Summing them would hide which one is working.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct ICStatistics {
+    /// Named property loads and stores.
+    pub property: SiteStatistics,
+    /// Global loads and stores, through property cells.
+    pub global: SiteStatistics,
+}
+
+impl ICStatistics {
+    pub fn hits(&self) -> usize {
+        self.property.hits + self.global.hits
+    }
+
+    pub fn misses(&self) -> usize {
+        self.property.misses + self.global.misses
+    }
+
+    pub fn total(&self) -> usize {
+        self.hits() + self.misses()
+    }
 }
 
 impl Isolate {
@@ -119,6 +160,16 @@ impl Isolate {
         vector: FeedbackVector,
         slot: i32,
     ) -> Tagged {
+        // `globalThis.x` is a property load whose receiver happens to be the
+        // global object, so the property it finds is a `PropertyCell` rather
+        // than the value. V8 caches this with a `kGlobal` handler, which has
+        // to be the object form -- it carries the cell. `vx` has only the
+        // Smi form, so this is left uncached rather than cached wrongly.
+        if self.is_global_object(receiver) {
+            self.ic_statistics.property.misses += 1;
+            return self.get_property(receiver, name);
+        }
+
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
         debug_assert!(nexus.kind().is_load_ic() || nexus.kind().is_global_ic());
         let map = receiver.map(&self.heap);
@@ -131,13 +182,13 @@ impl Isolate {
             self.megamorphic_sentinel(),
         ) {
             if let Some(value) = self.load_from_handler(receiver, cached) {
-                self.ic_statistics.hits += 1;
+                self.ic_statistics.property.hits += 1;
                 return value;
             }
         }
 
         // The slow path: the full lookup, then record what it found.
-        self.ic_statistics.misses += 1;
+        self.ic_statistics.property.misses += 1;
         let found = self.lookup_property(receiver, name);
         let value = match &found {
             Some(found) => found
@@ -167,6 +218,12 @@ impl Isolate {
         vector: FeedbackVector,
         slot: i32,
     ) -> bool {
+        // As above: a store through `globalThis` has to go through the cell.
+        if self.is_global_object(receiver) {
+            self.ic_statistics.property.misses += 1;
+            return self.set_property(receiver, name, value);
+        }
+
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
         debug_assert!(nexus.kind().is_store_ic() || nexus.kind().is_global_ic());
         let map = receiver.map(&self.heap);
@@ -178,12 +235,12 @@ impl Isolate {
             self.megamorphic_sentinel(),
         ) {
             if self.store_through_handler(receiver, cached, value) {
-                self.ic_statistics.hits += 1;
+                self.ic_statistics.property.hits += 1;
                 return true;
             }
         }
 
-        self.ic_statistics.misses += 1;
+        self.ic_statistics.property.misses += 1;
         let existing = self.lookup_own_property(receiver, name);
         let stored = self.set_property(receiver, name, value);
 
@@ -278,6 +335,109 @@ impl Isolate {
     }
 
     // -----------------------------------------------------------------------
+    // LoadGlobalIC / StoreGlobalIC
+    // -----------------------------------------------------------------------
+
+    /// `LoadGlobalIC::Load`.
+    ///
+    /// The cached form is a weak reference to the global's
+    /// [`PropertyCell`](crate::objects::property_cell::PropertyCell) -- no
+    /// map check, because there is no receiver whose shape could change.
+    /// Declaring another global reshapes the global object and does not
+    /// disturb this at all, which is the reason cells exist.
+    ///
+    /// `None` means the global was never declared, which the caller turns
+    /// into a `ReferenceError`.
+    pub fn load_global_ic(
+        &mut self,
+        name: Tagged,
+        vector: FeedbackVector,
+        slot: i32,
+    ) -> Option<Tagged> {
+        use crate::objects::property_cell::PropertyCell;
+
+        let nexus = FeedbackNexus::new(&self.heap, vector, slot);
+        debug_assert!(nexus.kind().is_global_ic());
+
+        // Fast path: the slot already names the cell.
+        let feedback = nexus.feedback(&self.heap);
+        if feedback.is_weak() {
+            if let Some(object) = feedback.to_heap_object() {
+                if self.heap.instance_type(object)
+                    == crate::objects::instance_type::PROPERTY_CELL_TYPE
+                {
+                    self.ic_statistics.global.hits += 1;
+                    return Some(PropertyCell::unchecked_cast(object).value(&self.heap));
+                }
+            }
+        }
+
+        self.ic_statistics.global.misses += 1;
+        let cell = self.global_cell(name)?;
+        self.configure_property_cell_mode(nexus, cell);
+        Some(cell.value(&self.heap))
+    }
+
+    /// `StoreGlobalIC::Store`
+    pub fn store_global_ic(
+        &mut self,
+        name: Tagged,
+        value: Tagged,
+        vector: FeedbackVector,
+        slot: i32,
+    ) {
+        use crate::objects::property_cell::PropertyCell;
+
+        let nexus = FeedbackNexus::new(&self.heap, vector, slot);
+        debug_assert!(nexus.kind().is_global_ic());
+
+        let feedback = nexus.feedback(&self.heap);
+        if feedback.is_weak() {
+            if let Some(object) = feedback.to_heap_object() {
+                if self.heap.instance_type(object)
+                    == crate::objects::instance_type::PROPERTY_CELL_TYPE
+                {
+                    self.ic_statistics.global.hits += 1;
+                    let cell = PropertyCell::unchecked_cast(object);
+                    self.set_global_cell_value(cell, value);
+                    return;
+                }
+            }
+        }
+
+        self.ic_statistics.global.misses += 1;
+        let cell = self.declare_global_cell(name, value);
+        self.set_global_cell_value(cell, value);
+        self.configure_property_cell_mode(nexus, cell);
+    }
+
+    /// `FeedbackNexus::ConfigurePropertyCellMode`
+    fn configure_property_cell_mode(
+        &mut self,
+        nexus: FeedbackNexus,
+        cell: crate::objects::property_cell::PropertyCell,
+    ) {
+        let before = self.ic_state(nexus);
+        // Weak: a cell for a global nothing refers to any more should not be
+        // kept alive by a cache entry.
+        nexus.set_feedback(&mut self.heap, cell.object().tagged_weak());
+        let sentinel = self.uninitialized_sentinel();
+        nexus.set_feedback_extra(&mut self.heap, sentinel);
+
+        if before == InlineCacheState::Uninitialized {
+            self.ic_statistics.global.monomorphic_transitions += 1;
+            if self.trace_ic_enabled {
+                self.ic_trace.push(format!(
+                    "{} slot {}: Uninitialized -> Monomorphic (cell 0x{:x})",
+                    nexus.kind().name(),
+                    nexus.slot(),
+                    cell.address()
+                ));
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // The state transitions
     // -----------------------------------------------------------------------
 
@@ -307,7 +467,7 @@ impl Isolate {
             InlineCacheState::Uninitialized => {
                 // `IC::ConfigureVectorState(MONOMORPHIC)`
                 nexus.configure_monomorphic(&mut self.heap, map, handler);
-                self.ic_statistics.monomorphic_transitions += 1;
+                self.ic_statistics.property.monomorphic_transitions += 1;
             }
             InlineCacheState::Monomorphic => {
                 self.update_polymorphic_ic(nexus, map, handler);
@@ -346,7 +506,7 @@ impl Isolate {
             if pairs.len() >= K_MAX_POLYMORPHIC_MAP_COUNT {
                 let sentinel = self.megamorphic_sentinel();
                 nexus.configure_megamorphic(&mut self.heap, sentinel);
-                self.ic_statistics.megamorphic_transitions += 1;
+                self.ic_statistics.property.megamorphic_transitions += 1;
                 return;
             }
             pairs.push(MapAndHandler { map, handler });
@@ -357,7 +517,7 @@ impl Isolate {
             return;
         }
         self.configure_polymorphic(nexus, &pairs);
-        self.ic_statistics.polymorphic_transitions += 1;
+        self.ic_statistics.property.polymorphic_transitions += 1;
     }
 
     /// `FeedbackNexus::ConfigurePolymorphic`: the pairs go in a

@@ -136,26 +136,25 @@ fn trace_ic(_path: &str, source: &str) {
         println!("  {line}");
     }
     let statistics = isolate.ic_statistics();
-    let total = statistics.hits + statistics.misses;
     println!();
+    println!("== statistics ==");
+    println!();
+    for (label, site) in [
+        ("property (map + field)", statistics.property),
+        ("global   (cell)       ", statistics.global),
+    ] {
+        println!(
+            "  {label}  {:>7} hits  {:>5} misses  {:>5.1}% hit rate",
+            site.hits,
+            site.misses,
+            site.hit_rate() * 100.0
+        );
+    }
     println!(
-        "  {} hits, {} misses{}",
-        statistics.hits,
-        statistics.misses,
-        if total > 0 {
-            format!(
-                " ({:.0}% hit rate)",
-                statistics.hits as f64 * 100.0 / total as f64
-            )
-        } else {
-            String::new()
-        }
-    );
-    println!(
-        "  transitions: {} -> monomorphic, {} -> polymorphic, {} -> megamorphic",
-        statistics.monomorphic_transitions,
-        statistics.polymorphic_transitions,
-        statistics.megamorphic_transitions
+        "  property transitions: {} -> monomorphic, {} -> polymorphic, {} -> megamorphic",
+        statistics.property.monomorphic_transitions,
+        statistics.property.polymorphic_transitions,
+        statistics.property.megamorphic_transitions
     );
 }
 

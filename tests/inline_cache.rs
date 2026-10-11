@@ -41,19 +41,27 @@ fn a_repeated_access_on_one_shape_stops_searching() {
          var total = 0;
          for (var i = 0; i < 20; i++) { total += o.x; }
          total");
-    let statistics = isolate.ic_statistics();
+    let property = isolate.ic_statistics().property;
     assert_eq!(
-        statistics.hits, 19,
+        property.hits, 19,
         "nineteen of the twenty reads should be answered by the cache"
     );
     assert_eq!(
-        statistics.misses, 2,
+        property.misses, 2,
         "two: the load's first execution, and the literal's store of `x` -- \
          a store that *adds* a property is never cached, because it changes \
          the receiver's map"
     );
-    assert_eq!(statistics.monomorphic_transitions, 1);
-    assert_eq!(statistics.megamorphic_transitions, 0);
+    assert_eq!(property.monomorphic_transitions, 1);
+    assert_eq!(property.megamorphic_transitions, 0);
+
+    // The loop's reads of `total`, `i` and `o` are global accesses, cached
+    // through property cells rather than maps.
+    let global = isolate.ic_statistics().global;
+    assert!(
+        global.hits > 50,
+        "the loop's global accesses should be cached too: {global:?}"
+    );
 }
 
 #[test]
@@ -103,19 +111,19 @@ fn the_site_goes_monomorphic_then_polymorphic_then_megamorphic() {
          read({ a: 0, b: 0, c: 0, x: 1 });
          read({ a: 0, b: 0, c: 0, d: 0, x: 1 });
          0");
-    let statistics = isolate.ic_statistics();
+    let property = isolate.ic_statistics().property;
     // Six calls: the first is a miss that goes monomorphic, the second hits,
     // and each new shape is another miss.
-    assert_eq!(statistics.monomorphic_transitions, 1);
+    assert_eq!(property.monomorphic_transitions, 1);
     assert!(
-        statistics.polymorphic_transitions >= 1,
-        "the second shape should widen the site: {statistics:?}"
+        property.polymorphic_transitions >= 1,
+        "the second shape should widen the site: {property:?}"
     );
     assert_eq!(
-        statistics.megamorphic_transitions, 1,
-        "the fifth shape should make the site give up: {statistics:?}"
+        property.megamorphic_transitions, 1,
+        "the fifth shape should make the site give up: {property:?}"
     );
-    assert!(statistics.hits >= 1, "the repeated shape should have hit");
+    assert!(property.hits >= 1, "the repeated shape should have hit");
 }
 
 #[test]
@@ -129,7 +137,7 @@ fn a_site_tracks_at_most_four_shapes() {
     // Four distinct shapes is exactly the limit, so the site should still be
     // polymorphic rather than megamorphic.
     assert_eq!(
-        isolate.ic_statistics().megamorphic_transitions,
+        isolate.ic_statistics().property.megamorphic_transitions,
         0,
         "four shapes is the limit, not past it"
     );
@@ -149,11 +157,11 @@ fn megamorphic_is_terminal() {
          read(first);
          read(first);
          0");
-    let statistics = isolate.ic_statistics();
-    assert_eq!(statistics.megamorphic_transitions, 1);
+    let property = isolate.ic_statistics().property;
+    assert_eq!(property.megamorphic_transitions, 1);
     assert_eq!(
-        statistics.monomorphic_transitions, 1,
-        "the site must not go back to monomorphic: {statistics:?}"
+        property.monomorphic_transitions, 1,
+        "the site must not go back to monomorphic: {property:?}"
     );
 }
 
@@ -223,10 +231,10 @@ fn a_store_site_caches_too() {
     let isolate = run("var o = { x: 0 };
          for (var i = 0; i < 10; i++) { o.x = i; }
          o.x");
-    let statistics = isolate.ic_statistics();
+    let property = isolate.ic_statistics().property;
     assert!(
-        statistics.hits >= 9,
-        "the repeated store should be cached: {statistics:?}"
+        property.hits >= 9,
+        "the repeated store should be cached: {property:?}"
     );
 }
 
@@ -240,12 +248,12 @@ fn a_store_that_adds_a_property_is_not_cached() {
          add({});
          add({});
          0");
-    let statistics = isolate.ic_statistics();
+    let property = isolate.ic_statistics().property;
     assert_eq!(
-        statistics.hits, 0,
-        "a transitioning store must not hit: {statistics:?}"
+        property.hits, 0,
+        "a transitioning store must not hit: {property:?}"
     );
-    assert_eq!(statistics.misses, 3);
+    assert_eq!(property.misses, 3);
 }
 
 #[test]
@@ -263,7 +271,7 @@ fn a_cached_entry_survives_a_collection() {
              total",
         )
         .unwrap();
-    assert!(isolate.ic_statistics().hits >= 4);
+    assert!(isolate.ic_statistics().property.hits >= 4);
 
     let vector = isolate.script_feedback_vector().unwrap();
     let mut cached_before = None;
@@ -325,14 +333,14 @@ fn two_closures_over_one_function_do_not_share_a_cache() {
          a({ x: 1 }); a({ x: 1 });
          b({ q: 0, x: 1 }); b({ q: 0, x: 1 });
          0");
-    let statistics = isolate.ic_statistics();
+    let property = isolate.ic_statistics().property;
     // Each closure sees one shape, so each goes monomorphic on its own.
     assert_eq!(
-        statistics.monomorphic_transitions, 2,
-        "each closure should have its own cache: {statistics:?}"
+        property.monomorphic_transitions, 2,
+        "each closure should have its own cache: {property:?}"
     );
-    assert_eq!(statistics.polymorphic_transitions, 0);
-    assert_eq!(statistics.hits, 2);
+    assert_eq!(property.polymorphic_transitions, 0);
+    assert_eq!(property.hits, 2);
 }
 
 #[test]
@@ -355,4 +363,126 @@ fn the_site_state_is_readable_from_outside() {
     let isolate = run("var o = { x: 1 }; o.x; o.x");
     let (_, state) = first_load_site(&isolate);
     assert_eq!(state, InlineCacheState::Monomorphic);
+}
+
+// ---------------------------------------------------------------------------
+// Globals, through property cells
+// ---------------------------------------------------------------------------
+
+use vx::objects::property_details::PropertyCellType;
+
+#[test]
+fn a_repeated_global_read_is_cached_through_its_cell() {
+    let isolate = run("var n = 5;
+         var total = 0;
+         for (var i = 0; i < 20; i++) { total = total + n; }
+         total");
+    let global = isolate.ic_statistics().global;
+    assert!(
+        global.hits > 50,
+        "the loop reads three globals per iteration: {global:?}"
+    );
+    assert!(
+        global.hit_rate() > 0.9,
+        "a global read should miss once per site, not once per execution: {global:?}"
+    );
+}
+
+#[test]
+fn declaring_another_global_does_not_invalidate_a_cached_one() {
+    // The reason cells exist. Adding a global reshapes the global object, so
+    // a cache keyed on its *map* would be thrown away -- a cache keyed on
+    // the cell is not.
+    let mut isolate = Isolate::new();
+    isolate
+        .run_script(
+            "var a = 1;
+             var seen = 0;
+             var i = 0;
+             while (i < 10) { seen = seen + a; i = i + 1; }
+             seen",
+        )
+        .unwrap();
+    let global = isolate.ic_statistics().global;
+    // Each site misses once and hits afterwards, whatever else was declared.
+    assert!(
+        global.misses <= 12,
+        "one miss per site, not per execution: {global:?}"
+    );
+    assert!(global.hits > 30, "{global:?}");
+}
+
+#[test]
+fn a_global_assigned_once_is_recorded_as_constant() {
+    // Which is what lets an optimizing compiler inline it.
+    let mut isolate = Isolate::new();
+    isolate.run_script("var answer = 42; answer").unwrap();
+    let key = isolate.internalize_string("answer").tagged();
+    let cell = isolate
+        .global_cell(key)
+        .expect("the global should have a cell");
+    assert_eq!(
+        cell.cell_type(&isolate.heap),
+        PropertyCellType::Constant,
+        "assigned exactly once"
+    );
+    assert_eq!(isolate.to_string(cell.value(&isolate.heap)), "42");
+}
+
+#[test]
+fn a_global_declared_without_a_value_is_not_a_constant_undefined() {
+    // `var x;` must not look like a constant an optimizer could inline.
+    let mut isolate = Isolate::new();
+    isolate.run_script("var x; x").unwrap();
+    let key = isolate.internalize_string("x").tagged();
+    let cell = isolate.global_cell(key).unwrap();
+    assert_eq!(cell.cell_type(&isolate.heap), PropertyCellType::Undefined);
+}
+
+#[test]
+fn the_cell_type_walks_down_as_the_global_changes() {
+    // Constant -> ConstantType -> Mutable, one way only.
+    let mut isolate = Isolate::new();
+    isolate.run_script("var v = 1; v = 2; v").unwrap();
+    let key = isolate.internalize_string("v").tagged();
+    let cell = isolate.global_cell(key).unwrap();
+    assert_eq!(
+        cell.cell_type(&isolate.heap),
+        PropertyCellType::ConstantType,
+        "two different Smis: still one type"
+    );
+
+    let mut isolate = Isolate::new();
+    isolate.run_script("var v = 1; v = 'text'; v").unwrap();
+    let key = isolate.internalize_string("v").tagged();
+    let cell = isolate.global_cell(key).unwrap();
+    assert_eq!(
+        cell.cell_type(&isolate.heap),
+        PropertyCellType::Mutable,
+        "a Smi then a string: no type to be constant about"
+    );
+}
+
+#[test]
+fn globals_are_still_visible_through_global_this() {
+    // The cells have to be transparent to ordinary property access: a cell
+    // leaking out here would be observable from JavaScript.
+    let mut isolate = Isolate::new();
+    let value = isolate
+        .run_script("var answer = 42; globalThis.answer")
+        .unwrap();
+    assert_eq!(isolate.to_string(value), "42");
+}
+
+#[test]
+fn a_global_write_through_global_this_is_seen_by_a_global_read() {
+    let mut isolate = Isolate::new();
+    let value = isolate
+        .run_script("var answer = 1; globalThis.answer = 2; answer")
+        .unwrap();
+    assert_eq!(
+        isolate.to_string(value),
+        "2",
+        "both paths must reach the same cell"
+    );
 }

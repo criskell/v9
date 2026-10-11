@@ -146,6 +146,15 @@ impl Isolate {
                 // Just a run of bytes.
             }
 
+            it::PROPERTY_CELL_TYPE => {
+                use crate::objects::property_cell::PropertyCell;
+                let cell = PropertyCell::unchecked_cast(object);
+                visit(cell.name_address());
+                visit(cell.value_address());
+                visit(cell.dependent_code_address());
+                // The details slot is a Smi.
+            }
+
             it::FILLER_TYPE => {
                 // Free space: nothing to trace.
             }

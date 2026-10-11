@@ -234,8 +234,12 @@ impl Isolate {
                 // -- globals ----------------------------------------------
                 Bytecode::LdaGlobal => {
                     let name = self.constant_name(bytecode_array, operand(self, 0));
-                    let global = self.global_object();
-                    accumulator = match self.get_own_property(global, name) {
+                    let slot = operand(self, 1);
+                    let value = match frame.feedback_vector {
+                        Some(vector) => self.load_global_ic(name, vector, slot),
+                        None => self.load_global(name),
+                    };
+                    accumulator = match value {
                         Some(value) => value,
                         None => {
                             let text = self.to_string(name);
@@ -247,8 +251,11 @@ impl Isolate {
                 }
                 Bytecode::StaGlobal => {
                     let name = self.constant_name(bytecode_array, operand(self, 0));
-                    let global = self.global_object();
-                    self.set_property(global, name, accumulator);
+                    let slot = operand(self, 1);
+                    match frame.feedback_vector {
+                        Some(vector) => self.store_global_ic(name, accumulator, vector, slot),
+                        None => self.store_global(name, accumulator),
+                    }
                 }
 
                 // -- properties -------------------------------------------

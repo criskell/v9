@@ -19,6 +19,7 @@ pub mod map_word;
 pub mod name;
 pub mod objects;
 pub mod oddball;
+pub mod property_cell;
 pub mod property_details;
 pub mod shared_function_info;
 pub mod smi;

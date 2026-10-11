@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 438 tests
+$ cargo test        # 449 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -52,7 +52,8 @@ copying garbage collector.
   LoadProperty slot 0: Monomorphic   -> Polymorphic  (map 0xdb8, 2 tracked)
   LoadProperty slot 0: Polymorphic   -> Megamorphic  (map 0xf08, 0 tracked)
 
-  999 hits, 22 misses (98% hit rate)
+  property (map + field)      999 hits     22 misses   97.8% hit rate
+  global   (cell)            6994 hits     17 misses   99.8% hit rate
 ```
 
 Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
@@ -74,6 +75,12 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
   indexed read. Sites climb V8's lattice -- monomorphic, polymorphic up to
   four shapes, then megamorphic -- and the handler is a Smi, exactly as in
   V8.
+* **Property cells.** A global's value lives in a cell, and a global access
+  caches the cell rather than the global object's map -- so declaring another
+  global cannot invalidate it. A cell also records whether the global has
+  been assigned once (`Constant`), several values of one type
+  (`ConstantType`) or anything else (`Mutable`), which is what would let an
+  optimizing compiler inline it.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
   functions, recursion, objects, property access, method calls, `typeof`.
@@ -81,8 +88,8 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
 ## What does not
 
 No closures over enclosing locals (no contexts), no classes, no
-`try`/`catch`, no generators or `async`, no real arrays, no `for...in`. Inline caches cover named property access only -- globals, prototype loads
-and transitioning stores still do the full lookup.
+`try`/`catch`, no generators or `async`, no real arrays, no `for...in`. Inline caches cover named property access and globals; prototype loads,
+transitioning stores and `globalThis.x` still do the full lookup.
 
 [`PORTING.md`](PORTING.md) is the ledger — what is ported, at what fidelity,
 and every deviation. `tools/check-layout.sh` checks that every source file

@@ -81,22 +81,53 @@ impl Isolate {
 
     /// `Object::GetProperty`: the value, or `undefined` if there is none.
     pub fn get_property(&self, object: JSObject, name: Tagged) -> Tagged {
-        match self.lookup_property(object, name) {
-            Some(found) => found
-                .holder
-                .fast_property_at(&self.heap, found.details.field_index() as i32),
+        match self.get_property_raw(object, name) {
+            Some(value) => self.unwrap_cell(object, value),
             None => self.undefined_value(),
         }
     }
 
     /// Own property only -- what `Object.getOwnPropertyDescriptor` reads.
     pub fn get_own_property(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
+        let value = self.get_own_property_raw(object, name)?;
+        Some(self.unwrap_cell(object, value))
+    }
+
+    /// The stored value, without unwrapping a global's cell.
+    pub(crate) fn get_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
+        let found = self.lookup_property(object, name)?;
+        Some(
+            found
+                .holder
+                .fast_property_at(&self.heap, found.details.field_index() as i32),
+        )
+    }
+
+    pub(crate) fn get_own_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
         let found = self.lookup_own_property(object, name)?;
         Some(
             found
                 .holder
                 .fast_property_at(&self.heap, found.details.field_index() as i32),
         )
+    }
+
+    /// On the global object a property holds a `PropertyCell`, so reading it
+    /// is one hop further. Everywhere else this is the identity.
+    #[inline]
+    fn unwrap_cell(&self, holder: JSObject, value: Tagged) -> Tagged {
+        if !self.is_global_object(holder) {
+            return value;
+        }
+        match value.to_strong_heap_object() {
+            Some(object)
+                if self.heap.instance_type(object) == instance_type::PROPERTY_CELL_TYPE =>
+            {
+                crate::objects::property_cell::PropertyCell::unchecked_cast(object)
+                    .value(&self.heap)
+            }
+            _ => value,
+        }
     }
 
     /// `Object::SetProperty` for the data-property case: overwrite the
@@ -107,6 +138,24 @@ impl Isolate {
     /// is not extensible (`Object.preventExtensions`), which is the one way
     /// this can fail without throwing.
     pub fn set_property(&mut self, object: JSObject, name: Tagged, value: Tagged) -> bool {
+        // A global's property is a cell, so the write goes through it rather
+        // than replacing it -- otherwise every cached global access would
+        // suddenly be holding a stale cell.
+        if self.is_global_object(object) {
+            self.store_global(name, value);
+            return true;
+        }
+        self.set_property_ignoring_cells(object, name, value)
+    }
+
+    /// `set_property` without the global-object special case. The cell
+    /// machinery uses it to install a cell *as* a property.
+    pub(crate) fn set_property_ignoring_cells(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+    ) -> bool {
         let map = object.map(&self.heap);
 
         // Already present: write the slot the map already assigned.
@@ -552,5 +601,87 @@ mod tests {
             maps.insert(object.map(&isolate.heap));
         }
         assert_eq!(maps.len(), 1, "1000 objects, 1 hidden class");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The global object
+//
+// Its properties hold `PropertyCell`s rather than values, so that a global
+// access can be cached by remembering the cell -- see
+// `crate::objects::property_cell`. Everything that reads or writes a global
+// has to unwrap, which V8 also special-cases on `JSGlobalObject`.
+// ---------------------------------------------------------------------------
+
+impl Isolate {
+    /// Whether `object` is *the* global object, whose properties are cells.
+    #[inline]
+    pub fn is_global_object(&self, object: JSObject) -> bool {
+        self.heap.instance_type(object.object()) == instance_type::JS_GLOBAL_OBJECT_TYPE
+    }
+
+    /// `JSGlobalObject::global_dictionary` lookup: the cell holding `name`,
+    /// if the global has been declared.
+    pub fn global_cell(&self, name: Tagged) -> Option<crate::objects::property_cell::PropertyCell> {
+        use crate::objects::property_cell::PropertyCell;
+        let global = self.global_object();
+        let value = self.get_own_property_raw(global, name)?;
+        let object = value.to_strong_heap_object()?;
+        if self.heap.instance_type(object) == instance_type::PROPERTY_CELL_TYPE {
+            Some(PropertyCell::unchecked_cast(object))
+        } else {
+            None
+        }
+    }
+
+    /// Declares a global, creating its cell if it does not exist yet.
+    ///
+    /// Returns the cell, which is what a `LoadGlobalIC` caches.
+    pub fn declare_global_cell(
+        &mut self,
+        name: Tagged,
+        value: Tagged,
+    ) -> crate::objects::property_cell::PropertyCell {
+        if let Some(cell) = self.global_cell(name) {
+            return cell;
+        }
+        let cell = self.new_property_cell(name, value);
+        let global = self.global_object();
+        // The cell goes in as an ordinary property. Adding it reshapes the
+        // global object, which is exactly what caching the *cell* rather
+        // than the map makes harmless.
+        self.set_property_ignoring_cells(global, name, cell.tagged());
+        cell
+    }
+
+    /// `PropertyCell::PrepareForAndSetValue`: writes through a cell and walks
+    /// its type down the lattice.
+    pub fn set_global_cell_value(
+        &mut self,
+        cell: crate::objects::property_cell::PropertyCell,
+        value: Tagged,
+    ) {
+        use crate::objects::property_cell::updated_cell_type;
+        let updated = updated_cell_type(&self.heap, cell, value);
+        let details = cell.property_details(&self.heap).with_cell_type(updated);
+        cell.set_property_details(&mut self.heap, details);
+        cell.set_value(&mut self.heap, value);
+    }
+
+    /// Reads a global. `None` if it has not been declared, which is a
+    /// `ReferenceError` at the call site.
+    pub fn load_global(&self, name: Tagged) -> Option<Tagged> {
+        Some(self.global_cell(name)?.value(&self.heap))
+    }
+
+    /// Writes a global, declaring it if necessary -- which is what `x = 1`
+    /// without a declaration does in sloppy mode.
+    pub fn store_global(&mut self, name: Tagged, value: Tagged) {
+        match self.global_cell(name) {
+            Some(cell) => self.set_global_cell_value(cell, value),
+            None => {
+                self.declare_global_cell(name, value);
+            }
+        }
     }
 }

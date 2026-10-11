@@ -323,6 +323,39 @@ impl Isolate {
         pool
     }
 
+    /// `Factory::NewPropertyCell`.
+    ///
+    /// Tenured: a cell is reachable from the global object for the life of
+    /// the program, and an inline cache holds a weak reference to it.
+    pub fn new_property_cell(
+        &mut self,
+        name: Tagged,
+        value: Tagged,
+    ) -> crate::objects::property_cell::PropertyCell {
+        use crate::objects::property_cell::{initial_cell_type, PropertyCell};
+        use crate::objects::property_details::{PropertyDetails, PropertyKind, NONE};
+
+        let map = self
+            .roots
+            .property_cell_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(PropertyCell::K_SIZE as usize, AllocationType::Old);
+        self.heap.set_map(object, map);
+        let cell = PropertyCell::unchecked_cast(object);
+        cell.set_name(&mut self.heap, name);
+        cell.set_value(&mut self.heap, value);
+        let cell_type = initial_cell_type(value, self.roots.undefined_value);
+        cell.set_property_details(
+            &mut self.heap,
+            PropertyDetails::new_cell(PropertyKind::Data, NONE, cell_type),
+        );
+        cell.set_dependent_code(&mut self.heap, self.roots.undefined_value);
+        cell
+    }
+
     /// `Factory::NewFeedbackMetadata`: the slot kinds, shared by every
     /// closure over one function literal.
     pub fn new_feedback_metadata(

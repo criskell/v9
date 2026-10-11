@@ -50,6 +50,12 @@ impl Isolate {
         // from the length field (V8's kVariableSizeSentinel).
         self.roots.bytecode_array_map = self.new_bare_map(BYTECODE_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_metadata_map = self.new_bare_map(FEEDBACK_METADATA_TYPE, 0).tagged();
+        self.roots.property_cell_map = self
+            .new_bare_map(
+                PROPERTY_CELL_TYPE,
+                crate::objects::property_cell::PropertyCell::K_SIZE,
+            )
+            .tagged();
         self.roots.shared_function_info_map = self
             .new_bare_map(
                 SHARED_FUNCTION_INFO_TYPE,
@@ -78,6 +84,7 @@ impl Isolate {
             self.roots.feedback_vector_map,
             self.roots.bytecode_array_map,
             self.roots.feedback_metadata_map,
+            self.roots.property_cell_map,
             self.roots.shared_function_info_map,
             self.roots.filler_map,
         ];

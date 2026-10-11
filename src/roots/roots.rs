@@ -59,6 +59,7 @@ roots_table!(
     transition_array_map,
     feedback_vector_map,
     feedback_metadata_map,
+    property_cell_map,
     bytecode_array_map,
     shared_function_info_map,
     /// The map stamped on a region of free space, so the heap stays walkable.

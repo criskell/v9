@@ -43,6 +43,47 @@ pub enum PropertyConstness {
     Const = 1,
 }
 
+/// `PropertyCellType`: how much is known about what a global holds.
+///
+/// A one-way lattice, and the reason it exists is optimisation: a global
+/// assigned exactly once is `kConstant`, and an optimizing compiler may
+/// inline its value outright, recording itself in the cell's dependent code
+/// so a later assignment can invalidate it.
+///
+/// ```text
+///   kUndefined  --first assignment-->  kConstant
+///                                          |
+///                              a different value of the same type
+///                                          v
+///                                     kConstantType
+///                                          |
+///                                a value of another type
+///                                          v
+///                                      kMutable
+/// ```
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PropertyCellType {
+    /// No longer tracked as constant.
+    Mutable = 0,
+    /// Never assigned -- the uninitialized state of a cell.
+    Undefined = 1,
+    /// Assigned exactly one value.
+    Constant = 2,
+    /// Assigned several values, all of one type.
+    ConstantType = 3,
+}
+
+impl PropertyCellType {
+    pub fn from_u32(value: u32) -> PropertyCellType {
+        match value {
+            1 => PropertyCellType::Undefined,
+            2 => PropertyCellType::Constant,
+            3 => PropertyCellType::ConstantType,
+            _ => PropertyCellType::Mutable,
+        }
+    }
+}
+
 /// `Representation` from `src/objects/property-details.h`: what a field is
 /// known to hold, which is what lets V8 store a double unboxed or skip a type
 /// check on a load.
@@ -125,6 +166,20 @@ const DESCRIPTOR_POINTER_SHIFT: u32 = REPRESENTATION_SHIFT + REPRESENTATION_BITS
 pub const K_DESCRIPTOR_INDEX_BIT_COUNT: u32 = 10;
 const FIELD_INDEX_SHIFT: u32 = DESCRIPTOR_POINTER_SHIFT + K_DESCRIPTOR_INDEX_BIT_COUNT;
 const FIELD_INDEX_BITS: u32 = K_DESCRIPTOR_INDEX_BIT_COUNT + 1;
+
+// The *dictionary* layout, which reuses the same bits. A `PropertyDetails`
+// describes either a fast property or a dictionary entry, never both, so V8
+// overlays two encodings on one word:
+//
+//   PropertyCellTypeField   = AttributesField::Next<PropertyCellType, 3>
+//   DictionaryStorageField  = PropertyCellTypeField::Next<uint32_t, 23>
+//
+// which occupy exactly the bits the fast layout uses for location,
+// representation and field index.
+const CELL_TYPE_SHIFT: u32 = ATTRIBUTES_SHIFT + ATTRIBUTES_BITS;
+const CELL_TYPE_BITS: u32 = 3;
+const DICTIONARY_STORAGE_SHIFT: u32 = CELL_TYPE_SHIFT + CELL_TYPE_BITS;
+const DICTIONARY_STORAGE_BITS: u32 = 23;
 
 /// `kMaxNumberOfDescriptors`
 pub const K_MAX_NUMBER_OF_DESCRIPTORS: u32 = (1 << K_DESCRIPTOR_INDEX_BIT_COUNT) - 4;
@@ -275,6 +330,40 @@ impl PropertyDetails {
         )
     }
 
+    /// The dictionary-mode constructor: a `PropertyCell`'s details.
+    ///
+    /// Note what is *absent*: no location, no representation, no field index.
+    /// A cell is its own storage, so there is nothing to index -- and that is
+    /// why the same bits can carry the cell type instead.
+    pub fn new_cell(
+        kind: PropertyKind,
+        attributes: PropertyAttributes,
+        cell_type: PropertyCellType,
+    ) -> PropertyDetails {
+        PropertyDetails(
+            encode(kind as u32, KIND_SHIFT, KIND_BITS)
+                | encode(attributes, ATTRIBUTES_SHIFT, ATTRIBUTES_BITS)
+                | encode(cell_type as u32, CELL_TYPE_SHIFT, CELL_TYPE_BITS),
+        )
+    }
+
+    /// `PropertyDetails::cell_type`. Only meaningful for a dictionary entry.
+    #[inline]
+    pub fn cell_type(self) -> PropertyCellType {
+        PropertyCellType::from_u32(decode(self.0, CELL_TYPE_SHIFT, CELL_TYPE_BITS))
+    }
+
+    pub fn with_cell_type(self, cell_type: PropertyCellType) -> PropertyDetails {
+        let cleared = self.0 & !(mask(CELL_TYPE_BITS) << CELL_TYPE_SHIFT);
+        PropertyDetails(cleared | encode(cell_type as u32, CELL_TYPE_SHIFT, CELL_TYPE_BITS))
+    }
+
+    /// `PropertyDetails::dictionary_index`
+    #[inline]
+    pub fn dictionary_index(self) -> u32 {
+        decode(self.0, DICTIONARY_STORAGE_SHIFT, DICTIONARY_STORAGE_BITS)
+    }
+
     pub fn with_constness(self, constness: PropertyConstness) -> PropertyDetails {
         let cleared = self.0 & !(mask(CONSTNESS_BITS) << CONSTNESS_SHIFT);
         PropertyDetails(cleared | encode(constness as u32, CONSTNESS_SHIFT, CONSTNESS_BITS))
@@ -391,6 +480,44 @@ mod tests {
         assert!(Tagged.is_more_general_than(Smi));
         assert!(!Smi.is_more_general_than(Tagged));
         assert!(!Smi.is_more_general_than(Smi));
+    }
+
+    #[test]
+    fn the_cell_layout_overlays_the_fast_layout() {
+        // The same word, read two ways. A `PropertyDetails` is one or the
+        // other, which is what lets V8 reuse the bits.
+        let cell = PropertyDetails::new_cell(PropertyKind::Data, NONE, PropertyCellType::Constant);
+        assert_eq!(cell.cell_type(), PropertyCellType::Constant);
+        assert_eq!(cell.kind(), PropertyKind::Data);
+        assert_eq!(cell.attributes(), NONE);
+
+        // The bits the cell type occupies are the ones the fast layout uses
+        // for location and representation.
+        let fast = default_data_field(0, Representation::Smi);
+        assert_ne!(
+            fast.cell_type(),
+            PropertyCellType::Mutable,
+            "reading a fast property's details as a cell's is meaningless, \
+             which is exactly why the two are never mixed"
+        );
+    }
+
+    #[test]
+    fn the_cell_type_lattice_round_trips() {
+        for cell_type in [
+            PropertyCellType::Mutable,
+            PropertyCellType::Undefined,
+            PropertyCellType::Constant,
+            PropertyCellType::ConstantType,
+        ] {
+            let details = PropertyDetails::new_cell(PropertyKind::Data, READ_ONLY, cell_type);
+            assert_eq!(details.cell_type(), cell_type);
+            assert!(details.is_read_only(), "the attributes are untouched");
+            // And updating it in place keeps everything else.
+            let updated = details.with_cell_type(PropertyCellType::Mutable);
+            assert_eq!(updated.cell_type(), PropertyCellType::Mutable);
+            assert!(updated.is_read_only());
+        }
     }
 
     #[test]
