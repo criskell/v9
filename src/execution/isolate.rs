@@ -16,6 +16,8 @@ pub struct Isolate {
 
     pub(crate) call_depth: usize,
 
+    pub(crate) next_symbol_hash: u32,
+
     pub(crate) shared_function_infos: Vec<Tagged>,
 
     pub(crate) output: Vec<String>,
@@ -44,6 +46,7 @@ impl Isolate {
             promoted_scan: 0,
             stack: Vec::new(),
             call_depth: 0,
+            next_symbol_hash: 1,
             shared_function_infos: Vec::new(),
             output: Vec::new(),
             ic_statistics: Default::default(),
@@ -68,6 +71,7 @@ impl Isolate {
             promoted_scan: 0,
             stack: Vec::new(),
             call_depth: 0,
+            next_symbol_hash: 1,
             shared_function_infos: Vec::new(),
             output: Vec::new(),
             ic_statistics: Default::default(),

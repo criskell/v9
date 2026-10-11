@@ -39,6 +39,17 @@ impl ParserError {
 
 type Result<T> = std::result::Result<T, ParserError>;
 
+struct ClassInfo {
+    instance_members_scope: Option<crate::ast::scopes::Scope>,
+    static_members_scope: Option<crate::ast::scopes::Scope>,
+}
+
+enum ClassMember {
+    Constructor(FunctionLiteral),
+    Property(ClassLiteralProperty),
+    Field(ClassLiteralField),
+}
+
 #[derive(Default)]
 struct FunctionState {
     hoisted_functions: Vec<FunctionLiteral>,
@@ -1229,32 +1240,72 @@ impl Parser {
             .current()
             .declare(crate::ast::scopes::K_STATIC_HOME_OBJECT, VariableMode::Const);
 
+        let mut class_info = ClassInfo {
+            instance_members_scope: self.new_field_initializer_scope(),
+            static_members_scope: self.new_field_initializer_scope(),
+        };
+
         self.expect(Token::LeftBrace)?;
         let mut public_members = Vec::new();
+        let mut instance_fields: Vec<ClassLiteralField> = Vec::new();
+        let mut static_fields: Vec<ClassLiteralField> = Vec::new();
         let mut constructor = None;
         while self.peek() != Token::RightBrace {
             if self.check(Token::Semicolon) {
                 continue;
             }
-            let (property, is_constructor) = self.parse_class_property_definition()?;
-            if is_constructor {
-                if constructor.is_some() {
-                    return Err(self.unexpected_token_with_hint("a class may have one constructor"));
+            match self.parse_class_property_definition(&mut class_info)? {
+                ClassMember::Constructor(value) => {
+                    if constructor.is_some() {
+                        return Err(
+                            self.unexpected_token_with_hint("a class may have one constructor")
+                        );
+                    }
+                    constructor = Some(value);
                 }
-                constructor = Some(property.value);
-            } else {
-                public_members.push(property);
+                ClassMember::Property(property) => public_members.push(property),
+                ClassMember::Field(field) => {
+                    if field.is_static {
+                        static_fields.push(field);
+                    } else {
+                        instance_fields.push(field);
+                    }
+                }
             }
         }
         self.expect(Token::RightBrace)?;
 
-        let constructor = match constructor {
+        let mut constructor = match constructor {
             Some(constructor) => constructor,
             None => {
                 self.default_constructor(name.clone(), extends.is_some(), position)?
             }
         };
+        constructor.kind = if extends.is_some() {
+            FunctionKind::DerivedConstructor
+        } else {
+            FunctionKind::BaseConstructor
+        };
+        constructor.requires_instance_members_initializer = !instance_fields.is_empty();
 
+        let instance_members_initializer_function = if instance_fields.is_empty() {
+            None
+        } else {
+            Some(self.field_initializer_function(
+                &instance_fields,
+                class_info.instance_members_scope.take().expect("the field scope"),
+                position,
+            ))
+        };
+        let static_initializer = if static_fields.is_empty() {
+            None
+        } else {
+            Some(self.field_initializer_function(
+                &static_fields,
+                class_info.static_members_scope.take().expect("the field scope"),
+                position,
+            ))
+        };
         let scope = self.scope_chain.pop();
 
         Ok(ClassLiteral {
@@ -1262,12 +1313,14 @@ impl Parser {
             extends,
             constructor,
             public_members,
+            instance_members_initializer_function,
+            static_initializer,
             scope,
             position,
         })
     }
 
-    fn parse_class_property_definition(&mut self) -> Result<(ClassLiteralProperty, bool)> {
+    fn parse_class_property_definition(&mut self, class_info: &mut ClassInfo) -> Result<ClassMember> {
         let is_static = self.peek() == Token::Static
             && !matches!(
                 self.peek_ahead(),
@@ -1297,19 +1350,62 @@ impl Parser {
         }
         let name = self.parse_property_name()?;
         if self.peek() != Token::LeftParen {
-            return Err(self.unexpected_token_with_hint("class fields are not implemented"));
+            if kind != ClassLiteralPropertyKind::Method {
+                return Err(self.unexpected_token_with_hint("an accessor needs a body"));
+            }
+            return self.parse_class_field_initializer(class_info, name, is_static, position);
         }
         let value = self.parse_method_literal(Some(name.clone()), is_static, position)?;
 
-        let is_constructor =
-            !is_static && kind == ClassLiteralPropertyKind::Method && name == "constructor";
-        let property = ClassLiteralProperty {
+        if !is_static && kind == ClassLiteralPropertyKind::Method && name == "constructor" {
+            return Ok(ClassMember::Constructor(value));
+        }
+        Ok(ClassMember::Property(ClassLiteralProperty {
             key: PropertyKey::Name(name),
             value,
             kind,
             is_static,
+        }))
+    }
+
+    fn parse_class_field_initializer(
+        &mut self,
+        class_info: &mut ClassInfo,
+        name: String,
+        is_static: bool,
+        position: Position,
+    ) -> Result<ClassMember> {
+        let slot = if is_static {
+            &mut class_info.static_members_scope
+        } else {
+            &mut class_info.instance_members_scope
         };
-        Ok((property, is_constructor))
+        self.scope_chain
+            .push_scope(slot.take().expect("the field initializer scope"));
+
+        let value = if self.check(Token::Assign) {
+            self.parse_assignment_expression()
+        } else {
+            Ok(Expression::Literal {
+                value: Literal::Undefined,
+                position,
+            })
+        };
+
+        let detached = self.scope_chain.detach();
+        if is_static {
+            class_info.static_members_scope = Some(detached);
+        } else {
+            class_info.instance_members_scope = Some(detached);
+        }
+
+        let value = value?;
+        self.expect_semicolon()?;
+        Ok(ClassMember::Field(ClassLiteralField {
+            name,
+            value,
+            is_static,
+        }))
     }
 
     fn default_constructor(
@@ -1334,6 +1430,7 @@ impl Parser {
         Ok(FunctionLiteral {
             name,
             kind: FunctionKind::NormalFunction,
+            requires_instance_members_initializer: false,
             parameters: Vec::new(),
             body,
             scope,
@@ -1455,6 +1552,39 @@ impl Parser {
         self.parse_function_body(name, FunctionKind::NormalFunction, parameters, position)
     }
 
+    fn new_field_initializer_scope(&mut self) -> Option<crate::ast::scopes::Scope> {
+        self.scope_chain.push(ScopeKind::Function);
+        self.declare_receiver();
+        Some(self.scope_chain.detach())
+    }
+
+    fn field_initializer_function(
+        &mut self,
+        fields: &[ClassLiteralField],
+        scope: crate::ast::scopes::Scope,
+        position: Position,
+    ) -> FunctionLiteral {
+        let body = vec![Statement::InitializeClassMembers {
+            fields: fields.to_vec(),
+            position,
+        }];
+
+        self.scope_chain.push_scope(scope);
+        let scope = self.scope_chain.pop();
+        FunctionLiteral {
+            name: None,
+            kind: FunctionKind::NormalFunction,
+            requires_instance_members_initializer: false,
+            parameters: Vec::new(),
+            body,
+            scope,
+            hoisted_functions: Vec::new(),
+            position,
+        }
+    }
+
+
+
     fn declare_receiver(&mut self) {
         self.scope_chain.current().declare_parameter("this", -1);
     }
@@ -1503,6 +1633,7 @@ impl Parser {
         Ok(FunctionLiteral {
             name,
             kind,
+            requires_instance_members_initializer: false,
             parameters,
             body,
             scope,
@@ -1668,6 +1799,7 @@ impl Parser {
         Ok(FunctionLiteral {
             name: None,
             kind: FunctionKind::ArrowFunction,
+            requires_instance_members_initializer: false,
             parameters,
             body: vec![Statement::Return {
                 value: Some(value),

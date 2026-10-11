@@ -151,6 +151,14 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
                 }
             }
         }
+        Statement::InitializeClassMembers { fields, .. } => {
+            out.push_str("INITIALIZE CLASS MEMBERS\n");
+            for field in fields {
+                indent(out, depth + 1);
+                out.push_str(&format!("FIELD {}\n", field.name));
+                print_expression(out, &field.value, depth + 2);
+            }
+        }
         Statement::Switch { tag, cases, .. } => {
             out.push_str("SWITCH\n");
             print_expression(out, tag, depth + 1);
@@ -373,6 +381,7 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
             for property in &class.public_members {
                 indent(out, depth + 1);
                 let kind = match property.kind {
+                    ClassLiteralPropertyKind::Field => "FIELD",
                     ClassLiteralPropertyKind::Method => "METHOD",
                     ClassLiteralPropertyKind::Getter => "GETTER",
                     ClassLiteralPropertyKind::Setter => "SETTER",

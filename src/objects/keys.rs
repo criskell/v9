@@ -48,6 +48,10 @@ impl Isolate {
         keys
     }
 
+    pub(crate) fn own_enumerable_names_for_keys(&self, holder: JSObject) -> Vec<Tagged> {
+        self.own_enumerable_names(holder)
+    }
+
     fn own_enumerable_names(&self, holder: JSObject) -> Vec<Tagged> {
         use crate::objects::hash_table::HashTableBase;
 
@@ -63,6 +67,7 @@ impl Isolate {
                     )
                 })
                 .filter(|(_, key)| HashTableBase::is_key(&self.heap, *key))
+                .filter(|(_, key)| !self.is_symbol(*key))
                 .collect();
             entries.sort_by_key(|(index, _)| *index);
             return entries.into_iter().map(|(_, key)| key).collect();
@@ -72,7 +77,17 @@ impl Isolate {
         (0..map.number_of_own_descriptors(&self.heap))
             .filter(|index| descriptors.get_details(&self.heap, *index).is_enumerable())
             .map(|index| descriptors.get_key(&self.heap, index))
+            .filter(|key| !self.is_symbol(*key))
             .collect()
+    }
+
+    fn is_symbol(&self, key: Tagged) -> bool {
+        match key.to_strong_heap_object() {
+            Some(object) => {
+                self.heap.instance_type(object) == crate::objects::instance_type::SYMBOL_TYPE
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn initialize_or_change_enum_cache(

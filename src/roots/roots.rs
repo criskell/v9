@@ -62,6 +62,8 @@ roots_table!(
     enum_cache_map,
     accessor_pair_map,
     tuple2_map,
+    symbol_map,
+    class_fields_symbol,
     js_function_map,
     js_native_function_map,
     js_global_object_map,

@@ -35,6 +35,9 @@ impl Isolate {
                 crate::objects::r#struct::AccessorPair::K_SIZE,
             )
             .tagged();
+        self.roots.symbol_map = self
+            .new_bare_map(SYMBOL_TYPE, crate::objects::name::Symbol::K_SIZE)
+            .tagged();
         self.roots.tuple2_map = self
             .new_bare_map(TUPLE2_TYPE, crate::objects::r#struct::Tuple2::K_SIZE)
             .tagged();
@@ -130,6 +133,9 @@ impl Isolate {
         self.heap.the_hole_value = self.roots.the_hole_value;
         self.heap.undefined_value = self.roots.undefined_value;
         self.heap.null_value = self.roots.null_value;
+        self.roots.class_fields_symbol = self
+            .new_private_symbol(AllocationType::ReadOnly)
+            .tagged();
         self.roots.uninitialized_value = self
             .new_oddball(
                 OddballKind::Uninitialized,

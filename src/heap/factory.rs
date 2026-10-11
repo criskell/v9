@@ -360,6 +360,7 @@ impl Isolate {
                     let names = names.clone();
                     self.new_scope_info(&names).tagged()
                 }
+                ConstantEntry::ClassFieldsSymbol => self.roots.class_fields_symbol,
                 ConstantEntry::ClassBoilerplate(members) => {
                     let members = members.clone();
                     self.new_class_boilerplate(&members).tagged()
@@ -391,6 +392,44 @@ impl Isolate {
             info.set_context_local_name(&mut self.heap, index as i32, interned);
         }
         info
+    }
+
+    fn new_symbol_internal(
+        &mut self,
+        is_private: bool,
+        allocation: AllocationType,
+    ) -> crate::objects::name::Symbol {
+        use crate::objects::name::Symbol;
+        debug_assert!(allocation != AllocationType::Young);
+        let object = self.allocate_raw_with_retry_or_fail(Symbol::K_SIZE as usize, allocation);
+        let map = self.roots.symbol_map.to_strong_heap_object().unwrap();
+        self.heap.set_map(object, map);
+        let symbol = Symbol::unchecked_cast(object);
+        // Generate a random hash value.
+        self.next_symbol_hash = self
+            .next_symbol_hash
+            .wrapping_mul(1103515245)
+            .wrapping_add(12345);
+        let hash = self.next_symbol_hash & crate::objects::name::K_MAX_HASH;
+        let hash_field = crate::objects::name::Name::create_hash_field_value(
+            hash.max(1),
+            crate::objects::name::HashFieldType::Hash,
+        );
+        crate::objects::name::Name::unchecked_cast(object)
+            .set_raw_hash_field(&mut self.heap, hash_field);
+        symbol.set_flags(&mut self.heap, 0);
+        symbol.set_is_private(&mut self.heap, is_private);
+        let undefined = self.roots.undefined_value;
+        symbol.set_description(&mut self.heap, undefined);
+        symbol
+    }
+
+    pub fn new_symbol(&mut self) -> crate::objects::name::Symbol {
+        self.new_symbol_internal(false, AllocationType::Old)
+    }
+
+    pub fn new_private_symbol(&mut self, allocation: AllocationType) -> crate::objects::name::Symbol {
+        self.new_symbol_internal(true, allocation)
     }
 
     pub fn new_tuple2(

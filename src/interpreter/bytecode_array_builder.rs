@@ -239,6 +239,30 @@ impl BytecodeArrayBuilder {
     }
 
 
+    pub fn store_class_fields_initializer(&mut self, constructor: Register) -> &mut Self {
+        let index = self.class_fields_symbol_constant_pool_entry();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetNamedStrict);
+        self.output(
+            Bytecode::SetNamedProperty,
+            &[constructor.to_operand(), index, slot],
+        )
+    }
+
+    pub fn load_class_fields_initializer(&mut self, constructor: Register) -> &mut Self {
+        let index = self.class_fields_symbol_constant_pool_entry();
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadProperty);
+        self.output(
+            Bytecode::GetNamedProperty,
+            &[constructor.to_operand(), index, slot],
+        )
+    }
+
+    fn class_fields_symbol_constant_pool_entry(&mut self) -> i32 {
+        self.bytecode_array_writer
+            .constant_array_builder_mut()
+            .insert_class_fields_symbol() as i32
+    }
+
     pub fn load_named_property_from_super(&mut self, receiver: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadProperty);

@@ -157,6 +157,14 @@ impl ScopeChain {
         self.scopes.push(Scope::new(kind));
     }
 
+    pub fn push_scope(&mut self, scope: Scope) {
+        self.scopes.push(scope);
+    }
+
+    pub fn detach(&mut self) -> Scope {
+        self.scopes.pop().expect("a scope is open")
+    }
+
     pub fn current(&mut self) -> &mut Scope {
         self.scopes.last_mut().expect("a scope is open")
     }

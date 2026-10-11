@@ -404,7 +404,7 @@ impl Isolate {
             return Err(Thrown(message));
         }
         let object = JSObject::unchecked_cast(object);
-        let names = object.map(&self.heap).own_property_names(&self.heap);
+        let names = self.own_enumerable_names_for_keys(object);
         let array = self.new_js_array(names.len() as i32);
         let scope = self.handle_scope();
         let array_handle = self.create_object_handle(array.object());

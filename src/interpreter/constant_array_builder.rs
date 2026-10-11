@@ -13,6 +13,7 @@ pub enum ConstantEntry {
     FunctionLiteral(usize),
     ScopeInfo(Vec<String>),
     ClassBoilerplate(Vec<(i32, String)>),
+    ClassFieldsSymbol,
     TheHole,
 }
 
@@ -81,6 +82,7 @@ pub struct ConstantArrayBuilder {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum DedupKey {
+    ClassFieldsSymbol,
     Smi(i32),
     Number(u64),
     String(String),
@@ -177,6 +179,10 @@ impl ConstantArrayBuilder {
             DedupKey::Name(value.to_owned()),
             ConstantEntry::Name(value.to_owned()),
         )
+    }
+
+    pub fn insert_class_fields_symbol(&mut self) -> usize {
+        self.insert_deduped(DedupKey::ClassFieldsSymbol, ConstantEntry::ClassFieldsSymbol)
     }
 
     pub fn insert_class_boilerplate(&mut self, members: &[(i32, String)]) -> usize {

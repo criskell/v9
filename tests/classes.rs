@@ -593,3 +593,172 @@ fn a_class_without_super_needs_no_context() {
         "1"
     );
 }
+
+#[test]
+fn a_field_with_an_initializer_lands_on_the_instance() {
+    assert_eq!(evaluate("class C { x = 1; } new C().x"), "1");
+}
+
+#[test]
+fn a_field_without_an_initializer_is_undefined() {
+    assert_eq!(evaluate("class C { x; } typeof new C().x"), "undefined");
+}
+
+#[test]
+fn several_fields_initialize_in_order() {
+    assert_eq!(
+        evaluate("class C { n = 1; m = this.n + 1; } new C().m"),
+        "2"
+    );
+}
+
+#[test]
+fn fields_run_before_the_constructor_body() {
+    assert_eq!(
+        evaluate("class C { x = 1; constructor() { this.y = this.x + 1; } } new C().y"),
+        "2"
+    );
+}
+
+#[test]
+fn the_constructor_may_overwrite_a_field() {
+    assert_eq!(
+        evaluate("class C { x = 1; constructor(v) { this.x = v; } } new C(9).x"),
+        "9"
+    );
+}
+
+#[test]
+fn fields_are_enumerable_on_the_instance() {
+    assert_eq!(
+        evaluate(
+            "class C { a = 1; b = 2; m() {} }
+             var names = '';
+             for (var k in new C()) { names = names + k; }
+             names"
+        ),
+        "ab"
+    );
+}
+
+#[test]
+fn a_field_is_defined_rather_than_set_so_it_shadows_a_prototype_accessor() {
+    assert_eq!(
+        evaluate("class C { get x() { return 1; } x = 2; } new C().x"),
+        "2"
+    );
+}
+
+#[test]
+fn a_field_may_hold_an_arrow_bound_to_the_instance() {
+    assert_eq!(
+        evaluate("class C { v = 7; f = () => this.v; } new C().f()"),
+        "7"
+    );
+}
+
+#[test]
+fn a_static_field_lands_on_the_class() {
+    assert_eq!(evaluate("class C { static s = 5; } C.s"), "5");
+}
+
+#[test]
+fn this_in_a_static_field_initializer_is_the_class() {
+    assert_eq!(
+        evaluate("class C { static a = 1; static b = this.a + 1; } C.b"),
+        "2"
+    );
+}
+
+#[test]
+fn an_instance_field_and_a_static_field_may_share_a_name() {
+    assert_eq!(
+        evaluate("class C { x = 1; static x = 2; } new C().x + ':' + C.x"),
+        "1:2"
+    );
+}
+
+#[test]
+fn a_derived_class_gets_both_sets_of_fields() {
+    assert_eq!(
+        evaluate(
+            "class A { a = 1; } class B extends A { b = 2; }
+             var o = new B(); o.a + o.b"
+        ),
+        "3"
+    );
+}
+
+#[test]
+fn fields_run_after_super_in_a_derived_constructor() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor() { this.v = 1; } }
+             class B extends A { b = 2; constructor() { super(); } }
+             var o = new B(); o.v + ':' + o.b"
+        ),
+        "1:2"
+    );
+}
+
+#[test]
+fn a_derived_default_constructor_still_initializes_fields() {
+    assert_eq!(
+        evaluate("class A { a = 1; } class B extends A {} new B().a"),
+        "1"
+    );
+}
+
+#[test]
+fn the_field_initializer_is_not_a_visible_property_of_the_class() {
+    assert_eq!(
+        evaluate(
+            "class C { x = 1; }
+             var names = '';
+             for (var k in C) { names = names + k; }
+             '[' + names + ']:' + Object.keys(C).length"
+        ),
+        "[]:0"
+    );
+}
+
+#[test]
+fn a_method_sees_a_field() {
+    assert_eq!(
+        evaluate("class C { x = 1; m() { return this.x; } } new C().m()"),
+        "1"
+    );
+}
+
+#[test]
+fn fields_survive_a_collection() {
+    assert_eq!(
+        evaluate(
+            "class C { a = 1; b = [1, 2, 3]; }
+             var c = new C();
+             var filler = 0;
+             for (var i = 0; i < 400; i = i + 1) { filler = { a: i, b: [i, i, i] }; }
+             c.a + ':' + c.b.length"
+        ),
+        "1:3"
+    );
+}
+
+#[test]
+fn a_field_initializer_closes_over_the_enclosing_scope() {
+    assert_eq!(
+        evaluate(
+            "function outer() { var n = 5; class C { x = n + 1; } return new C().x; }
+             outer()"
+        ),
+        "6"
+    );
+}
+
+#[test]
+fn an_arrow_nested_twice_in_a_field_keeps_this() {
+    assert_eq!(
+        evaluate("class C { v = 2; f = () => () => this.v; } new C().f()()"),
+        "2"
+    );
+}

@@ -75,6 +75,7 @@ pub struct BytecodeGenerator {
     scope_chain: Vec<Scope>,
     context_registers: Vec<Option<Register>>,
     loop_stack: Vec<Breakable>,
+    requires_instance_members_initializer: bool,
     finally_stack: Vec<FinallyScope>,
     functions: Vec<CompiledFunction>,
 }
@@ -86,6 +87,7 @@ impl BytecodeGenerator {
             scope_chain: vec![program.scope.clone()],
             context_registers: Vec::new(),
             loop_stack: Vec::new(),
+            requires_instance_members_initializer: false,
             finally_stack: Vec::new(),
             functions: Vec::new(),
         };
@@ -153,8 +155,21 @@ impl BytecodeGenerator {
         let saved_loops = std::mem::take(&mut self.loop_stack);
         self.scope_chain.push(function.scope.clone());
 
+        let saved_initializer = std::mem::replace(
+            &mut self.requires_instance_members_initializer,
+            function.requires_instance_members_initializer,
+        );
         let result = (|| -> Result<()> {
             self.build_function_context(&function.scope)?;
+
+            if function.requires_instance_members_initializer
+                && !function.kind.is_derived_constructor()
+            {
+                self.build_instance_member_initialization(
+                    Register::function_closure(),
+                    Register::receiver(),
+                );
+            }
 
             let nested: Vec<FunctionLiteral> = function.hoisted_functions.clone();
             for inner in &nested {
@@ -167,6 +182,7 @@ impl BytecodeGenerator {
         })();
 
         let builder = std::mem::replace(&mut self.builder, saved_builder);
+        self.requires_instance_members_initializer = saved_initializer;
         self.scope_chain.pop();
         self.context_registers.pop();
         self.loop_stack = saved_loops;
@@ -249,6 +265,9 @@ impl BytecodeGenerator {
             } => self.visit_for_statement(init.as_deref(), condition.as_ref(), next.as_ref(), body),
             Statement::Return { value, .. } => self.visit_return_statement(value.as_ref()),
             Statement::Switch { tag, cases, .. } => self.visit_switch_statement(tag, cases),
+            Statement::InitializeClassMembers { fields, .. } => {
+                self.visit_initialize_class_members_statement(fields)
+            }
             Statement::Break { .. } => {
                 if self.loop_stack.is_empty() {
                     return Err(GeneratorError {
@@ -442,6 +461,23 @@ impl BytecodeGenerator {
                 });
             }
         }
+        Ok(())
+    }
+
+    fn visit_initialize_class_members_statement(
+        &mut self,
+        fields: &[ClassLiteralField],
+    ) -> Result<()> {
+        for field in fields {
+            self.build_class_property(field)?;
+        }
+        Ok(())
+    }
+
+    fn build_class_property(&mut self, field: &ClassLiteralField) -> Result<()> {
+        self.visit_for_accumulator_value(&field.value)?;
+        self.builder
+            .define_named_own_property(Register::receiver(), &field.name);
         Ok(())
     }
 
@@ -1355,6 +1391,7 @@ impl BytecodeGenerator {
             .load_accumulator_with_register(Register::function_closure())
             .get_super_constructor(constructor)
             .construct_forward_all_args(constructor);
+        self.build_instance_initialization_after_super_call();
         self.builder
             .load_accumulator_with_register(Register::receiver());
         Ok(())
@@ -1384,9 +1421,19 @@ impl BytecodeGenerator {
             self.builder.store_accumulator_in_register(register);
         }
         self.builder.call_property(constructor, args);
+        self.build_instance_initialization_after_super_call();
         self.builder
             .load_accumulator_with_register(Register::receiver());
         Ok(())
+    }
+
+    fn build_instance_initialization_after_super_call(&mut self) {
+        if self.requires_instance_members_initializer {
+            self.build_instance_member_initialization(
+                Register::function_closure(),
+                Register::receiver(),
+            );
+        }
     }
 
     fn visit_template_literal(&mut self, template: &TemplateLiteral) -> Result<()> {
@@ -1449,6 +1496,7 @@ impl BytecodeGenerator {
                 ClassLiteralPropertyKind::Method => ValueKind::ConstantKind,
                 ClassLiteralPropertyKind::Getter => ValueKind::GetterKind,
                 ClassLiteralPropertyKind::Setter => ValueKind::SetterKind,
+                ClassLiteralPropertyKind::Field => unreachable!(),
             };
             members.push((
                 ClassBoilerplate::encode_flags(value_kind, property.is_static),
@@ -1524,9 +1572,44 @@ impl BytecodeGenerator {
             self.build_variable_assignment(K_STATIC_HOME_OBJECT);
         }
 
+        if let Some(initializer) = &class.instance_members_initializer_function {
+            let index = self.compile_function(initializer)?;
+            self.builder
+                .create_closure(index)
+                .store_class_fields_initializer(class_constructor);
+        }
+
+        if let Some(initializer) = &class.static_initializer {
+            let index = self.compile_function(initializer)?;
+            let callee = self.builder.register_allocator().new_register();
+            self.builder
+                .create_closure(index)
+                .store_accumulator_in_register(callee);
+            let args = self.builder.register_allocator().new_register_list(1);
+            self.builder
+                .move_register(class_constructor, args.first_register());
+            self.builder.call_property(callee, args);
+        }
+
         self.builder.load_accumulator_with_register(class_constructor);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
+    }
+
+    fn build_instance_member_initialization(&mut self, constructor: Register, instance: Register) {
+        let mark = self.builder.register_allocator().next_register_index();
+        let args = self.builder.register_allocator().new_register_list(1);
+        let initializer = self.builder.register_allocator().new_register();
+
+        let mut done = crate::interpreter::bytecode_label::BytecodeLabel::new();
+        self.builder.load_class_fields_initializer(constructor);
+        self.builder.jump_if_undefined(&mut done);
+        self.builder
+            .store_accumulator_in_register(initializer)
+            .move_register(instance, args.first_register());
+        self.builder.call_property(initializer, args);
+        self.builder.bind(&mut done);
+        self.builder.register_allocator().release_registers(mark);
     }
 
     fn is_context_slot(&self, name: &str) -> bool {

@@ -57,6 +57,10 @@ impl Isolate {
                 visit(pair.getter_address());
                 visit(pair.setter_address());
             }
+            it::SYMBOL_TYPE => {
+                use crate::objects::name::Symbol;
+                visit(Symbol::unchecked_cast(object).description_address());
+            }
             it::TUPLE2_TYPE => {
                 use crate::objects::r#struct::Tuple2;
                 let tuple = Tuple2::unchecked_cast(object);

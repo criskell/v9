@@ -1,8 +1,10 @@
 use crate::heap::heap::Heap;
 use crate::objects::string::String as VxString;
-use crate::objects::tagged::HeapObject;
+use crate::objects::tagged::{Address, HeapObject, Tagged};
 
 object_type!(Name);
+
+object_type!(Symbol);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum HashFieldType {
@@ -61,6 +63,10 @@ impl Name {
         );
         self.set_raw_hash_field(heap, (hash << HASH_SHIFT) | (HashFieldType::Hash as u32));
         hash
+    }
+
+    pub fn create_hash_field_value(hash: u32, hash_field_type: HashFieldType) -> u32 {
+        (hash << HASH_SHIFT) | (hash_field_type as u32)
     }
 
     #[inline]
@@ -169,5 +175,56 @@ mod tests {
         let field = (hash << HASH_SHIFT) | (HashFieldType::Hash as u32);
         assert_eq!(Name::hash_field_type(field), HashFieldType::Hash);
         assert_eq!(field >> HASH_SHIFT, hash);
+    }
+}
+
+
+const IS_PRIVATE_BIT: u32 = 0;
+
+impl Symbol {
+    pub const K_FLAGS_OFFSET: i32 =
+        Name::K_RAW_HASH_FIELD_OFFSET + 4;
+    pub const K_DESCRIPTION_OFFSET: i32 = Self::K_FLAGS_OFFSET + 4;
+    pub const K_SIZE: i32 = Self::K_DESCRIPTION_OFFSET + crate::common::globals::K_TAGGED_SIZE;
+
+    #[inline]
+    pub fn flags(self, heap: &Heap) -> u32 {
+        heap.read_u32(self.field(Self::K_FLAGS_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_flags(self, heap: &mut Heap, value: u32) {
+        heap.write_u32(self.field(Self::K_FLAGS_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn is_private(self, heap: &Heap) -> bool {
+        self.flags(heap) & (1 << IS_PRIVATE_BIT) != 0
+    }
+
+    #[inline]
+    pub fn set_is_private(self, heap: &mut Heap, value: bool) {
+        let flags = self.flags(heap);
+        let updated = if value {
+            flags | (1 << IS_PRIVATE_BIT)
+        } else {
+            flags & !(1 << IS_PRIVATE_BIT)
+        };
+        self.set_flags(heap, updated);
+    }
+
+    #[inline]
+    pub fn description(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_DESCRIPTION_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_description(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_DESCRIPTION_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn description_address(self) -> Address {
+        self.field(Self::K_DESCRIPTION_OFFSET)
     }
 }

@@ -582,7 +582,7 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
     // Each of these would be a wrong parse if it were accepted.
     for (source, expected) in [
         ("class A { [k]() {} }", "computed class members"),
-        ("class A { x = 1; }", "class fields"),
+        ("class A { get x; }", "an accessor needs a body"),
         ("for (var x of y) {}", "for...of"),
         ("for (var a, b in y) {}", "single variable"),
         ("with (a) {}", "not implemented"),

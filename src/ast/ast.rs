@@ -79,11 +79,19 @@ pub struct ClassLiteralProperty {
     pub is_static: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct ClassLiteralField {
+    pub name: String,
+    pub value: Expression,
+    pub is_static: bool,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ClassLiteralPropertyKind {
     Method,
     Getter,
     Setter,
+    Field,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +100,8 @@ pub struct ClassLiteral {
     pub extends: Option<Expression>,
     pub constructor: FunctionLiteral,
     pub public_members: Vec<ClassLiteralProperty>,
+    pub instance_members_initializer_function: Option<FunctionLiteral>,
+    pub static_initializer: Option<FunctionLiteral>,
     pub scope: crate::ast::scopes::Scope,
     pub position: Position,
 }
@@ -100,6 +110,7 @@ pub struct ClassLiteral {
 pub struct FunctionLiteral {
     pub name: Option<String>,
     pub kind: crate::objects::function_kind::FunctionKind,
+    pub requires_instance_members_initializer: bool,
     pub parameters: Vec<String>,
     pub body: Vec<Statement>,
     pub scope: crate::ast::scopes::Scope,
@@ -356,6 +367,11 @@ pub enum Statement {
         position: Position,
     },
 
+    InitializeClassMembers {
+        fields: Vec<ClassLiteralField>,
+        position: Position,
+    },
+
     Switch {
         tag: Expression,
         cases: Vec<CaseClause>,
@@ -387,6 +403,7 @@ impl Statement {
             | Statement::While { position, .. }
             | Statement::DoWhile { position, .. }
             | Statement::For { position, .. }
+            | Statement::InitializeClassMembers { position, .. }
             | Statement::Switch { position, .. }
             | Statement::Return { position, .. }
             | Statement::ForIn { position, .. }
