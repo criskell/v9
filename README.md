@@ -128,9 +128,11 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
 ## What does not
 
 No classes, no `try`/`catch`, no generators or `async`, no `for...in`, no
-array methods (`push`, `map`, …). Neither collector runs on its own: a full
-space grows the arena instead of triggering a GC, so `collect_garbage` and
-`collect_all_garbage` have to be called. An object that goes to dictionary mode
+array methods (`push`, `map`, …). A collector now runs when a space fills,
+but handle discipline is not finished: `VX_GC_INTERVAL=1 cargo test` forces a
+collection on every allocation and still fails 14 of 434 unit tests, because
+the interpreter's accumulator is a Rust local the collector cannot see.
+`PORTING.md` names what is left. An object that goes to dictionary mode
 stays there — `MigrateSlowToFast` is missing — and a slow object's property
 accesses are never cached. Contexts are function contexts only: no `with`, no `catch`
 scope, no per-iteration `let` binding in a loop. Inline caches cover named property access and globals; prototype loads,

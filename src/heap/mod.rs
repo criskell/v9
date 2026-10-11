@@ -1,5 +1,6 @@
 pub mod factory;
 pub mod heap;
+pub mod heap_allocator;
 pub mod heap_visitor;
 pub mod mark_compact;
 pub mod marking;

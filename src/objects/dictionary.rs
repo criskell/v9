@@ -235,7 +235,7 @@ impl Isolate {
             .number_dictionary_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             FixedArray::size_for(length) as usize,
             crate::heap::heap::AllocationType::Young,
         );
@@ -554,7 +554,7 @@ impl Isolate {
             .name_dictionary_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             FixedArray::size_for(length) as usize,
             crate::heap::heap::AllocationType::Young,
         );

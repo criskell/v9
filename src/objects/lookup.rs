@@ -1,5 +1,6 @@
 use crate::common::globals::StoreOrigin;
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::objects::hash_table::K_NOT_FOUND;
 use crate::objects::instance_type;
 use crate::objects::js_objects::JSObject;
@@ -193,12 +194,28 @@ impl Isolate {
         }
 
         if self.too_many_fast_properties(map, store_origin) {
+            let scope = self.handle_scope();
+            let object_handle = self.create_object_handle(object.object());
+            let name_handle = self.create_handle(name);
+            let value_handle = self.create_handle(value);
             self.normalize_properties(object);
-            return self.set_dictionary_property(object, name, value);
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            let name = name_handle.get(self);
+            let value = value_handle.get(self);
+            let result = self.set_dictionary_property(object, name, value);
+            self.close_handle_scope(scope);
+            return result;
         }
 
         let representation = Representation::for_value(value);
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let name_handle = self.create_handle(name);
+        let value_handle = self.create_handle(value);
+
         let new_map = self.transition_to_data_property(map, name, representation);
+        let new_map_handle = self.create_object_handle(new_map.object());
+        let name = name_handle.get(self);
         let field_index = new_map
             .find_property_details(&self.heap, name)
             .expect("the transition target must own the property")
@@ -206,11 +223,16 @@ impl Isolate {
 
         let inobject = new_map.inobject_properties(&self.heap);
         if field_index >= inobject {
+            let object = JSObject::unchecked_cast(object_handle.object(self));
             self.grow_property_array(object, field_index - inobject + 1);
         }
 
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let new_map = Map::unchecked_cast(new_map_handle.object(self));
+        let value = value_handle.get(self);
         self.heap.set_map(object.object(), new_map.object());
         object.set_fast_property_at(&mut self.heap, field_index, value);
+        self.close_handle_scope(scope);
         true
     }
 
@@ -289,13 +311,25 @@ impl Isolate {
     }
 
     pub fn set_property_by_str(&mut self, object: JSObject, name: &str, value: Tagged) -> bool {
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let value_handle = self.create_handle(value);
         let key = self.internalize_string(name).tagged();
-        self.set_property(object, key, value)
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let value = value_handle.get(self);
+        let result = self.set_property(object, key, value);
+        self.close_handle_scope(scope);
+        result
     }
 
     pub fn get_property_by_str(&mut self, object: JSObject, name: &str) -> Tagged {
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
         let key = self.internalize_string(name).tagged();
-        self.get_property(object, key)
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let result = self.get_property(object, key);
+        self.close_handle_scope(scope);
+        result
     }
 }
 
@@ -710,9 +744,17 @@ impl Isolate {
         if let Some(cell) = self.global_cell(name) {
             return cell;
         }
+        let scope = self.handle_scope();
+        let name_handle = self.create_handle(name);
         let cell = self.new_property_cell(name, value);
+        let cell_handle = self.create_object_handle(cell.object());
+        let name = name_handle.get(self);
+        let cell_value = cell_handle.get(self);
         let global = self.global_object();
-        self.set_property_ignoring_cells(global, name, cell.tagged(), StoreOrigin::Named);
+        self.set_property_ignoring_cells(global, name, cell_value, StoreOrigin::Named);
+        let cell =
+            crate::objects::property_cell::PropertyCell::unchecked_cast(cell_handle.object(self));
+        self.close_handle_scope(scope);
         cell
     }
 

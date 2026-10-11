@@ -31,6 +31,12 @@ comment line in `src/` that does not appear in V8's source, matching on word
 shingles so that a comment reflowed to different line breaks still counts as
 V8's. It currently reports zero.
 
+`VX_GC_INTERVAL=1 cargo test` runs the suite with a collection forced on
+every allocation, which is how a pointer held across one gets found. It is
+V8's `--gc-interval`, and it is the only reliable way to audit handle
+discipline: without it the tree is green whether or not the discipline is
+right.
+
 `tools/strip-comments.py <file>...` is its other half, for when a sweep is
 needed: it deletes what the checker reports and never writes a comment. It
 decides per contiguous comment block rather than per line, because a layout
@@ -163,6 +169,8 @@ which is the argument for reading it.
 | `src/heap/marking.h` | `src/heap/marking.rs` | [T] `MarkingBitmap`: one bit per tagged word |
 | `src/heap/marking-worklist.h` | `src/heap/marking_worklist.rs` | [A] a `Vec`, not a segmented worklist |
 | `src/heap/mark-compact.h`, `.cc` | `src/heap/mark_compact.rs` | [A] mark, clear weak references, compact old space |
+| `src/heap/heap-allocator.h`, `.cc` | `src/heap/heap_allocator.rs` | [A] the retry-on-failure path and `--gc-interval` |
+| `src/handles/handles.h`, `.cc` | `src/handles/handles.rs` | [A] `HandleScope` and `Handle` as indices into the isolate |
 | `src/numbers/conversions.cc` | `src/numbers/conversions.rs` | [A] `Number::toString` per ECMA-262 §6.1.6.1.20 |
 | `src/objects/objects.h`, `objects.cc` | `src/objects/objects.rs` | [A] the abstract operations: `ToNumber`, `Add`, the comparisons |
 | `src/objects/bytecode-array.h` | `src/objects/bytecode_array.rs` | [T] layout; no handler table |
@@ -333,7 +341,9 @@ maps to.
 | `heap/read_only_spaces.rs` | V8 serialises this space into a snapshot and maps it read-only at startup, which is most of why it is a separate space. `vx` builds it every time. |
 | `heap/scavenger.rs` | No remembered set: V8's write barrier records old-to-young references so a scavenge touches only those, while `vx` walks old and read-only space linearly — correct, but O(old space) per collection. Single threaded. Weak references are treated as strong, so a weak slot survives one extra cycle; `mark_compact.rs` is what actually clears them. |
 | `heap/mark_compact.rs` | V8 sweeps most pages into free lists and evacuates only the fragmented ones. `vx` has no pages, so every live old-space object slides down over the dead ones and the whole space is compacted — simpler, and it cannot fragment, but it moves more than V8 would. The forwarding addresses go in a side table rather than in the objects' map words, because the update pass still needs to read each object's size, and the size comes from the map the forwarding address would overwrite. Marking is single-threaded and non-incremental: no `IncrementalMarking`, no marking barrier, no black allocation, and no ephemeron (weak map) fixpoint — the only weak references in `vx` are transition targets. Read-only and new-space objects are treated as always live, so a major collection reclaims old space only. |
-| **No collector runs by itself.** | `Heap::AllocateRaw` in V8 calls `CollectGarbage` when a space is full; `vx`'s grows the arena instead, so both collectors only run when something calls them. Wiring V8's `AllocateRawWithRetryOrFail` in is the next step, and it is not a small one: a collection during allocation moves objects, so every allocation site that holds a `Tagged` across one has to park it in `isolate.handles` first. The audit is the work, not the retry loop. |
+| `heap/heap_allocator.rs` | A collector now runs when a space fills: young failure scavenges, old failure runs mark-compact, and `VX_GC_INTERVAL=n` forces one every n allocations (V8's `--gc-interval`, which has no flag parser here). V8's version is far richer — `AlwaysAllocateScope` is a counter rather than an RAII scope, there is no heap limit, no `random_gc_interval`, no last-resort `CollectAllAvailableGarbage`, and no local heaps. |
+| `handles/handles.rs` | V8's `Handle<T>` is a typed pointer into a `HandleScope`'s block list, checked by the compiler: a raw `Tagged<T>` cannot outlive a GC without a `DisallowGarbageCollection` scope. `vx`'s is an index into `isolate.handles`, so **the type system does not enforce it** — a raw `JSObject` held across an allocation compiles fine and reads the wrong bytes. `VX_GC_INTERVAL=1` is what finds those, and it still finds 14. |
+| **GC safety is not complete.** | Under `VX_GC_INTERVAL=1` the integration suites for arrays and the parser pass, and so do every interpreter and bootstrapper test; 14 of 434 unit tests still fail, down from 41. Two holes are known and named. (1) The **accumulator** is a Rust local in `dispatch`, so the collector cannot see or update it; a handler that reads it, allocates, and then uses the value it read is wrong. V8 keeps the accumulator in a machine register described by a safepoint table, which `vx` has no equivalent of, so it has to become a traced frame slot — a deviation, and the next piece of work. (2) A call's **arguments** are collected into a Rust `Vec<Tagged>` before `execute` parks them on the stack. The remaining failures are unit tests that hold a raw object across an allocation, which is the same mistake in test code. |
 | `heap/setup_heap_internal.rs` | V8 skips almost all of this by deserialising a snapshot. |
 | `heap/spaces.rs` | No pages: a space is one run of bytes, not a list of `MemoryChunk`s. Pages buy incremental sweeping, per-page remembered sets and growth without reservation games, none of which is needed before mark-compact. |
 | `ic/handler_configuration.rs` | Only the Smi handler form. V8 also has `DataHandler` objects for what a Smi cannot describe — accessors, proxies, a load from a prototype needing the holder and a validity cell — so a property found on a prototype is not cached. |

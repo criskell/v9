@@ -1,5 +1,6 @@
 use crate::common::globals::{InlineCacheState, K_MAX_POLYMORPHIC_MAP_COUNT, K_TAGGED_SIZE};
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::ic::handler_configuration::{Handler, HandlerKind};
 use crate::objects::feedback_vector::{
     FeedbackNexus, FeedbackSlotKind, FeedbackVector, MapAndHandler,
@@ -358,9 +359,16 @@ impl Isolate {
         }
 
         self.ic_statistics.global.misses += 1;
+        let scope = self.handle_scope();
+        let value_handle = self.create_handle(value);
         let cell = self.declare_global_cell(name, value);
+        let cell_handle = self.create_object_handle(cell.object());
+        let value = value_handle.get(self);
+        let cell = PropertyCell::unchecked_cast(cell_handle.object(self));
         self.set_global_cell_value(cell, value);
+        let cell = PropertyCell::unchecked_cast(cell_handle.object(self));
         self.configure_property_cell_mode(nexus, cell);
+        self.close_handle_scope(scope);
     }
 
     /// `FeedbackNexus::ConfigurePropertyCellMode`
@@ -555,7 +563,7 @@ impl Isolate {
     pub(crate) fn new_weak_fixed_array(&mut self, length: i32) -> WeakFixedArray {
         use crate::heap::heap::AllocationType;
         let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             WeakFixedArray::size_for(length) as usize,
             AllocationType::Old,
         );

@@ -1,7 +1,9 @@
 use crate::common::globals::K_TAGGED_SIZE;
+use crate::handles::handles::*;
 use crate::heap::heap::Heap;
 use crate::objects::elements_kind::ElementsKind;
 use crate::objects::fixed_array::PropertyArray;
+use crate::objects::js_array::JSArray;
 use crate::objects::map::Map;
 use crate::objects::tagged::{Address, Tagged};
 
@@ -309,12 +311,19 @@ impl crate::execution::isolate::Isolate {
         }
 
         if kind == dictionary_kind {
+            let scope = self.handle_scope();
+            let object_handle = self.create_object_handle(object.object());
+            let value_handle = self.create_handle(value);
             self.normalize_elements(object);
             let accessor = crate::objects::elements::ElementsAccessor::for_kind(dictionary_kind);
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            let value = value_handle.get(self);
             accessor.set(self, object, index, value);
             if is_js_array && index >= old_length {
+                let array = JSArray::unchecked_cast(object_handle.object(self));
                 array.set_length_value(&mut self.heap, index + 1);
             }
+            self.close_handle_scope(scope);
             return;
         }
 
@@ -324,11 +333,15 @@ impl crate::execution::isolate::Isolate {
             kind = ek::get_holey_elements_kind(kind);
         }
         let to = ek::get_more_general_elements_kind(kind, to);
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
         self.add_element(object, index, value, to, new_capacity);
 
         if is_js_array && index >= old_length {
+            let array = JSArray::unchecked_cast(object_handle.object(self));
             array.set_length_value(&mut self.heap, index + 1);
         }
+        self.close_handle_scope(scope);
     }
 }
 

@@ -3,6 +3,7 @@ pub mod base;
 pub mod builtins;
 pub mod common;
 pub mod execution;
+pub mod handles;
 pub mod heap;
 pub mod ic;
 pub mod init;

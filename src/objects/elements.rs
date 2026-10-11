@@ -1,4 +1,5 @@
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::heap::heap::Heap;
 use crate::objects::dictionary::NumberDictionary;
 use crate::objects::elements_kind::{self, ElementsKind};
@@ -139,34 +140,43 @@ impl Isolate {
         to_kind: ElementsKind,
         capacity: u32,
     ) -> Tagged {
-        let old_elements = object.elements(&self.heap);
         let from = ElementsAccessor::for_kind(from_kind);
-        let old_capacity = from.get_capacity(&self.heap, old_elements);
+        let old_capacity = from.get_capacity(&self.heap, object.elements(&self.heap));
         let copy = old_capacity.min(capacity);
 
-        if elements_kind::is_double_elements_kind(to_kind) {
+        let scope = self.handle_scope();
+        let old_handle = self.create_handle(object.elements(&self.heap));
+        let result = if elements_kind::is_double_elements_kind(to_kind) {
             let elements = self.new_fixed_double_array(capacity as i32);
+            let elements_handle = self.create_object_handle(elements.object());
             for index in 0..copy {
+                let old_elements = old_handle.get(self);
                 if !from.has_entry(&self.heap, old_elements, index) {
                     continue;
                 }
                 let value = self
                     .element_as_f64(old_elements, from_kind, index)
                     .expect("a number");
+                let elements = FixedDoubleArray::unchecked_cast(elements_handle.object(self));
                 elements.set(&mut self.heap, index as i32, value);
             }
-            elements.tagged()
+            elements_handle.get(self)
         } else {
             let elements = self.new_fixed_array_with_holes(capacity as i32);
+            let elements_handle = self.create_object_handle(elements.object());
             for index in 0..copy {
+                let old_elements = old_handle.get(self);
                 if !from.has_entry(&self.heap, old_elements, index) {
                     continue;
                 }
                 let value = self.element_as_tagged(old_elements, from_kind, index);
+                let elements = FixedArray::unchecked_cast(elements_handle.object(self));
                 elements.set(&mut self.heap, index as i32, value);
             }
-            elements.tagged()
-        }
+            elements_handle.get(self)
+        };
+        self.close_handle_scope(scope);
+        result
     }
 
     fn element_as_f64(&self, backing_store: Tagged, kind: ElementsKind, index: u32) -> Option<f64> {
@@ -203,13 +213,20 @@ impl Isolate {
         to_kind: ElementsKind,
         capacity: u32,
     ) {
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
         let elements = self.convert_elements_with_capacity(object, from_kind, to_kind, capacity);
+        let elements_handle = self.create_handle(elements);
         let mut to_kind = to_kind;
         if elements_kind::is_holey_elements_kind(from_kind) {
             to_kind = elements_kind::get_holey_elements_kind(to_kind);
         }
+        let object = JSObject::unchecked_cast(object_handle.object(self));
         let new_map = self.get_elements_transition_map(object, to_kind);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let elements = elements_handle.get(self);
         self.set_map_and_elements(object, new_map, elements);
+        self.close_handle_scope(scope);
     }
 
     /// `ElementsAccessorBase::GrowCapacityAndConvertImpl`
@@ -235,6 +252,9 @@ impl Isolate {
         let from_kind = object.get_elements_kind(&self.heap);
         let accessor = ElementsAccessor::for_kind(to_kind);
         let elements = object.elements(&self.heap);
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let value_handle = self.create_handle(value);
         if elements_kind::is_dictionary_elements_kind(from_kind)
             || elements_kind::is_double_elements_kind(from_kind)
                 != elements_kind::is_double_elements_kind(to_kind)
@@ -245,7 +265,10 @@ impl Isolate {
         } else if elements_kind::is_fast_elements_kind(from_kind) && from_kind != to_kind {
             self.transition_elements_kind(object, to_kind);
         }
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let value = value_handle.get(self);
         accessor.set(self, object, index, value);
+        self.close_handle_scope(scope);
     }
 
     /// `FastElementsAccessor::NormalizeImpl`
@@ -256,15 +279,21 @@ impl Isolate {
         let capacity = accessor.get_capacity(&self.heap, elements);
         let used = accessor.number_of_elements(&self.heap, object);
 
+        let scope = self.handle_scope();
+        let elements_handle = self.create_handle(elements);
         let mut dictionary = self.new_number_dictionary(used.max(1));
         let details = default_data_field(0, Representation::Tagged);
         for index in 0..capacity {
+            let elements = elements_handle.get(self);
             if !accessor.has_entry(&self.heap, elements, index) {
                 continue;
             }
+            let dictionary_handle = self.create_object_handle(dictionary.object());
             let value = self.element_as_tagged(elements, kind, index);
-            dictionary = self.dictionary_add(dictionary, index, value, details);
+            let dictionary_now = NumberDictionary::unchecked_cast(dictionary_handle.object(self));
+            dictionary = self.dictionary_add(dictionary_now, index, value, details);
         }
+        self.close_handle_scope(scope);
         dictionary
     }
 
@@ -275,9 +304,17 @@ impl Isolate {
         if elements_kind::is_dictionary_elements_kind(object.get_elements_kind(&self.heap)) {
             return NumberDictionary::unchecked_cast(elements.to_strong_heap_object().unwrap());
         }
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
         let dictionary = self.normalize_elements_impl(object);
+        let dictionary_handle = self.create_object_handle(dictionary.object());
+        let object = JSObject::unchecked_cast(object_handle.object(self));
         let new_map = self.get_elements_transition_map(object, DictionaryElements);
-        self.set_map_and_elements(object, new_map, dictionary.tagged());
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let dictionary = dictionary_handle.get(self);
+        self.set_map_and_elements(object, new_map, dictionary);
+        let dictionary = NumberDictionary::unchecked_cast(dictionary_handle.object(self));
+        self.close_handle_scope(scope);
         dictionary
     }
 

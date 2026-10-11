@@ -84,7 +84,7 @@ impl Isolate {
         } else {
             VxString::size_for_two_byte(length)
         };
-        let object = self.heap.allocate_raw_or_fail(size as usize, allocation);
+        let object = self.allocate_raw_with_retry_or_fail(size as usize, allocation);
         self.heap
             .set_map(object, map.to_strong_heap_object().unwrap());
         let string = VxString::unchecked_cast(object);

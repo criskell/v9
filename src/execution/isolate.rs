@@ -24,6 +24,9 @@ pub struct Isolate {
 
     pub(crate) stub_cache: crate::ic::stub_cache::StubCache,
 
+    /// `Heap::allocator_`
+    pub(crate) heap_allocator: crate::heap::heap_allocator::HeapAllocator,
+
     pub trace_ic_enabled: bool,
     pub(crate) ic_trace: Vec<String>,
 
@@ -46,11 +49,14 @@ impl Isolate {
             output: Vec::new(),
             ic_statistics: Default::default(),
             stub_cache: crate::ic::stub_cache::StubCache::new(),
+            heap_allocator: crate::heap::heap_allocator::HeapAllocator::new(),
             trace_ic_enabled: false,
             ic_trace: Vec::new(),
             script_function: Tagged::ZERO,
         };
+        isolate.enter_always_allocate_scope();
         isolate.setup_read_only_roots();
+        isolate.leave_always_allocate_scope();
         isolate
     }
 
@@ -67,11 +73,14 @@ impl Isolate {
             output: Vec::new(),
             ic_statistics: Default::default(),
             stub_cache: crate::ic::stub_cache::StubCache::new(),
+            heap_allocator: crate::heap::heap_allocator::HeapAllocator::new(),
             trace_ic_enabled: false,
             ic_trace: Vec::new(),
             script_function: Tagged::ZERO,
         };
+        isolate.enter_always_allocate_scope();
         isolate.setup_read_only_roots();
+        isolate.leave_always_allocate_scope();
         isolate
     }
 

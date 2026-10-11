@@ -1,5 +1,6 @@
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::heap::heap::AllocationType;
 use crate::objects::descriptor_array::DescriptorArray;
 use crate::objects::elements_kind::{self, ElementsKind};
@@ -23,8 +24,7 @@ impl Isolate {
     pub fn new_heap_number(&mut self, value: f64) -> HeapNumber {
         let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
         let object = self
-            .heap
-            .allocate_raw_or_fail(HeapNumber::K_SIZE as usize, AllocationType::Young);
+            .allocate_raw_with_retry_or_fail(HeapNumber::K_SIZE as usize, AllocationType::Young);
         self.heap.set_map(object, map);
         let number = HeapNumber::unchecked_cast(object);
         number.set_value(&mut self.heap, value);
@@ -64,9 +64,10 @@ impl Isolate {
             return self.empty_fixed_array();
         }
         let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(FixedArray::size_for(length) as usize, AllocationType::Young);
+        let object = self.allocate_raw_with_retry_or_fail(
+            FixedArray::size_for(length) as usize,
+            AllocationType::Young,
+        );
         self.heap.set_map(object, map);
         let array = FixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
@@ -84,7 +85,7 @@ impl Isolate {
             .fixed_double_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             FixedDoubleArray::size_for(length) as usize,
             AllocationType::Young,
         );
@@ -107,9 +108,8 @@ impl Isolate {
             .get_initial_js_array_map(kind)
             .to_strong_heap_object()
             .unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(JSArray::K_SIZE as usize, AllocationType::Young);
+        let object =
+            self.allocate_raw_with_retry_or_fail(JSArray::K_SIZE as usize, AllocationType::Young);
         self.heap.set_map(object, map);
         let array = JSArray::unchecked_cast(object);
         let empty = self.roots.empty_fixed_array;
@@ -152,7 +152,7 @@ impl Isolate {
             .property_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             PropertyArray::size_for(length) as usize,
             AllocationType::Young,
         );
@@ -175,7 +175,7 @@ impl Isolate {
             .descriptor_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             DescriptorArray::size_for(capacity) as usize,
             AllocationType::Old,
         );
@@ -196,9 +196,8 @@ impl Isolate {
         inobject_properties_start_in_words: i32,
     ) -> Map {
         let meta = self.roots.meta_map.to_strong_heap_object().unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(Map::K_SIZE as usize, AllocationType::Map);
+        let object =
+            self.allocate_raw_with_retry_or_fail(Map::K_SIZE as usize, AllocationType::Map);
         self.heap.set_map(object, meta);
         let map = Map::unchecked_cast(object);
         map.set_instance_type(&mut self.heap, instance_type);
@@ -237,9 +236,8 @@ impl Isolate {
 
     pub fn new_js_object_from_map(&mut self, map: Map) -> JSObject {
         let instance_size = map.instance_size(&self.heap);
-        let object = self
-            .heap
-            .allocate_raw_or_fail(instance_size as usize, AllocationType::Young);
+        let object =
+            self.allocate_raw_with_retry_or_fail(instance_size as usize, AllocationType::Young);
         self.heap.set_map(object, map.object());
         let js_object = JSObject::unchecked_cast(object);
         js_object.set_raw_properties_or_hash(&mut self.heap, self.roots.empty_property_array);
@@ -264,12 +262,18 @@ impl Isolate {
         if existing_length >= length {
             return;
         }
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let existing_handle = self.create_object_handle(existing.object());
         let grown = self.new_property_array(length);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let existing = PropertyArray::unchecked_cast(existing_handle.object(self));
         for i in 0..existing_length {
             let value = existing.get(&self.heap, i);
             grown.set(&mut self.heap, i, value);
         }
         object.set_raw_properties_or_hash(&mut self.heap, grown.tagged());
+        self.close_handle_scope(scope);
     }
 
     // -- code ---------------------------------------------------------------
@@ -281,6 +285,8 @@ impl Isolate {
         use crate::objects::bytecode_array::BytecodeArray;
 
         let constant_pool = self.new_constant_pool(&data.constants);
+        let scope = self.handle_scope();
+        let constant_pool = self.create_object_handle(constant_pool.object());
 
         let length = data.bytecodes.len() as i32;
         let map = self
@@ -288,18 +294,20 @@ impl Isolate {
             .bytecode_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             BytecodeArray::size_for(length) as usize,
             AllocationType::Old,
         );
         self.heap.set_map(object, map);
         let array = BytecodeArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
-        array.set_constant_pool(&mut self.heap, constant_pool.tagged());
+        let pool = constant_pool.get(self);
+        array.set_constant_pool(&mut self.heap, pool);
         array.set_source_position_table(&mut self.heap, self.roots.empty_fixed_array);
         array.set_register_count(&mut self.heap, data.register_count);
         array.set_parameter_count(&mut self.heap, data.parameter_count);
         array.set_max_arguments(&mut self.heap, 0);
+        self.close_handle_scope(scope);
         let bytes = data.bytecodes.clone();
         self.heap
             .write_bytes(array.first_bytecode_address(), &bytes);
@@ -313,6 +321,8 @@ impl Isolate {
         use crate::interpreter::constant_array_builder::ConstantEntry;
 
         let pool = self.new_fixed_array_tenured(entries.len() as i32);
+        let scope = self.handle_scope();
+        let pool_handle = self.create_object_handle(pool.object());
         for (index, entry) in entries.iter().enumerate() {
             let value = match entry {
                 ConstantEntry::Smi(value) => Smi::from_int(*value),
@@ -332,8 +342,11 @@ impl Isolate {
                 }
                 ConstantEntry::TheHole => self.the_hole_value(),
             };
+            let pool = FixedArray::unchecked_cast(pool_handle.object(self));
             pool.set(&mut self.heap, index as i32, value);
         }
+        let pool = FixedArray::unchecked_cast(pool_handle.object(self));
+        self.close_handle_scope(scope);
         pool
     }
 
@@ -342,9 +355,10 @@ impl Isolate {
         use crate::objects::scope_info::ScopeInfo;
         let count = names.len() as i32;
         let map = self.roots.scope_info_map.to_strong_heap_object().unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(ScopeInfo::size_for(count) as usize, AllocationType::Old);
+        let object = self.allocate_raw_with_retry_or_fail(
+            ScopeInfo::size_for(count) as usize,
+            AllocationType::Old,
+        );
         self.heap.set_map(object, map);
         let info = ScopeInfo::unchecked_cast(object);
         info.set_context_local_count(&mut self.heap, count);
@@ -368,9 +382,10 @@ impl Isolate {
             .function_context_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(Context::size_for(length) as usize, AllocationType::Young);
+        let object = self.allocate_raw_with_retry_or_fail(
+            Context::size_for(length) as usize,
+            AllocationType::Young,
+        );
         self.heap.set_map(object, map);
         let context = Context::unchecked_cast(object);
         context.set_length(&mut self.heap, length);
@@ -396,8 +411,7 @@ impl Isolate {
             .to_strong_heap_object()
             .unwrap();
         let object = self
-            .heap
-            .allocate_raw_or_fail(PropertyCell::K_SIZE as usize, AllocationType::Old);
+            .allocate_raw_with_retry_or_fail(PropertyCell::K_SIZE as usize, AllocationType::Old);
         self.heap.set_map(object, map);
         let cell = PropertyCell::unchecked_cast(object);
         cell.set_name(&mut self.heap, name);
@@ -422,7 +436,7 @@ impl Isolate {
             .feedback_metadata_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             FeedbackMetadata::size_for(slot_count) as usize,
             AllocationType::Old,
         );
@@ -451,7 +465,7 @@ impl Isolate {
             .feedback_vector_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.heap.allocate_raw_or_fail(
+        let object = self.allocate_raw_with_retry_or_fail(
             FeedbackVector::size_for(length) as usize,
             AllocationType::Old,
         );
@@ -483,9 +497,10 @@ impl Isolate {
             .shared_function_info_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(SharedFunctionInfo::K_SIZE as usize, AllocationType::Old);
+        let object = self.allocate_raw_with_retry_or_fail(
+            SharedFunctionInfo::K_SIZE as usize,
+            AllocationType::Old,
+        );
         self.heap.set_map(object, map);
         let info = SharedFunctionInfo::unchecked_cast(object);
         info.set_name(&mut self.heap, name);
@@ -544,9 +559,10 @@ impl Isolate {
             return self.empty_fixed_array();
         }
         let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(FixedArray::size_for(length) as usize, AllocationType::Old);
+        let object = self.allocate_raw_with_retry_or_fail(
+            FixedArray::size_for(length) as usize,
+            AllocationType::Old,
+        );
         self.heap.set_map(object, map);
         let array = FixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
@@ -559,9 +575,8 @@ impl Isolate {
 
     pub fn new_heap_number_tenured(&mut self, value: f64) -> HeapNumber {
         let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
-        let object = self
-            .heap
-            .allocate_raw_or_fail(HeapNumber::K_SIZE as usize, AllocationType::Old);
+        let object =
+            self.allocate_raw_with_retry_or_fail(HeapNumber::K_SIZE as usize, AllocationType::Old);
         self.heap.set_map(object, map);
         let number = HeapNumber::unchecked_cast(object);
         number.set_value(&mut self.heap, value);

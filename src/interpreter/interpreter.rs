@@ -1,6 +1,7 @@
 use crate::builtins::builtins::Builtin;
 use crate::common::globals::StoreOrigin;
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::interpreter::bytecode_operands::OperandScale;
 use crate::interpreter::bytecode_register::Register;
 use crate::interpreter::bytecodes::Bytecode;
@@ -20,8 +21,6 @@ const K_MAX_CALL_DEPTH: usize = 180;
 const K_FIXED_SLOT_COUNT: usize = 5;
 
 struct InterpreterFrame {
-    bytecode: BytecodeArray,
-    feedback_vector: Option<crate::objects::feedback_vector::FeedbackVector>,
     params_base: usize,
     params_count: usize,
     fixed_base: usize,
@@ -80,8 +79,6 @@ impl Isolate {
         }
 
         let frame = InterpreterFrame {
-            bytecode,
-            feedback_vector,
             params_base,
             params_count,
             fixed_base,
@@ -91,6 +88,12 @@ impl Isolate {
         let context = function.context(&self.heap);
         self.write_register(&frame, Register::current_context(), context);
         self.write_register(&frame, Register::function_closure(), function.tagged());
+        self.write_register(&frame, Register::bytecode_array(), bytecode.tagged());
+        let vector = match feedback_vector {
+            Some(vector) => vector.tagged(),
+            None => Tagged::ZERO,
+        };
+        self.write_register(&frame, Register::feedback_vector(), vector);
 
         self.call_depth += 1;
         let result = self.dispatch(&frame);
@@ -130,15 +133,37 @@ impl Isolate {
         self.stack[slot] = value;
     }
 
+    /// `InterpreterFrameConstants::kBytecodeArrayFromFp`
+    #[inline]
+    fn frame_bytecode_array(&self, frame: &InterpreterFrame) -> BytecodeArray {
+        BytecodeArray::unchecked_cast(
+            self.read_register(frame, Register::bytecode_array())
+                .to_strong_heap_object()
+                .expect("a frame always has its bytecode"),
+        )
+    }
+
+    /// `InterpreterFrameConstants::kFeedbackVectorFromFp`
+    #[inline]
+    fn frame_feedback_vector(
+        &self,
+        frame: &InterpreterFrame,
+    ) -> Option<crate::objects::feedback_vector::FeedbackVector> {
+        let value = self.read_register(frame, Register::feedback_vector());
+        value
+            .to_strong_heap_object()
+            .map(crate::objects::feedback_vector::FeedbackVector::unchecked_cast)
+    }
+
     fn dispatch(&mut self, frame: &InterpreterFrame) -> ExecutionResult {
-        let bytecode_array = frame.bytecode;
-        let length = bytecode_array.length(&self.heap);
+        let length = self.frame_bytecode_array(frame).length(&self.heap);
         let mut accumulator = self.undefined_value();
         let mut offset: i32 = 0;
 
         while offset < length {
             let mut scale = OperandScale::Single;
             let mut opcode_offset = offset;
+            let bytecode_array = self.frame_bytecode_array(frame);
             let mut bytecode = Bytecode::from_byte(bytecode_array.get(&self.heap, offset))
                 .unwrap_or(Bytecode::Illegal);
             if let Some(prefixed) = bytecode.prefix_to_operand_scale() {
@@ -253,7 +278,7 @@ impl Isolate {
                 Bytecode::LdaGlobal => {
                     let name = self.constant_name(bytecode_array, operand(self, 0));
                     let slot = operand(self, 1);
-                    let value = match frame.feedback_vector {
+                    let value = match self.frame_feedback_vector(frame) {
                         Some(vector) => self.load_global_ic(name, vector, slot),
                         None => self.load_global(name),
                     };
@@ -270,7 +295,7 @@ impl Isolate {
                 Bytecode::StaGlobal => {
                     let name = self.constant_name(bytecode_array, operand(self, 0));
                     let slot = operand(self, 1);
-                    match frame.feedback_vector {
+                    match self.frame_feedback_vector(frame) {
                         Some(vector) => self.store_global_ic(name, accumulator, vector, slot),
                         None => self.store_global(name, accumulator),
                     }
@@ -653,13 +678,23 @@ impl Isolate {
         key: Tagged,
         value: Tagged,
     ) -> ExecutionResult {
+        let scope = self.handle_scope();
+        let object_handle = self.create_handle(object);
+        let key_handle = self.create_handle(key);
+        let value_handle = self.create_handle(value);
         if let Some(index) = self.to_array_index(key) {
             if self.store_element(object, index, value)? {
+                self.close_handle_scope(scope);
                 return Ok(value);
             }
         }
+        let key = key_handle.get(self);
         let name = self.key_to_name(key);
-        self.store_property_with_origin(object, name, value, StoreOrigin::MaybeKeyed)
+        let object = object_handle.get(self);
+        let value = value_handle.get(self);
+        let result = self.store_property_with_origin(object, name, value, StoreOrigin::MaybeKeyed);
+        self.close_handle_scope(scope);
+        result
     }
 
     /// `JSObject::GetElement`
@@ -734,7 +769,7 @@ impl Isolate {
         name: Tagged,
         slot: i32,
     ) -> ExecutionResult {
-        let Some(vector) = frame.feedback_vector else {
+        let Some(vector) = self.frame_feedback_vector(frame) else {
             return self.load_property(object, name);
         };
         match object.to_strong_heap_object() {
@@ -758,7 +793,7 @@ impl Isolate {
         value: Tagged,
         slot: i32,
     ) -> ExecutionResult {
-        let Some(vector) = frame.feedback_vector else {
+        let Some(vector) = self.frame_feedback_vector(frame) else {
             return self.store_property(object, name, value);
         };
         match object.to_strong_heap_object() {

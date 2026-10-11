@@ -1,5 +1,6 @@
 use crate::builtins::builtins::Builtin;
 use crate::execution::isolate::Isolate;
+use crate::handles::handles::*;
 use crate::interpreter::bytecode_generator::{BytecodeGenerator, CompiledProgram};
 use crate::objects::js_function::JSFunction;
 use crate::objects::js_objects::JSObject;
@@ -20,43 +21,57 @@ impl Isolate {
         );
         let global = self.new_js_object_from_map(map);
         self.roots.global_object = global.tagged();
+        let scope = self.handle_scope();
 
         let undefined = self.undefined_value();
-        self.set_property_by_str(global, "undefined", undefined);
+        self.set_property_by_str(self.global_object(), "undefined", undefined);
         let nan = self.new_heap_number(f64::NAN).tagged();
-        self.set_property_by_str(global, "NaN", nan);
+        self.set_property_by_str(self.global_object(), "NaN", nan);
         let infinity = self.new_heap_number(f64::INFINITY).tagged();
-        self.set_property_by_str(global, "Infinity", infinity);
+        self.set_property_by_str(self.global_object(), "Infinity", infinity);
 
         // `console.log`
         let console = self.new_js_object();
+        let console = self.create_object_handle(console.object());
         self.install_builtin(console, "log", Builtin::ConsoleLog, 1);
-        self.set_property_by_str(global, "console", console.tagged());
+        let console = console.get(self);
+        self.set_property_by_str(self.global_object(), "console", console);
 
         // `Math`
         let math = self.new_js_object();
+        let math = self.create_object_handle(math.object());
         self.install_builtin(math, "sqrt", Builtin::MathSqrt, 1);
         self.install_builtin(math, "floor", Builtin::MathFloor, 1);
         self.install_builtin(math, "abs", Builtin::MathAbs, 1);
         self.install_builtin(math, "max", Builtin::MathMax, 2);
         self.install_builtin(math, "min", Builtin::MathMin, 2);
         self.install_builtin(math, "pow", Builtin::MathPow, 2);
-        self.set_property_by_str(global, "Math", math.tagged());
+        let math = math.get(self);
+        self.set_property_by_str(self.global_object(), "Math", math);
 
-        self.set_property_by_str(global, "globalThis", global.tagged());
+        let global = self.roots.global_object;
+        self.set_property_by_str(self.global_object(), "globalThis", global);
+        self.close_handle_scope(scope);
     }
 
     /// `Genesis::SimpleInstallFunction`
     fn install_builtin(
         &mut self,
-        target: JSObject,
+        target: Handle,
         name: &str,
         builtin: Builtin,
         parameter_count: i32,
     ) {
+        let scope = self.handle_scope();
         let shared = self.new_native_shared_function_info(name, builtin.id(), parameter_count);
-        let function = self.new_js_function(shared);
-        self.set_property_by_str(target, name, function.tagged());
+        let shared = self.create_object_handle(shared.object());
+        let shared = crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
+            shared.object(self),
+        );
+        let function = self.new_js_function(shared).tagged();
+        let target = JSObject::unchecked_cast(target.object(self));
+        self.set_property_by_str(target, name, function);
+        self.close_handle_scope(scope);
     }
 
     /// `Isolate::global_object`
@@ -142,22 +157,32 @@ impl Isolate {
         let base = self.shared_function_infos.len();
         assert_eq!(base, 0, "one script per isolate for now");
         for function in &compiled.functions {
+            let scope = self.handle_scope();
             let bytecode = self.new_bytecode_array(&function.data);
+            let bytecode = self.create_object_handle(bytecode.object());
+            let bytecode = crate::objects::bytecode_array::BytecodeArray::unchecked_cast(
+                bytecode.object(self),
+            );
             let shared = self.new_shared_function_info(
                 &function.name,
                 Some(bytecode),
                 function.declared_parameter_count,
             );
+            let shared = self.create_object_handle(shared.object());
             let kinds = function.data.feedback_slot_kinds.clone();
-            let metadata = self.new_feedback_metadata(&kinds);
-            shared.set_feedback_metadata(&mut self.heap, metadata.tagged());
+            let metadata = self.new_feedback_metadata(&kinds).tagged();
+            let shared = crate::objects::shared_function_info::SharedFunctionInfo::unchecked_cast(
+                shared.object(self),
+            );
+            shared.set_feedback_metadata(&mut self.heap, metadata);
             self.shared_function_infos.push(shared.tagged());
+            self.close_handle_scope(scope);
         }
 
-        let global = self.global_object();
         let undefined = self.undefined_value();
         for name in &compiled.global_declarations {
             let key = self.internalize_string(name).tagged();
+            let global = self.global_object();
             if self.get_own_property(global, key).is_none() {
                 self.set_property(global, key, undefined);
             }
