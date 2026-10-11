@@ -256,15 +256,15 @@ impl Isolate {
 
     fn new_accessor_pair(&mut self) -> crate::objects::r#struct::AccessorPair {
         use crate::objects::r#struct::AccessorPair;
+        let object = self.allocate_raw_with_retry_or_fail(
+            AccessorPair::K_SIZE as usize,
+            crate::heap::heap::AllocationType::Old,
+        );
         let map = self
             .roots
             .accessor_pair_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            AccessorPair::K_SIZE as usize,
-            crate::heap::heap::AllocationType::Old,
-        );
         self.heap.set_map(object, map);
         let pair = AccessorPair::unchecked_cast(object);
         let null = self.null_value();
@@ -1183,5 +1183,50 @@ impl Isolate {
                 self.declare_global_cell(name, value);
             }
         }
+    }
+}
+
+impl Isolate {
+    pub(crate) fn load_from_super(
+        &mut self,
+        receiver: Tagged,
+        home_object: Tagged,
+        name: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
+        let Some(home) = home_object.to_strong_heap_object() else {
+            let message = self
+                .new_string("Cannot read property of non-object home object")
+                .tagged();
+            return Err(Thrown(message));
+        };
+        let map = crate::objects::map::Map::unchecked_cast(self.heap.map(home));
+        let start = map.prototype(&self.heap);
+        let Some(holder) = start.to_strong_heap_object() else {
+            return Ok(self.undefined_value());
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(holder)) {
+            return Ok(self.undefined_value());
+        }
+        self.get_property_with_receiver(JSObject::unchecked_cast(holder), name, receiver)
+    }
+
+    pub(crate) fn get_property_with_receiver(
+        &mut self,
+        start: JSObject,
+        name: Tagged,
+        receiver: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::objects::property_details::PropertyKind;
+        let Some(found) = self.lookup_property(start, name) else {
+            return Ok(self.undefined_value());
+        };
+        if found.details.kind() != PropertyKind::Accessor {
+            let value = self.property_value_at(&found);
+            return Ok(self.unwrap_cell(start, value));
+        }
+        let pair = self.property_value_at(&found);
+        let getter = self.accessor_component(pair, true);
+        self.call_accessor(getter, receiver, &[])
     }
 }

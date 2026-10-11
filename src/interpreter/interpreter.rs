@@ -417,6 +417,13 @@ impl Isolate {
                     let value = self.load_named_property_ic(frame, object, name, slot)?;
                     self.set_accumulator(frame, value);
                 }
+                Bytecode::GetNamedPropertyFromSuper => {
+                    let receiver = self.read_register(frame, register_operand(self, 0));
+                    let name = self.constant_name(bytecode_array, operand(self, 1));
+                    let home_object = self.accumulator(frame);
+                    let value = self.load_from_super(receiver, home_object, name)?;
+                    self.set_accumulator(frame, value);
+                }
                 Bytecode::GetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let value = self.get_keyed_property(object, self.accumulator(frame))?;

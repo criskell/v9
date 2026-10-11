@@ -5,6 +5,7 @@ use crate::common::globals::VariableLocation;
 pub enum ScopeKind {
     Script,
     Function,
+    Class,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +53,9 @@ pub struct Scope {
     needs_context: bool,
     allocated: bool,
 }
+
+pub const K_HOME_OBJECT: &str = ".home_object";
+pub const K_STATIC_HOME_OBJECT: &str = ".static_home_object";
 
 impl Scope {
     pub fn new(kind: ScopeKind) -> Scope {
@@ -203,7 +207,7 @@ pub fn allocate_variables(scope: &mut Scope) {
             continue;
         }
         match scope.kind {
-            ScopeKind::Script => {
+            ScopeKind::Script | ScopeKind::Class => {
                 variable.location = VariableLocation::Unallocated;
                 variable.index = -1;
             }

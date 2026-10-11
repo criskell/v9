@@ -41,6 +41,7 @@ type Result<T> = std::result::Result<T, ParserError>;
 #[derive(Default)]
 struct FunctionState {
     hoisted_functions: Vec<FunctionLiteral>,
+    in_static_method: bool,
 }
 
 pub struct Parser {
@@ -1036,11 +1037,25 @@ impl Parser {
             }
             Token::Super => {
                 self.consume(Token::Super);
-                if self.peek() != Token::LeftParen {
-                    return Err(self
-                        .unexpected_token_with_hint("super property access is not implemented"));
+                if self.peek() == Token::LeftParen {
+                    return Ok(Expression::SuperCallReference { position });
                 }
-                Ok(Expression::SuperCallReference { position })
+                if !matches!(self.peek(), Token::Period | Token::LeftBracket) {
+                    return Err(self.unexpected_token_with_hint(
+                        "`super` must be followed by a call or a property access",
+                    ));
+                }
+                let is_static = self.state().in_static_method;
+                let name = if is_static {
+                    crate::ast::scopes::K_STATIC_HOME_OBJECT
+                } else {
+                    crate::ast::scopes::K_HOME_OBJECT
+                };
+                self.record_reference(name);
+                Ok(Expression::SuperPropertyReference {
+                    is_static,
+                    position,
+                })
             }
             Token::Class => {
                 let class = self.parse_class_literal()?;
@@ -1167,6 +1182,14 @@ impl Parser {
             None
         };
 
+        self.scope_chain.push(ScopeKind::Class);
+        self.scope_chain
+            .current()
+            .declare(crate::ast::scopes::K_HOME_OBJECT, VariableMode::Const);
+        self.scope_chain
+            .current()
+            .declare(crate::ast::scopes::K_STATIC_HOME_OBJECT, VariableMode::Const);
+
         self.expect(Token::LeftBrace)?;
         let mut public_members = Vec::new();
         let mut constructor = None;
@@ -1193,11 +1216,14 @@ impl Parser {
             }
         };
 
+        let scope = self.scope_chain.pop();
+
         Ok(ClassLiteral {
             name,
             extends,
             constructor,
             public_members,
+            scope,
             position,
         })
     }
@@ -1234,7 +1260,7 @@ impl Parser {
         if self.peek() != Token::LeftParen {
             return Err(self.unexpected_token_with_hint("class fields are not implemented"));
         }
-        let value = self.parse_function_literal(Some(name.clone()), position)?;
+        let value = self.parse_method_literal(Some(name.clone()), is_static, position)?;
 
         let is_constructor =
             !is_static && kind == ClassLiteralPropertyKind::Method && name == "constructor";
@@ -1372,6 +1398,21 @@ impl Parser {
         })
     }
 
+    fn parse_method_literal(
+        &mut self,
+        name: Option<String>,
+        is_static: bool,
+        position: Position,
+    ) -> Result<FunctionLiteral> {
+        let parameters = self.parse_formal_parameter_list()?;
+        self.function_state.push(FunctionState {
+            hoisted_functions: Vec::new(),
+            in_static_method: is_static,
+        });
+        self.scope_chain.push(ScopeKind::Function);
+        self.parse_function_body(name, parameters, position)
+    }
+
     fn parse_function_literal(
         &mut self,
         name: Option<String>,
@@ -1381,6 +1422,15 @@ impl Parser {
 
         self.function_state.push(FunctionState::default());
         self.scope_chain.push(ScopeKind::Function);
+        self.parse_function_body(name, parameters, position)
+    }
+
+    fn parse_function_body(
+        &mut self,
+        name: Option<String>,
+        parameters: Vec<String>,
+        position: Position,
+    ) -> Result<FunctionLiteral> {
         for (index, parameter) in parameters.iter().enumerate() {
             self.scope_chain
                 .current()

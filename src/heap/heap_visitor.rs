@@ -97,6 +97,10 @@ impl Isolate {
                 visit(function.field(JSFunction::K_CONTEXT_OFFSET));
                 visit(function.field(JSFunction::K_FEEDBACK_VECTOR_OFFSET));
                 visit(function.prototype_or_initial_map_address());
+                let js_object = JSObject::unchecked_cast(object);
+                for i in 0..map.inobject_properties(&self.heap) {
+                    visit(js_object.field(map.inobject_property_offset(&self.heap, i)));
+                }
             }
 
             _ if it::is_js_object(instance_type) => {

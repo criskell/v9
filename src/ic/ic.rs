@@ -560,11 +560,11 @@ impl Isolate {
 
     pub(crate) fn new_weak_fixed_array(&mut self, length: i32) -> WeakFixedArray {
         use crate::heap::heap::AllocationType;
-        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
         let object = self.allocate_raw_with_retry_or_fail(
             WeakFixedArray::size_for(length) as usize,
             AllocationType::Old,
         );
+        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
         self.heap.set_map(object, map);
         let array = WeakFixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);

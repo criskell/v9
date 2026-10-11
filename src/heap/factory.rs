@@ -19,9 +19,9 @@ pub const K_DESCRIPTOR_ARRAY_SLACK: i32 = 4;
 impl Isolate {
 
     pub fn new_heap_number(&mut self, value: f64) -> HeapNumber {
-        let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
         let object = self
             .allocate_raw_with_retry_or_fail(HeapNumber::K_SIZE as usize, AllocationType::Young);
+        let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
         self.heap.set_map(object, map);
         let number = HeapNumber::unchecked_cast(object);
         number.set_value(&mut self.heap, value);
@@ -58,11 +58,11 @@ impl Isolate {
         if length == 0 {
             return self.empty_fixed_array();
         }
-        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
         let object = self.allocate_raw_with_retry_or_fail(
             FixedArray::size_for(length) as usize,
             AllocationType::Young,
         );
+        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
         self.heap.set_map(object, map);
         let array = FixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
@@ -74,15 +74,15 @@ impl Isolate {
     }
 
     pub fn new_fixed_double_array(&mut self, length: i32) -> FixedDoubleArray {
+        let object = self.allocate_raw_with_retry_or_fail(
+            FixedDoubleArray::size_for(length) as usize,
+            AllocationType::Young,
+        );
         let map = self
             .roots
             .fixed_double_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            FixedDoubleArray::size_for(length) as usize,
-            AllocationType::Young,
-        );
         self.heap.set_map(object, map);
         let array = FixedDoubleArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
@@ -152,15 +152,15 @@ impl Isolate {
         if length == 0 {
             return self.empty_property_array();
         }
+        let object = self.allocate_raw_with_retry_or_fail(
+            PropertyArray::size_for(length) as usize,
+            AllocationType::Young,
+        );
         let map = self
             .roots
             .property_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            PropertyArray::size_for(length) as usize,
-            AllocationType::Young,
-        );
         self.heap.set_map(object, map);
         let array = PropertyArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
@@ -175,15 +175,15 @@ impl Isolate {
         if capacity == 0 {
             return self.empty_descriptor_array();
         }
+        let object = self.allocate_raw_with_retry_or_fail(
+            DescriptorArray::size_for(capacity) as usize,
+            AllocationType::Old,
+        );
         let map = self
             .roots
             .descriptor_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            DescriptorArray::size_for(capacity) as usize,
-            AllocationType::Old,
-        );
         self.heap.set_map(object, map);
         let array = DescriptorArray::unchecked_cast(object);
         array.set_number_of_all_descriptors(&mut self.heap, capacity);
@@ -291,15 +291,15 @@ impl Isolate {
         let constant_pool = self.create_object_handle(constant_pool.object());
 
         let length = data.bytecodes.len() as i32;
+        let object = self.allocate_raw_with_retry_or_fail(
+            BytecodeArray::size_for(length) as usize,
+            AllocationType::Old,
+        );
         let map = self
             .roots
             .bytecode_array_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            BytecodeArray::size_for(length) as usize,
-            AllocationType::Old,
-        );
         self.heap.set_map(object, map);
         let array = BytecodeArray::unchecked_cast(object);
         self.create_object_handle(object);
@@ -377,11 +377,11 @@ impl Isolate {
     pub fn new_scope_info(&mut self, names: &[String]) -> crate::objects::scope_info::ScopeInfo {
         use crate::objects::scope_info::ScopeInfo;
         let count = names.len() as i32;
-        let map = self.roots.scope_info_map.to_strong_heap_object().unwrap();
         let object = self.allocate_raw_with_retry_or_fail(
             ScopeInfo::size_for(count) as usize,
             AllocationType::Old,
         );
+        let map = self.roots.scope_info_map.to_strong_heap_object().unwrap();
         self.heap.set_map(object, map);
         let info = ScopeInfo::unchecked_cast(object);
         info.set_context_local_count(&mut self.heap, count);
@@ -476,15 +476,15 @@ impl Isolate {
         let length = Context::MIN_CONTEXT_SLOTS + slots;
         let scope = self.handle_scope();
         let previous = self.create_handle(previous);
+        let object = self.allocate_raw_with_retry_or_fail(
+            Context::size_for(length) as usize,
+            AllocationType::Young,
+        );
         let map = self
             .roots
             .function_context_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            Context::size_for(length) as usize,
-            AllocationType::Young,
-        );
         let previous = previous.get(self);
         self.close_handle_scope(scope);
         self.heap.set_map(object, map);
@@ -506,13 +506,13 @@ impl Isolate {
         use crate::objects::property_cell::{initial_cell_type, PropertyCell};
         use crate::objects::property_details::{PropertyDetails, PropertyKind, NONE};
 
+        let object = self
+            .allocate_raw_with_retry_or_fail(PropertyCell::K_SIZE as usize, AllocationType::Old);
         let map = self
             .roots
             .property_cell_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self
-            .allocate_raw_with_retry_or_fail(PropertyCell::K_SIZE as usize, AllocationType::Old);
         self.heap.set_map(object, map);
         let cell = PropertyCell::unchecked_cast(object);
         cell.set_name(&mut self.heap, name);
@@ -532,15 +532,15 @@ impl Isolate {
     ) -> crate::objects::feedback_vector::FeedbackMetadata {
         use crate::objects::feedback_vector::FeedbackMetadata;
         let slot_count = kinds.len() as i32;
+        let object = self.allocate_raw_with_retry_or_fail(
+            FeedbackMetadata::size_for(slot_count) as usize,
+            AllocationType::Old,
+        );
         let map = self
             .roots
             .feedback_metadata_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            FeedbackMetadata::size_for(slot_count) as usize,
-            AllocationType::Old,
-        );
         self.heap.set_map(object, map);
         let metadata = FeedbackMetadata::unchecked_cast(object);
         metadata.set_slot_count(&mut self.heap, slot_count);
@@ -561,11 +561,6 @@ impl Isolate {
             Some(object) => FeedbackMetadata::unchecked_cast(object).slot_count(&self.heap),
             None => 0,
         };
-        let map = self
-            .roots
-            .feedback_vector_map
-            .to_strong_heap_object()
-            .unwrap();
         let scope = self.handle_scope();
         let shared_handle = self.create_object_handle(shared.object());
         let metadata_handle = self.create_handle(metadata);
@@ -573,6 +568,11 @@ impl Isolate {
             FeedbackVector::size_for(length) as usize,
             AllocationType::Old,
         );
+        let map = self
+            .roots
+            .feedback_vector_map
+            .to_strong_heap_object()
+            .unwrap();
         self.heap.set_map(object, map);
         let vector = FeedbackVector::unchecked_cast(object);
         vector.set_length(&mut self.heap, length);
@@ -598,15 +598,15 @@ impl Isolate {
         use crate::objects::shared_function_info::SharedFunctionInfo;
 
         let name = self.internalize_string(name).tagged();
+        let object = self.allocate_raw_with_retry_or_fail(
+            SharedFunctionInfo::K_SIZE as usize,
+            AllocationType::Old,
+        );
         let map = self
             .roots
             .shared_function_info_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            SharedFunctionInfo::K_SIZE as usize,
-            AllocationType::Old,
-        );
         self.heap.set_map(object, map);
         let info = SharedFunctionInfo::unchecked_cast(object);
         info.set_name(&mut self.heap, name);
@@ -674,11 +674,11 @@ impl Isolate {
         if length == 0 {
             return self.empty_fixed_array();
         }
-        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
         let object = self.allocate_raw_with_retry_or_fail(
             FixedArray::size_for(length) as usize,
             AllocationType::Old,
         );
+        let map = self.roots.fixed_array_map.to_strong_heap_object().unwrap();
         self.heap.set_map(object, map);
         let array = FixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);

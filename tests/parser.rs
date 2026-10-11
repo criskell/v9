@@ -157,6 +157,7 @@ fn shape(expression: &Expression) -> String {
         ),
         Expression::SuperCallReference { .. } => "super".to_string(),
         Expression::SuperCallForwardArgs { .. } => "super(...arguments)".to_string(),
+        Expression::SuperPropertyReference { .. } => "super".to_string(),
         Expression::ClassLiteral { class, .. } => format!(
             "class {}({})",
             class.name.as_deref().unwrap_or(""),

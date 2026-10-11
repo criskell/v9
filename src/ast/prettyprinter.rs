@@ -322,6 +322,10 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
             }
         }
         Expression::SuperCallReference { .. } => out.push_str("SUPER CALL REFERENCE\n"),
+        Expression::SuperPropertyReference { is_static, .. } => {
+            let kind = if *is_static { "STATIC " } else { "" };
+            out.push_str(&format!("{kind}SUPER PROPERTY REFERENCE\n"))
+        }
         Expression::SuperCallForwardArgs { .. } => {
             out.push_str("SUPER CALL FORWARD ARGS\n")
         }

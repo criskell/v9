@@ -80,6 +80,7 @@ pub struct ClassLiteral {
     pub extends: Option<Expression>,
     pub constructor: FunctionLiteral,
     pub public_members: Vec<ClassLiteralProperty>,
+    pub scope: crate::ast::scopes::Scope,
     pub position: Position,
 }
 
@@ -203,6 +204,11 @@ pub enum Expression {
         position: Position,
     },
 
+    SuperPropertyReference {
+        is_static: bool,
+        position: Position,
+    },
+
     Sequence {
         expressions: Vec<Expression>,
         position: Position,
@@ -237,6 +243,7 @@ impl Expression {
             | Expression::ClassLiteral { position, .. }
             | Expression::SuperCallReference { position }
             | Expression::SuperCallForwardArgs { position }
+            | Expression::SuperPropertyReference { position, .. }
             | Expression::Sequence { position, .. } => *position,
         }
     }

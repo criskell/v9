@@ -605,6 +605,9 @@ impl BytecodeGenerator {
                 self.unsupported("`super` outside a call")
             }
             Expression::SuperCallForwardArgs { .. } => self.visit_super_call_forward_args(),
+            Expression::SuperPropertyReference { .. } => {
+                self.unsupported("`super` outside a property access")
+            }
             Expression::ArrayLiteral { values, .. } => self.visit_array_literal(values),
             Expression::FunctionLiteral { function, .. } => {
                 let index = self.compile_function(function)?;
@@ -1084,6 +1087,12 @@ impl BytecodeGenerator {
     }
 
     fn visit_property(&mut self, object: &Expression, key: &PropertyAccess) -> Result<()> {
+        if let Expression::SuperPropertyReference { is_static, .. } = object {
+            let mark = self.builder.register_allocator().next_register_index();
+            self.visit_named_super_property_load(*is_static, key, None)?;
+            self.builder.register_allocator().release_registers(mark);
+            return Ok(());
+        }
         let mark = self.builder.register_allocator().next_register_index();
         let object_register = self.visit_for_register_value(object)?;
         match key {
@@ -1097,6 +1106,38 @@ impl BytecodeGenerator {
             }
         }
         self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    fn visit_named_super_property_load(
+        &mut self,
+        is_static: bool,
+        key: &PropertyAccess,
+        receiver_out: Option<Register>,
+    ) -> Result<()> {
+        use crate::ast::scopes::{K_HOME_OBJECT, K_STATIC_HOME_OBJECT};
+        let PropertyAccess::Named(name) = key else {
+            return self.unsupported("a keyed `super` property access");
+        };
+        let name = name.clone();
+        let home_object = if is_static {
+            K_STATIC_HOME_OBJECT
+        } else {
+            K_HOME_OBJECT
+        };
+        if !self.is_context_slot(home_object) {
+            return self.unsupported("`super` outside a method");
+        }
+
+        let receiver = self.builder.register_allocator().new_register();
+        self.builder
+            .load_accumulator_with_register(Register::receiver())
+            .store_accumulator_in_register(receiver);
+        self.build_variable_load(home_object);
+        self.builder.load_named_property_from_super(receiver, &name);
+        if let Some(receiver_out) = receiver_out {
+            self.builder.move_register(receiver, receiver_out);
+        }
         Ok(())
     }
 
@@ -1123,6 +1164,36 @@ impl BytecodeGenerator {
         match callee {
             Expression::SuperCallReference { .. } => {
                 self.build_super_call(arguments)?;
+            }
+            Expression::Property { object, key, .. }
+                if matches!(object.as_ref(), Expression::SuperPropertyReference { .. }) =>
+            {
+                let Expression::SuperPropertyReference { is_static, .. } = object.as_ref() else {
+                    unreachable!()
+                };
+                let callee_register = self.builder.register_allocator().new_register();
+                let receiver_holder = self.builder.register_allocator().new_register();
+                self.visit_named_super_property_load(*is_static, key, Some(receiver_holder))?;
+                self.builder.store_accumulator_in_register(callee_register);
+
+                let mut args = self
+                    .builder
+                    .register_allocator()
+                    .new_growable_register_list();
+                let receiver = self
+                    .builder
+                    .register_allocator()
+                    .grow_register_list(&mut args);
+                self.builder.move_register(receiver_holder, receiver);
+                for argument in arguments {
+                    self.visit_for_accumulator_value(argument)?;
+                    let register = self
+                        .builder
+                        .register_allocator()
+                        .grow_register_list(&mut args);
+                    self.builder.store_accumulator_in_register(register);
+                }
+                self.builder.call_property(callee_register, args);
             }
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
@@ -1243,6 +1314,26 @@ impl BytecodeGenerator {
             ));
         }
 
+        self.scope_chain.push(class.scope.clone());
+        let result = self.build_class_literal_in_scope(class, &members);
+        self.scope_chain.pop();
+        let saved = self.context_registers.pop().flatten();
+        if let Some(saved) = saved {
+            self.builder.pop_context(saved);
+        }
+        result
+    }
+
+    fn build_class_literal_in_scope(
+        &mut self,
+        class: &ClassLiteral,
+        members: &[(i32, String)],
+    ) -> Result<()> {
+        use crate::ast::scopes::{K_HOME_OBJECT, K_STATIC_HOME_OBJECT};
+        use crate::objects::literal_objects::ClassBoilerplate;
+
+        self.build_function_context(&class.scope)?;
+
         let mark = self.builder.register_allocator().next_register_index();
         let class_constructor = self.builder.register_allocator().new_register();
         let mut args = self.builder.register_allocator().new_growable_register_list();
@@ -1283,9 +1374,21 @@ impl BytecodeGenerator {
         self.builder
             .call_runtime(crate::runtime::runtime::FunctionId::DefineClass, args);
 
+        if self.is_context_slot(K_HOME_OBJECT) {
+            self.build_variable_assignment(K_HOME_OBJECT);
+        }
+        if self.is_context_slot(K_STATIC_HOME_OBJECT) {
+            self.builder.load_accumulator_with_register(class_constructor);
+            self.build_variable_assignment(K_STATIC_HOME_OBJECT);
+        }
+
         self.builder.load_accumulator_with_register(class_constructor);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
+    }
+
+    fn is_context_slot(&self, name: &str) -> bool {
+        matches!(self.resolve(name), Resolution::Context { .. })
     }
 
     fn visit_object_literal(&mut self, properties: &[ObjectLiteralProperty]) -> Result<()> {

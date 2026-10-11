@@ -211,15 +211,15 @@ impl Isolate {
     pub fn new_number_dictionary(&mut self, at_least_space_for: u32) -> NumberDictionary {
         let capacity = HashTableBase::compute_capacity(at_least_space_for);
         let length = NUMBER_DICTIONARY_SHAPE.size_for(capacity);
+        let object = self.allocate_raw_with_retry_or_fail(
+            FixedArray::size_for(length) as usize,
+            crate::heap::heap::AllocationType::Young,
+        );
         let map = self
             .roots
             .number_dictionary_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            FixedArray::size_for(length) as usize,
-            crate::heap::heap::AllocationType::Young,
-        );
         self.heap.set_map(object, map);
         let array = FixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);
@@ -517,15 +517,15 @@ impl Isolate {
     pub fn new_name_dictionary(&mut self, at_least_space_for: u32) -> NameDictionary {
         let capacity = HashTableBase::compute_capacity(at_least_space_for);
         let length = NAME_DICTIONARY_SHAPE.size_for(capacity);
+        let object = self.allocate_raw_with_retry_or_fail(
+            FixedArray::size_for(length) as usize,
+            crate::heap::heap::AllocationType::Young,
+        );
         let map = self
             .roots
             .name_dictionary_map
             .to_strong_heap_object()
             .unwrap();
-        let object = self.allocate_raw_with_retry_or_fail(
-            FixedArray::size_for(length) as usize,
-            crate::heap::heap::AllocationType::Young,
-        );
         self.heap.set_map(object, map);
         let array = FixedArray::unchecked_cast(object);
         array.set_length(&mut self.heap, length);

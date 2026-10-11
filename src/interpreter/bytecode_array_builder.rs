@@ -239,6 +239,15 @@ impl BytecodeArrayBuilder {
     }
 
 
+    pub fn load_named_property_from_super(&mut self, receiver: Register, name: &str) -> &mut Self {
+        let index = self.insert_name(name);
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadProperty);
+        self.output(
+            Bytecode::GetNamedPropertyFromSuper,
+            &[receiver.to_operand(), index, slot],
+        )
+    }
+
     pub fn load_named_property(&mut self, object: Register, name: &str) -> &mut Self {
         let index = self.insert_name(name);
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::LoadProperty);

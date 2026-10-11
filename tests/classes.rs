@@ -427,9 +427,8 @@ fn extending_null_gives_an_object_with_no_prototype() {
 }
 
 #[test]
-fn super_outside_a_call_is_refused() {
-    assert!(error("class A {} class B extends A { m() { return super.m(); } }")
-        .contains("super property access"));
+fn super_outside_a_method_is_refused() {
+    assert!(error("function f() { return super.m(); } f();").contains("outside a method"));
 }
 
 #[test]
@@ -444,5 +443,153 @@ fn a_hierarchy_survives_a_collection() {
              b.doubled() + ':' + b.tripled()"
         ),
         "14:21"
+    );
+}
+
+#[test]
+fn super_calls_the_overridden_method() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return 1; } }
+             class B extends A { m() { return super.m() + 1; } }
+             new B().m()"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn a_super_method_sees_the_derived_instance_as_this() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return this.v; } }
+             class B extends A {
+               constructor() { super(); this.v = 7; }
+               m() { return super.m(); }
+             }
+             new B().m()"
+        ),
+        "7"
+    );
+}
+
+#[test]
+fn super_reaches_an_inherited_getter() {
+    assert_eq!(
+        evaluate(
+            "class A { get x() { return this.v * 2; } }
+             class B extends A {
+               constructor() { super(); this.v = 5; }
+               m() { return super.x; }
+             }
+             new B().m()"
+        ),
+        "10"
+    );
+}
+
+#[test]
+fn super_chains_through_three_levels() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return 1; } }
+             class B extends A { m() { return super.m(); } }
+             class C extends B { m() { return super.m() + 10; } }
+             new C().m()"
+        ),
+        "11"
+    );
+}
+
+#[test]
+fn super_skips_a_class_that_does_not_override() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return 'a'; } }
+             class B extends A {}
+             class C extends B { m() { return super.m(); } }
+             new C().m()"
+        ),
+        "a"
+    );
+}
+
+#[test]
+fn a_missing_super_property_is_undefined() {
+    assert_eq!(
+        evaluate(
+            "class A {} class B extends A { m() { return super.missing; } }
+             typeof new B().m()"
+        ),
+        "undefined"
+    );
+}
+
+#[test]
+fn super_in_a_static_method_walks_the_constructor_chain() {
+    assert_eq!(
+        evaluate(
+            "class A { static s() { return 1; } }
+             class B extends A { static s() { return super.s() + 1; } }
+             B.s()"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn a_static_super_does_not_see_instance_methods() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return 1; } }
+             class B extends A { static s() { return super.m; } }
+             typeof B.s()"
+        ),
+        "undefined"
+    );
+}
+
+#[test]
+fn super_works_beside_a_plain_inner_function() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return 1; } }
+             class B extends A {
+               m() { var g = function() { return 2; }; return g() + super.m(); }
+             }
+             new B().m()"
+        ),
+        "3"
+    );
+}
+
+#[test]
+fn a_keyed_super_access_is_refused() {
+    assert!(
+        error("class A { m() {} } class B extends A { m() { return super['m'](); } } new B().m();")
+            .contains("keyed `super`")
+    );
+}
+
+#[test]
+fn super_survives_a_collection() {
+    assert_eq!(
+        evaluate(
+            "class A { constructor(v) { this.v = v; } doubled() { return this.v * 2; } }
+             class B extends A { doubled() { return super.doubled() + 1; } }
+             var b = new B(20);
+             var filler = 0;
+             for (var i = 0; i < 400; i = i + 1) { filler = { a: i, b: [i, i, i] }; }
+             b.doubled()"
+        ),
+        "41"
+    );
+}
+
+#[test]
+fn a_class_without_super_needs_no_context() {
+    assert_eq!(
+        evaluate("class C { m() { return 1; } } new C().m()"),
+        "1"
     );
 }

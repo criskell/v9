@@ -63,6 +63,7 @@ bytecode_list! {
     StaCurrentContextSlot,    Use::READ_ACCUMULATOR, ContextSlot;
 
     GetNamedProperty,         Use::WRITE_ACCUMULATOR, Reg, ConstantPoolIndex, FeedbackSlot;
+    GetNamedPropertyFromSuper, Use::READ_WRITE_ACCUMULATOR, Reg, ConstantPoolIndex, FeedbackSlot;
     GetKeyedProperty,         Use::READ_WRITE_ACCUMULATOR, Reg, FeedbackSlot;
     SetNamedProperty,         Use::READ_AND_CLOBBER_ACCUMULATOR, Reg, ConstantPoolIndex, FeedbackSlot;
     DefineNamedOwnProperty,   Use::READ_AND_CLOBBER_ACCUMULATOR, Reg, ConstantPoolIndex, FeedbackSlot;

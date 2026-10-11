@@ -108,11 +108,11 @@ impl Isolate {
 
     fn new_enum_cache(&mut self) -> crate::objects::descriptor_array::EnumCache {
         use crate::objects::descriptor_array::EnumCache;
-        let map = self.roots.enum_cache_map.to_strong_heap_object().unwrap();
         let object = self.allocate_raw_with_retry_or_fail(
             EnumCache::K_SIZE as usize,
             crate::heap::heap::AllocationType::Old,
         );
+        let map = self.roots.enum_cache_map.to_strong_heap_object().unwrap();
         self.heap.set_map(object, map);
         let cache = EnumCache::unchecked_cast(object);
         let empty = self.roots.empty_fixed_array;
