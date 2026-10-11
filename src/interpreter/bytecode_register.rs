@@ -3,11 +3,12 @@ use crate::interpreter::bytecode_operands::{OperandScale, OperandSize};
 const K_REGISTER_FILE_START_INDEX: i32 = 0;
 const K_FEEDBACK_VECTOR_REGISTER_INDEX: i32 = -1;
 const K_BYTECODE_ARRAY_REGISTER_INDEX: i32 = -2;
-const K_CURRENT_CONTEXT_REGISTER_INDEX: i32 = -3;
-const K_FUNCTION_CLOSURE_REGISTER_INDEX: i32 = -4;
-const K_CALLER_PC_OFFSET_REGISTER_INDEX: i32 = -5;
-const K_ARGUMENT_COUNT_REGISTER_INDEX: i32 = -6;
-const K_FIRST_PARAM_REGISTER_INDEX: i32 = -7;
+const K_BYTECODE_OFFSET_REGISTER_INDEX: i32 = -3;
+const K_CURRENT_CONTEXT_REGISTER_INDEX: i32 = -4;
+const K_FUNCTION_CLOSURE_REGISTER_INDEX: i32 = -5;
+const K_CALLER_PC_OFFSET_REGISTER_INDEX: i32 = -6;
+const K_ARGUMENT_COUNT_REGISTER_INDEX: i32 = -7;
+const K_FIRST_PARAM_REGISTER_INDEX: i32 = -8;
 
 /// `Register::kInvalidIndex`
 const K_INVALID_INDEX: i32 = i32::MAX;
@@ -92,6 +93,12 @@ impl Register {
         Register(K_FEEDBACK_VECTOR_REGISTER_INDEX)
     }
 
+    /// `Register::bytecode_offset`
+    #[inline]
+    pub const fn bytecode_offset() -> Register {
+        Register(K_BYTECODE_OFFSET_REGISTER_INDEX)
+    }
+
     /// `Register::virtual_accumulator`
     #[inline]
     pub const fn virtual_accumulator() -> Register {
@@ -143,6 +150,7 @@ impl std::fmt::Debug for Register {
         match self.0 {
             K_FEEDBACK_VECTOR_REGISTER_INDEX => write!(f, "<feedback_vector>"),
             K_BYTECODE_ARRAY_REGISTER_INDEX => write!(f, "<bytecode_array>"),
+            K_BYTECODE_OFFSET_REGISTER_INDEX => write!(f, "<bytecode_offset>"),
             K_CURRENT_CONTEXT_REGISTER_INDEX => write!(f, "<context>"),
             K_FUNCTION_CLOSURE_REGISTER_INDEX => write!(f, "<closure>"),
             K_CALLER_PC_OFFSET_REGISTER_INDEX => write!(f, "<accumulator>"),
@@ -337,11 +345,11 @@ mod tests {
 
         assert_eq!(Register::receiver().size_of_operand(), OperandSize::Byte);
         assert_eq!(
-            Register::from_parameter_index(120).size_of_operand(),
+            Register::from_parameter_index(119).size_of_operand(),
             OperandSize::Byte
         );
         assert_eq!(
-            Register::from_parameter_index(121).size_of_operand(),
+            Register::from_parameter_index(120).size_of_operand(),
             OperandSize::Short
         );
     }

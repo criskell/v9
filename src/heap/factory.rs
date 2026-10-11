@@ -303,13 +303,31 @@ impl Isolate {
         );
         self.heap.set_map(object, map);
         let array = BytecodeArray::unchecked_cast(object);
+        self.create_object_handle(object);
         array.set_length(&mut self.heap, length);
         let pool = constant_pool.get(self);
         array.set_constant_pool(&mut self.heap, pool);
         array.set_source_position_table(&mut self.heap, self.roots.empty_fixed_array);
+        array.set_handler_table(&mut self.heap, self.roots.empty_fixed_array);
         array.set_register_count(&mut self.heap, data.register_count);
         array.set_parameter_count(&mut self.heap, data.parameter_count);
         array.set_max_arguments(&mut self.heap, 0);
+        let encoded = encode_handler_table(&data.handler_table);
+        let handler_table = if encoded.is_empty() {
+            self.roots.empty_fixed_array
+        } else {
+            let table = self.new_fixed_array_tenured(encoded.len() as i32);
+            for (index, value) in encoded.iter().enumerate() {
+                table.set(&mut self.heap, index as i32, Smi::from_int(*value));
+            }
+            table.tagged()
+        };
+        let array = BytecodeArray::unchecked_cast(
+            self.handles[self.handles.len() - 1]
+                .to_strong_heap_object()
+                .unwrap(),
+        );
+        array.set_handler_table(&mut self.heap, handler_table);
         self.close_handle_scope(scope);
         let bytes = data.bytecodes.clone();
         self.heap
@@ -680,6 +698,23 @@ impl Isolate {
 }
 
 pub const JS_OBJECT_HEADER_WORDS: i32 = JSObject::K_HEADER_SIZE / K_TAGGED_SIZE;
+
+/// `HandlerTableBuilder::ToHandlerTable`
+fn encode_handler_table(table: &crate::codegen::handler_table::HandlerTable) -> Vec<i32> {
+    use crate::codegen::handler_table::HandlerTable;
+    let mut encoded = Vec::new();
+    for index in 0..table.number_of_range_entries() {
+        let entry = table.entry(index as i32);
+        encoded.push(entry.offset_start);
+        encoded.push(entry.offset_end);
+        encoded.push(HandlerTable::encode_handler(
+            entry.offset_target,
+            entry.prediction,
+        ));
+        encoded.push(entry.context.index());
+    }
+    encoded
+}
 
 #[cfg(test)]
 mod tests {

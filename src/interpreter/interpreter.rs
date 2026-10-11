@@ -17,7 +17,7 @@ pub type ExecutionResult = Result<Tagged, Thrown>;
 
 const K_MAX_CALL_DEPTH: usize = 180;
 
-const K_FIXED_SLOT_COUNT: usize = 6;
+const K_FIXED_SLOT_COUNT: usize = 7;
 
 struct InterpreterFrame {
     params_base: usize,
@@ -172,12 +172,65 @@ impl Isolate {
     }
 
     fn dispatch(&mut self, frame: &InterpreterFrame) -> ExecutionResult {
-        let length = self.frame_bytecode_array(frame).length(&self.heap);
         let undefined = self.undefined_value();
         self.set_accumulator(frame, undefined);
-        let mut offset: i32 = 0;
+        let mut start: i32 = 0;
+        loop {
+            match self.dispatch_from(frame, start) {
+                Ok(value) => return Ok(value),
+                Err(thrown) => match self.unwind_and_find_handler(frame) {
+                    Some((target, context)) => {
+                        self.write_register(frame, Register::current_context(), context);
+                        self.set_accumulator(frame, thrown.0);
+                        start = target;
+                    }
+                    None => return Err(thrown),
+                },
+            }
+        }
+    }
+
+    /// `Isolate::UnwindAndFindHandler`
+    fn unwind_and_find_handler(&mut self, frame: &InterpreterFrame) -> Option<(i32, Tagged)> {
+        use crate::codegen::handler_table::{HandlerTable, K_NO_HANDLER_FOUND};
+        use crate::objects::fixed_array::FixedArray;
+
+        let offset = Smi::to_int(self.read_register(frame, Register::bytecode_offset()));
+        let table = self.frame_bytecode_array(frame).handler_table(&self.heap);
+        let table = FixedArray::unchecked_cast(table.to_strong_heap_object()?);
+        let length = table.length(&self.heap);
+        let entry_size = HandlerTable::K_RANGE_ENTRY_SIZE;
+
+        let mut innermost = K_NO_HANDLER_FOUND;
+        let mut index = 0;
+        while index + entry_size <= length {
+            let start = Smi::to_int(table.get(&self.heap, index));
+            let end = Smi::to_int(table.get(&self.heap, index + 1));
+            if end <= offset {
+                index += entry_size;
+                continue;
+            }
+            if start > offset {
+                break;
+            }
+            innermost = index;
+            index += entry_size;
+        }
+        if innermost == K_NO_HANDLER_FOUND {
+            return None;
+        }
+        let handler = Smi::to_int(table.get(&self.heap, innermost + 2));
+        let context_index = Smi::to_int(table.get(&self.heap, innermost + 3));
+        let context = self.read_register(frame, Register::new(context_index));
+        Some((HandlerTable::decode_handler_offset(handler), context))
+    }
+
+    fn dispatch_from(&mut self, frame: &InterpreterFrame, start: i32) -> ExecutionResult {
+        let length = self.frame_bytecode_array(frame).length(&self.heap);
+        let mut offset: i32 = start;
 
         while offset < length {
+            self.write_register(frame, Register::bytecode_offset(), Smi::from_int(offset));
             let mut scale = OperandScale::Single;
             let mut opcode_offset = offset;
             let bytecode_array = self.frame_bytecode_array(frame);

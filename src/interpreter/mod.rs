@@ -10,4 +10,5 @@ pub mod bytecode_register_allocator;
 pub mod bytecodes;
 pub mod constant_array_builder;
 pub mod control_flow_builders;
+pub mod handler_table_builder;
 pub mod interpreter;

@@ -1,5 +1,7 @@
+use crate::codegen::handler_table::CatchPrediction;
 use crate::interpreter::bytecode_array_builder::BytecodeArrayBuilder;
-use crate::interpreter::bytecode_label::{BytecodeLabels, BytecodeLoopHeader};
+use crate::interpreter::bytecode_label::{BytecodeLabel, BytecodeLabels, BytecodeLoopHeader};
+use crate::interpreter::bytecode_register::Register;
 
 #[derive(Default)]
 pub struct BreakableControlFlowBuilder {
@@ -128,6 +130,43 @@ impl ConditionalControlFlowBuilder {
 
     pub fn finish(&mut self, builder: &mut BytecodeArrayBuilder) {
         builder.bind_labels(&mut self.end_labels);
+    }
+}
+
+/// `TryCatchBuilder`
+pub struct TryCatchBuilder {
+    handler_id: i32,
+    catch_prediction: CatchPrediction,
+    exit: BytecodeLabel,
+}
+
+impl TryCatchBuilder {
+    pub fn new(
+        builder: &mut BytecodeArrayBuilder,
+        catch_prediction: CatchPrediction,
+    ) -> TryCatchBuilder {
+        TryCatchBuilder {
+            handler_id: builder.new_handler_entry(),
+            catch_prediction,
+            exit: BytecodeLabel::new(),
+        }
+    }
+
+    /// `TryCatchBuilder::BeginTry`
+    pub fn begin_try(&mut self, builder: &mut BytecodeArrayBuilder, context: Register) {
+        builder.mark_try_begin(self.handler_id, context);
+    }
+
+    /// `TryCatchBuilder::EndTry`
+    pub fn end_try(&mut self, builder: &mut BytecodeArrayBuilder) {
+        builder.mark_try_end(self.handler_id);
+        builder.jump(&mut self.exit);
+        builder.mark_handler(self.handler_id, self.catch_prediction);
+    }
+
+    /// `TryCatchBuilder::EndCatch`
+    pub fn end_catch(&mut self, builder: &mut BytecodeArrayBuilder) {
+        builder.bind(&mut self.exit);
     }
 }
 

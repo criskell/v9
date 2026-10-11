@@ -219,6 +219,20 @@ pub enum Statement {
         position: Position,
     },
 
+    /// `TryCatchStatement`
+    TryCatch {
+        try_block: Vec<Statement>,
+        catch_variable: Option<String>,
+        catch_block: Vec<Statement>,
+        position: Position,
+    },
+
+    /// `ThrowStatement`
+    Throw {
+        exception: Expression,
+        position: Position,
+    },
+
     /// `ExpressionStatement`
     Expression {
         expression: Expression,
@@ -295,6 +309,8 @@ impl Statement {
             | Statement::DoWhile { position, .. }
             | Statement::For { position, .. }
             | Statement::Return { position, .. }
+            | Statement::TryCatch { position, .. }
+            | Statement::Throw { position, .. }
             | Statement::Break { position }
             | Statement::Continue { position } => *position,
         }

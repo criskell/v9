@@ -91,6 +91,31 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
             print_expression(out, expression, depth + 1);
         }
         Statement::Empty { .. } => out.push_str("EMPTY\n"),
+        Statement::TryCatch {
+            try_block,
+            catch_variable,
+            catch_block,
+            ..
+        } => {
+            out.push_str("TRY CATCH\n");
+            indent(out, depth + 1);
+            out.push_str("TRY\n");
+            for statement in try_block {
+                print_statement(out, statement, depth + 2);
+            }
+            indent(out, depth + 1);
+            match catch_variable {
+                Some(name) => out.push_str(&format!("CATCH ({name})\n")),
+                None => out.push_str("CATCH\n"),
+            }
+            for statement in catch_block {
+                print_statement(out, statement, depth + 2);
+            }
+        }
+        Statement::Throw { exception, .. } => {
+            out.push_str("THROW\n");
+            print_expression(out, exception, depth + 1);
+        }
         Statement::Declaration {
             mode, declarations, ..
         } => {

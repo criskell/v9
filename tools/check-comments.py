@@ -40,6 +40,11 @@ for root, _, files in os.walk(os.path.join(V8, "src")):
                 if line.startswith("//"):
                     run.append(line.lstrip("/").strip())
                     continue
+                # A trailing comment on a line of code counts too.
+                trailing = line.partition("//")
+                if trailing[1] and "\"" not in trailing[0]:
+                    run.append(trailing[2].strip())
+                    continue
                 if run:
                     text = normalise(" ".join(run))
                     haystack.update(shingles(text.split()))

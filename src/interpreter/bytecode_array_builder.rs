@@ -23,6 +23,7 @@ pub struct BytecodeArrayData {
     pub feedback_slot_count: i32,
     pub feedback_slot_kinds: Vec<FeedbackSlotKind>,
     pub source_position_table: Vec<(usize, usize)>,
+    pub handler_table: crate::codegen::handler_table::HandlerTable,
 }
 
 pub struct BytecodeArrayBuilder {
@@ -32,6 +33,7 @@ pub struct BytecodeArrayBuilder {
     local_register_count: i32,
     feedback_vector_spec: FeedbackVectorSpec,
     pending_source_position: Option<usize>,
+    handler_table_builder: crate::interpreter::handler_table_builder::HandlerTableBuilder,
 }
 
 impl BytecodeArrayBuilder {
@@ -43,6 +45,8 @@ impl BytecodeArrayBuilder {
             local_register_count,
             feedback_vector_spec: FeedbackVectorSpec::new(),
             pending_source_position: None,
+            handler_table_builder:
+                crate::interpreter::handler_table_builder::HandlerTableBuilder::new(),
         }
     }
 
@@ -580,7 +584,48 @@ impl BytecodeArrayBuilder {
             feedback_slot_count,
             feedback_slot_kinds,
             source_position_table,
+            handler_table: self.handler_table_builder.to_handler_table(),
         }
+    }
+
+    /// `BytecodeArrayBuilder::NewHandlerEntry`
+    pub fn new_handler_entry(&mut self) -> i32 {
+        self.handler_table_builder.new_handler_entry()
+    }
+
+    /// `BytecodeArrayBuilder::MarkTryBegin`
+    pub fn mark_try_begin(&mut self, handler_id: i32, context: Register) {
+        let offset = self.bytecode_array_writer.offset();
+        self.handler_table_builder
+            .set_try_region_start(handler_id, offset);
+        self.handler_table_builder
+            .set_context_register(handler_id, context);
+    }
+
+    /// `BytecodeArrayBuilder::MarkTryEnd`
+    pub fn mark_try_end(&mut self, handler_id: i32) {
+        let offset = self.bytecode_array_writer.offset();
+        self.handler_table_builder
+            .set_try_region_end(handler_id, offset);
+    }
+
+    /// `BytecodeArrayBuilder::MarkHandler`
+    pub fn mark_handler(
+        &mut self,
+        handler_id: i32,
+        prediction: crate::codegen::handler_table::CatchPrediction,
+    ) {
+        self.bytecode_array_writer.mark_handler();
+        let offset = self.bytecode_array_writer.offset();
+        self.handler_table_builder
+            .set_handler_target(handler_id, offset);
+        self.handler_table_builder
+            .set_prediction(handler_id, prediction);
+    }
+
+    /// `BytecodeArrayBuilder::DropHandlerEntry`
+    pub fn drop_handler_entry(&mut self, handler_id: i32) {
+        self.handler_table_builder.drop_handler_entry(handler_id);
     }
 }
 

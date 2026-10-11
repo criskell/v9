@@ -191,6 +191,17 @@ impl BytecodeGenerator {
             Statement::Block { statements, .. } => self.visit_statements(statements),
             Statement::Expression { expression, .. } => self.visit_for_effect(expression),
             Statement::Empty { .. } => Ok(()),
+            Statement::TryCatch {
+                try_block,
+                catch_variable,
+                catch_block,
+                ..
+            } => self.visit_try_catch_statement(try_block, catch_variable.as_deref(), catch_block),
+            Statement::Throw { exception, .. } => {
+                self.visit_for_accumulator_value(exception)?;
+                self.builder.emit_throw();
+                Ok(())
+            }
             Statement::Declaration { declarations, .. } => {
                 self.visit_variable_declarations(declarations)
             }
@@ -583,9 +594,11 @@ impl BytecodeGenerator {
 
     fn visit_for_effect(&mut self, expression: &Expression) -> Result<()> {
         match expression {
-            Expression::Literal { .. }
-            | Expression::VariableProxy { .. }
-            | Expression::This { .. } => Ok(()),
+            Expression::Literal { .. } | Expression::This { .. } => Ok(()),
+            Expression::VariableProxy { name, .. } => match self.resolve(name) {
+                Resolution::Global => self.visit_for_accumulator_value(expression),
+                _ => Ok(()),
+            },
             Expression::Sequence { expressions, .. } => {
                 for expression in expressions {
                     self.visit_for_effect(expression)?;
@@ -1141,6 +1154,41 @@ impl BytecodeGenerator {
         }
 
         self.builder.load_accumulator_with_register(object);
+        self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::BuildTryCatch`
+    fn visit_try_catch_statement(
+        &mut self,
+        try_block: &[Statement],
+        catch_variable: Option<&str>,
+        catch_block: &[Statement],
+    ) -> Result<()> {
+        use crate::codegen::handler_table::CatchPrediction;
+        use crate::interpreter::control_flow_builders::TryCatchBuilder;
+
+        if self.builder.exit_seen_in_block() {
+            return Ok(());
+        }
+
+        let mark = self.builder.register_allocator().next_register_index();
+        let mut try_control_builder =
+            TryCatchBuilder::new(&mut self.builder, CatchPrediction::Caught);
+
+        let context = self.builder.register_allocator().new_register();
+        self.builder
+            .move_register(Register::current_context(), context);
+
+        try_control_builder.begin_try(&mut self.builder, context);
+        self.visit_statements(try_block)?;
+        try_control_builder.end_try(&mut self.builder);
+
+        if let Some(name) = catch_variable {
+            self.build_variable_assignment(name);
+        }
+        self.visit_statements(catch_block)?;
+        try_control_builder.end_catch(&mut self.builder);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
     }

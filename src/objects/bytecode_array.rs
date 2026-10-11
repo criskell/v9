@@ -11,7 +11,8 @@ object_type!(
 
 impl BytecodeArray {
     pub const K_LENGTH_OFFSET: i32 = K_TAGGED_SIZE;
-    pub const K_SOURCE_POSITION_TABLE_OFFSET: i32 = Self::K_LENGTH_OFFSET + K_TAGGED_SIZE;
+    pub const K_HANDLER_TABLE_OFFSET: i32 = Self::K_LENGTH_OFFSET + K_TAGGED_SIZE;
+    pub const K_SOURCE_POSITION_TABLE_OFFSET: i32 = Self::K_HANDLER_TABLE_OFFSET + K_TAGGED_SIZE;
     pub const K_CONSTANT_POOL_OFFSET: i32 = Self::K_SOURCE_POSITION_TABLE_OFFSET + K_TAGGED_SIZE;
     pub const K_FRAME_SIZE_OFFSET: i32 = Self::K_CONSTANT_POOL_OFFSET + K_TAGGED_SIZE;
     pub const K_PARAMETER_COUNT_OFFSET: i32 = Self::K_FRAME_SIZE_OFFSET + 4;
@@ -37,6 +38,21 @@ impl BytecodeArray {
     }
 
     #[inline]
+    /// `BytecodeArray::handler_table`
+    pub fn handler_table(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_HANDLER_TABLE_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_handler_table(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_HANDLER_TABLE_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn handler_table_address(self) -> crate::objects::tagged::Address {
+        self.field(Self::K_HANDLER_TABLE_OFFSET)
+    }
+
     pub fn source_position_table(self, heap: &Heap) -> Tagged {
         heap.read_tagged(self.field(Self::K_SOURCE_POSITION_TABLE_OFFSET))
     }
@@ -145,18 +161,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn layout_puts_the_instructions_after_a_40_byte_header() {
+    fn layout_puts_the_instructions_after_a_48_byte_header() {
         assert_eq!(BytecodeArray::K_LENGTH_OFFSET, 8);
-        assert_eq!(BytecodeArray::K_SOURCE_POSITION_TABLE_OFFSET, 16);
-        assert_eq!(BytecodeArray::K_CONSTANT_POOL_OFFSET, 24);
-        assert_eq!(BytecodeArray::K_FRAME_SIZE_OFFSET, 32);
-        assert_eq!(BytecodeArray::K_PARAMETER_COUNT_OFFSET, 36);
-        assert_eq!(BytecodeArray::K_MAX_ARGUMENTS_OFFSET, 38);
-        assert_eq!(BytecodeArray::K_HEADER_SIZE, 40);
-        assert_eq!(BytecodeArray::size_for(0), 40);
-        assert_eq!(BytecodeArray::size_for(1), 48);
-        assert_eq!(BytecodeArray::size_for(8), 48);
-        assert_eq!(BytecodeArray::size_for(9), 56);
+        assert_eq!(BytecodeArray::K_HANDLER_TABLE_OFFSET, 16);
+        assert_eq!(BytecodeArray::K_SOURCE_POSITION_TABLE_OFFSET, 24);
+        assert_eq!(BytecodeArray::K_CONSTANT_POOL_OFFSET, 32);
+        assert_eq!(BytecodeArray::K_FRAME_SIZE_OFFSET, 40);
+        assert_eq!(BytecodeArray::K_PARAMETER_COUNT_OFFSET, 44);
+        assert_eq!(BytecodeArray::K_MAX_ARGUMENTS_OFFSET, 46);
+        assert_eq!(BytecodeArray::K_HEADER_SIZE, 48);
+        assert_eq!(BytecodeArray::size_for(0), 48);
+        assert_eq!(BytecodeArray::size_for(1), 56);
+        assert_eq!(BytecodeArray::size_for(8), 56);
+        assert_eq!(BytecodeArray::size_for(9), 64);
     }
 
     #[test]

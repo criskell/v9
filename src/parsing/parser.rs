@@ -280,7 +280,9 @@ impl Parser {
                 Ok(Statement::Continue { position })
             }
             Token::Function => self.parse_hoistable_declaration(),
-            Token::Switch | Token::Try | Token::With | Token::Throw | Token::Debugger => {
+            Token::Try => self.parse_try_statement(),
+            Token::Throw => self.parse_throw_statement(),
+            Token::Switch | Token::With | Token::Debugger => {
                 Err(self.unexpected_token_with_hint("this statement is not implemented"))
             }
             Token::Class => Err(self.unexpected_token_with_hint("classes are not implemented")),
@@ -288,12 +290,65 @@ impl Parser {
         }
     }
 
-    /// `ParserBase::ParseBlock`
-    fn parse_block(&mut self) -> Result<Statement> {
+    /// `ParserBase::ParseThrowStatement`
+    fn parse_throw_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
+        self.consume(Token::Throw);
+        if self.scanner.has_line_terminator_before_next() {
+            return Err(self.unexpected_token_with_hint("no line break is allowed here"));
+        }
+        let exception = self.parse_expression()?;
+        self.expect_semicolon()?;
+        Ok(Statement::Throw {
+            exception,
+            position,
+        })
+    }
+
+    /// `ParserBase::ParseTryStatement`
+    fn parse_try_statement(&mut self) -> Result<Statement> {
+        let position = self.peek_position();
+        self.consume(Token::Try);
+        let try_block = self.parse_block_body()?;
+
+        if self.peek() != Token::Catch {
+            return Err(self.unexpected_token_with_hint("`finally` is not implemented"));
+        }
+        self.consume(Token::Catch);
+
+        let mut catch_variable = None;
+        if self.peek() == Token::LeftParen {
+            self.consume(Token::LeftParen);
+            let name = self.parse_identifier()?;
+            self.scope_chain.current().declare(&name, VariableMode::Let);
+            catch_variable = Some(name);
+            self.expect(Token::RightParen)?;
+        }
+        let catch_block = self.parse_block_body()?;
+
+        if self.peek() == Token::Finally {
+            return Err(self.unexpected_token_with_hint("`finally` is not implemented"));
+        }
+
+        Ok(Statement::TryCatch {
+            try_block,
+            catch_variable,
+            catch_block,
+            position,
+        })
+    }
+
+    /// `ParserBase::ParseBlock`
+    fn parse_block_body(&mut self) -> Result<Vec<Statement>> {
         self.expect(Token::LeftBrace)?;
         let statements = self.parse_statement_list(Token::RightBrace)?;
         self.expect(Token::RightBrace)?;
+        Ok(statements)
+    }
+
+    fn parse_block(&mut self) -> Result<Statement> {
+        let position = self.peek_position();
+        let statements = self.parse_block_body()?;
         Ok(Statement::Block {
             statements,
             position,

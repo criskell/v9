@@ -89,6 +89,7 @@ impl Isolate {
 
             it::BYTECODE_ARRAY_TYPE => {
                 let array = BytecodeArray::unchecked_cast(object);
+                visit(array.handler_table_address());
                 visit(array.source_position_table_address());
                 visit(array.constant_pool_address());
             }

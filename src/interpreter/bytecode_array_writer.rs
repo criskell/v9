@@ -61,6 +61,11 @@ impl BytecodeArrayWriter {
     }
 
     #[inline]
+    /// `BytecodeArrayWriter::StartBasicBlock`
+    pub fn mark_handler(&mut self) {
+        self.exit_seen_in_block = false;
+    }
+
     pub fn exit_seen_in_block(&self) -> bool {
         self.exit_seen_in_block
     }
