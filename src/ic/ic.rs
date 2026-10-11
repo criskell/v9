@@ -56,9 +56,14 @@ use crate::objects::tagged::Tagged;
 /// How the sites of one kind were resolved.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct SiteStatistics {
-    /// The cached entry answered.
+    /// The site's own cached entry answered.
     pub hits: usize,
-    /// The site had to do the full lookup, and then recorded what it found.
+    /// The site had given up, but the shared stub cache had the pair --
+    /// because another site had resolved it. Counted apart from `hits`
+    /// because it says something different: the *site* did not know, the
+    /// *program* did.
+    pub shared_hits: usize,
+    /// Nothing knew, so the full lookup ran.
     pub misses: usize,
     pub monomorphic_transitions: usize,
     pub polymorphic_transitions: usize,
@@ -68,14 +73,19 @@ pub struct SiteStatistics {
 
 impl SiteStatistics {
     pub fn total(&self) -> usize {
-        self.hits + self.misses
+        self.hits + self.shared_hits + self.misses
+    }
+
+    /// Answered without a lookup, from either cache.
+    pub fn answered(&self) -> usize {
+        self.hits + self.shared_hits
     }
 
     pub fn hit_rate(&self) -> f64 {
         if self.total() == 0 {
             0.0
         } else {
-            self.hits as f64 / self.total() as f64
+            self.answered() as f64 / self.total() as f64
         }
     }
 }
@@ -96,7 +106,7 @@ pub struct ICStatistics {
 
 impl ICStatistics {
     pub fn hits(&self) -> usize {
-        self.property.hits + self.global.hits
+        self.property.answered() + self.global.answered()
     }
 
     pub fn misses(&self) -> usize {
@@ -187,6 +197,18 @@ impl Isolate {
             }
         }
 
+        // The shared table: a site that stopped tracking shapes locally can
+        // still find a handler another site resolved. This is what makes
+        // megamorphic cheaper than uncached rather than equally expensive.
+        if self.ic_state(nexus) == InlineCacheState::Megamorphic {
+            if let Some(handler) = self.stub_cache_get(name, map) {
+                if let Some(value) = self.load_from_handler(receiver, handler) {
+                    self.ic_statistics.property.shared_hits += 1;
+                    return value;
+                }
+            }
+        }
+
         // The slow path: the full lookup, then record what it found.
         self.ic_statistics.property.misses += 1;
         let found = self.lookup_property(receiver, name);
@@ -203,7 +225,7 @@ impl Isolate {
         if let Some(found) = found {
             if found.holder == receiver && found.details.location() == PropertyLocation::Field {
                 let handler = self.handler_for_field(map, found.details);
-                self.update_ic(nexus, map, handler.as_smi());
+                self.update_ic(nexus, map, handler.as_smi(), name);
             }
         }
         value
@@ -240,6 +262,15 @@ impl Isolate {
             }
         }
 
+        if self.ic_state(nexus) == InlineCacheState::Megamorphic {
+            if let Some(handler) = self.stub_cache_get(name, map) {
+                if self.store_through_handler(receiver, handler, value) {
+                    self.ic_statistics.property.shared_hits += 1;
+                    return true;
+                }
+            }
+        }
+
         self.ic_statistics.property.misses += 1;
         let existing = self.lookup_own_property(receiver, name);
         let stored = self.set_property(receiver, name, value);
@@ -253,7 +284,7 @@ impl Isolate {
             if let Some(existing) = existing {
                 if existing.details.location() == PropertyLocation::Field {
                     let handler = self.handler_for_field(map, existing.details);
-                    self.update_ic(nexus, map, handler.as_smi());
+                    self.update_ic(nexus, map, handler.as_smi(), name);
                 }
             }
         }
@@ -442,9 +473,9 @@ impl Isolate {
     // -----------------------------------------------------------------------
 
     /// `IC::UpdateCaches`: move the site one step along the lattice.
-    fn update_ic(&mut self, nexus: FeedbackNexus, map: Map, handler: Tagged) {
+    fn update_ic(&mut self, nexus: FeedbackNexus, map: Map, handler: Tagged, name: Tagged) {
         let before = self.ic_state(nexus);
-        self.update_ic_state(nexus, map, handler);
+        self.update_ic_state(nexus, map, handler, name);
         if self.trace_ic_enabled {
             let after = self.ic_state(nexus);
             if before != after {
@@ -462,30 +493,100 @@ impl Isolate {
         }
     }
 
-    fn update_ic_state(&mut self, nexus: FeedbackNexus, map: Map, handler: Tagged) {
+    fn update_ic_state(&mut self, nexus: FeedbackNexus, map: Map, handler: Tagged, name: Tagged) {
         match self.ic_state(nexus) {
             InlineCacheState::Uninitialized => {
                 // `IC::ConfigureVectorState(MONOMORPHIC)`
                 nexus.configure_monomorphic(&mut self.heap, map, handler);
                 self.ic_statistics.property.monomorphic_transitions += 1;
             }
-            InlineCacheState::Monomorphic => {
-                self.update_polymorphic_ic(nexus, map, handler);
+            InlineCacheState::Monomorphic | InlineCacheState::Polymorphic => {
+                self.update_polymorphic_ic(nexus, map, handler, name);
             }
-            InlineCacheState::Polymorphic => {
-                self.update_polymorphic_ic(nexus, map, handler);
+            // Megamorphic is terminal for the *site* -- it stays given up,
+            // which is what stops the state oscillating. But the pair still
+            // goes into the shared table, so the next site to ask about it
+            // does not have to look it up again.
+            InlineCacheState::Megamorphic => {
+                self.update_megamorphic_cache(map, name, handler);
             }
-            // Megamorphic is terminal: a site that has given up stays given
-            // up, which is what stops the state from oscillating.
-            InlineCacheState::Megamorphic
-            | InlineCacheState::Generic
-            | InlineCacheState::NoFeedback => {}
+            InlineCacheState::Generic | InlineCacheState::NoFeedback => {}
         }
+    }
+
+    /// `IC::UpdateMegamorphicCache`
+    fn update_megamorphic_cache(&mut self, map: Map, name: Tagged, handler: Tagged) {
+        let Some(name) = self.as_internalized_name(name) else {
+            return;
+        };
+        let hash = name.raw_hash_field(&self.heap);
+        debug_assert!(
+            self.heap.in_read_only_space(map.object())
+                && self.heap.in_read_only_space(name.object()),
+            "the shared table compares by identity, so its keys must not move"
+        );
+        self.stub_cache.set(name, hash, map, handler);
+    }
+
+    /// `IC::CopyICToMegamorphicCache`.
+    ///
+    /// Going megamorphic does *not* throw away what the site learned: every
+    /// pair it was tracking is promoted into the shared table first, so the
+    /// knowledge survives even though the site stops holding it.
+    fn copy_ic_to_megamorphic_cache(&mut self, nexus: FeedbackNexus, name: Tagged) {
+        let pairs = nexus.extract_maps_and_handlers(
+            &self.heap,
+            self.uninitialized_sentinel(),
+            self.megamorphic_sentinel(),
+        );
+        for pair in pairs {
+            self.update_megamorphic_cache(pair.map, name, pair.handler);
+        }
+    }
+
+    /// `StubCache::Get`, with the name's hash looked up for the caller.
+    fn stub_cache_get(&mut self, name: Tagged, map: Map) -> Option<Tagged> {
+        let name = self.as_internalized_name(name)?;
+        let hash = name.raw_hash_field(&self.heap);
+        self.stub_cache.get(name, hash, map)
+    }
+
+    /// The shared table keys on identity, so only an internalized name can
+    /// be used -- two equal non-internalized strings are different objects.
+    fn as_internalized_name(&self, name: Tagged) -> Option<crate::objects::name::Name> {
+        let string = crate::objects::string::String::try_cast(&self.heap, name)?;
+        if string.is_internalized(&self.heap) {
+            Some(string.as_name())
+        } else {
+            None
+        }
+    }
+
+    /// Counters for the shared table, which are kept apart from the per-site
+    /// ones because a hit here means a *different* site had already resolved
+    /// the pair.
+    pub fn stub_cache_statistics(&self) -> (usize, usize, usize, usize) {
+        (
+            self.stub_cache.primary_hits,
+            self.stub_cache.secondary_hits,
+            self.stub_cache.misses,
+            self.stub_cache.updates,
+        )
+    }
+
+    pub fn stub_cache_occupancy(&self) -> (usize, usize) {
+        self.stub_cache.occupancy()
     }
 
     /// `IC::UpdatePolymorphicIC`: add a (map, handler) pair, or go
     /// megamorphic if there are already too many.
-    fn update_polymorphic_ic(&mut self, nexus: FeedbackNexus, map: Map, handler: Tagged) {
+    fn update_polymorphic_ic(
+        &mut self,
+        nexus: FeedbackNexus,
+        map: Map,
+        handler: Tagged,
+        name: Tagged,
+    ) {
         let mut pairs = nexus.extract_maps_and_handlers(
             &self.heap,
             self.uninitialized_sentinel(),
@@ -504,8 +605,13 @@ impl Isolate {
             existing.handler = handler;
         } else {
             if pairs.len() >= K_MAX_POLYMORPHIC_MAP_COUNT {
+                // Promote everything the site learned into the shared table
+                // before giving up on holding it locally, then add the pair
+                // that pushed it over.
+                self.copy_ic_to_megamorphic_cache(nexus, name);
                 let sentinel = self.megamorphic_sentinel();
                 nexus.configure_megamorphic(&mut self.heap, sentinel);
+                self.update_megamorphic_cache(map, name, handler);
                 self.ic_statistics.property.megamorphic_transitions += 1;
                 return;
             }

@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 449 tests
+$ cargo test        # 462 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -52,9 +52,13 @@ copying garbage collector.
   LoadProperty slot 0: Monomorphic   -> Polymorphic  (map 0xdb8, 2 tracked)
   LoadProperty slot 0: Polymorphic   -> Megamorphic  (map 0xf08, 0 tracked)
 
-  property (map + field)      999 hits     22 misses   97.8% hit rate
-  global   (cell)            6994 hits     17 misses   99.8% hit rate
+  property   999 site hits     0 shared hits    22 misses
+  global    6994 site hits     0 shared hits    17 misses
 ```
+
+A *site hit* means that site had seen the shape; a *shared hit* means it had
+given up but another site had already resolved the same `(map, name)` pair,
+from the stub cache.
 
 Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
 
@@ -81,6 +85,11 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
   been assigned once (`Constant`), several values of one type
   (`ConstantType`) or anything else (`Mutable`), which is what would let an
   optimizing compiler inline it.
+* **A stub cache.** The isolate-wide `(map, name) -> handler` table a
+  megamorphic site consults before giving up: two tables, no probe sequence,
+  and an evicted entry demoted to the secondary table rather than dropped.
+  Going megamorphic promotes everything the site had learned into it, so the
+  knowledge survives the site forgetting it.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
   functions, recursion, objects, property access, method calls, `typeof`.

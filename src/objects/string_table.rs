@@ -85,6 +85,10 @@ impl Isolate {
             self.roots.internalized_two_byte_string_map
         };
         let string = self.allocate_string_raw(s, map, one_byte, AllocationType::ReadOnly);
+        // Compute the hash now rather than on first use. V8's string table is
+        // keyed by hash so it has one anyway; `vx` needs it because the stub
+        // cache hashes names, and that lookup has nowhere to mutate from.
+        string.as_name().hash(&mut self.heap);
         self.string_table.insert(s, string.tagged());
         string
     }

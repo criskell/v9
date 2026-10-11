@@ -486,3 +486,144 @@ fn a_global_write_through_global_this_is_seen_by_a_global_read() {
         "both paths must reach the same cell"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The shared stub cache
+// ---------------------------------------------------------------------------
+
+/// A script whose single load site is fed `shapes` distinct shapes, then the
+/// same shapes again `repeats` times each.
+fn megamorphic_script(shapes: usize, repeats: usize) -> String {
+    let mut source = String::from("function read(o) { return o.x; }\nvar total = 0;\n");
+    // Build each shape by hand so the properties, and therefore the maps,
+    // are distinct.
+    for shape in 0..shapes {
+        source.push_str(&format!("var o{shape} = {{"));
+        for property in 0..shape {
+            source.push_str(&format!("p{property}: 0, "));
+        }
+        source.push_str("x: 1};\n");
+    }
+    for _ in 0..repeats {
+        for shape in 0..shapes {
+            source.push_str(&format!("total += read(o{shape});\n"));
+        }
+    }
+    source.push_str("total");
+    source
+}
+
+#[test]
+fn a_megamorphic_site_is_answered_by_the_shared_table() {
+    // Six shapes is past the four a site will track, so it gives up -- but
+    // the pairs are still resolvable, from the table every site shares.
+    let isolate = run(&megamorphic_script(6, 20));
+    let property = isolate.ic_statistics().property;
+
+    assert_eq!(
+        property.megamorphic_transitions, 1,
+        "six shapes should make the site give up: {property:?}"
+    );
+    assert!(
+        property.shared_hits > 100,
+        "the repeats should be answered by the shared table: {property:?}"
+    );
+    assert_eq!(
+        property.hits, 0,
+        "the site itself holds nothing once it is megamorphic: {property:?}"
+    );
+    // The misses are accounted for exactly, and none of them is a repeated
+    // load: 21 property stores while the six literals are built (a store
+    // that *adds* a property is never cached) plus one per shape while the
+    // site was still climbing the lattice.
+    assert_eq!(
+        property.misses,
+        21 + 6,
+        "every remaining miss should be a literal's store or a first \
+         sighting, not a repeated load: {property:?}"
+    );
+}
+
+#[test]
+fn going_megamorphic_promotes_what_the_site_had_learned() {
+    // `IC::CopyICToMegamorphicCache`. The four shapes the site was tracking
+    // are copied into the shared table *before* it stops tracking them, so
+    // the knowledge is not thrown away.
+    let isolate = run(&megamorphic_script(5, 1));
+    let (primary, secondary, _, updates) = isolate.stub_cache_statistics();
+    let _ = (primary, secondary);
+    assert!(
+        updates >= 5,
+        "the four tracked shapes plus the fifth should all have been \
+         written to the shared table, not just the fifth: {updates} updates"
+    );
+}
+
+#[test]
+fn the_shared_table_is_empty_until_a_site_gives_up() {
+    // A monomorphic site keeps its knowledge locally; nothing is shared.
+    let isolate = run("var o = { x: 1 }; var t = 0; t += o.x; t += o.x; t");
+    let (_, _, _, updates) = isolate.stub_cache_statistics();
+    assert_eq!(
+        updates, 0,
+        "a site that is coping on its own should not touch the shared table"
+    );
+    assert_eq!(isolate.stub_cache_occupancy(), (0, 0));
+}
+
+#[test]
+fn the_shared_table_distinguishes_shapes() {
+    // Every pair in the table is (map, name). If it keyed on the name alone,
+    // a handler for one shape would answer for another and read the wrong
+    // field -- so the values have to come back correct.
+    let mut isolate = Isolate::new();
+    let value = isolate
+        .run_script(
+            "function read(o) { return o.x; }
+             var a = { x: 1 };
+             var b = { p0: 0, x: 2 };
+             var c = { p0: 0, p1: 0, x: 3 };
+             var d = { p0: 0, p1: 0, p2: 0, x: 4 };
+             var e = { p0: 0, p1: 0, p2: 0, p3: 0, x: 5 };
+             var f = { p0: 0, p1: 0, p2: 0, p3: 0, p4: 0, x: 6 };
+             var total = 0;
+             var i = 0;
+             while (i < 3) {
+               total += read(a) + read(b) + read(c) + read(d) + read(e) + read(f);
+               i = i + 1;
+             }
+             total",
+        )
+        .unwrap();
+    // Each round reads 1+2+3+4+5+6 = 21, three rounds = 63.
+    assert_eq!(
+        isolate.to_string(value),
+        "63",
+        "a megamorphic site must still read the right field for each shape"
+    );
+    assert!(isolate.ic_statistics().property.shared_hits > 0);
+}
+
+#[test]
+fn a_shared_hit_means_another_site_had_resolved_the_pair() {
+    // Two different load sites on the same name. Once the first has filled
+    // the table, the second should find the pairs already there.
+    let isolate = run("function first(o) { return o.x; }
+         function second(o) { return o.x; }
+         var shapes = 0;
+         var a = { x: 1 };
+         var b = { p0: 0, x: 1 };
+         var c = { p0: 0, p1: 0, x: 1 };
+         var d = { p0: 0, p1: 0, p2: 0, x: 1 };
+         var e = { p0: 0, p1: 0, p2: 0, p3: 0, x: 1 };
+         shapes += first(a) + first(b) + first(c) + first(d) + first(e);
+         shapes += second(a) + second(b) + second(c) + second(d) + second(e);
+         shapes");
+    let (_, _, _, updates) = isolate.stub_cache_statistics();
+    assert!(updates > 0, "the first site should have filled the table");
+    // The second site climbs its own lattice and only consults the table
+    // once it too gives up -- so what matters is that the table is shared
+    // and non-empty, which the occupancy shows.
+    let (primary, secondary) = isolate.stub_cache_occupancy();
+    assert!(primary + secondary >= 5, "{primary} + {secondary}");
+}

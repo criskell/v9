@@ -144,8 +144,10 @@ fn trace_ic(_path: &str, source: &str) {
         ("global   (cell)       ", statistics.global),
     ] {
         println!(
-            "  {label}  {:>7} hits  {:>5} misses  {:>5.1}% hit rate",
+            "  {label}  {:>7} site hits  {:>5} shared hits  {:>5} misses  \
+             {:>5.1}% answered without a lookup",
             site.hits,
+            site.shared_hits,
             site.misses,
             site.hit_rate() * 100.0
         );
@@ -156,6 +158,16 @@ fn trace_ic(_path: &str, source: &str) {
         statistics.property.polymorphic_transitions,
         statistics.property.megamorphic_transitions
     );
+
+    // The shared table is counted apart: a hit here means a *different* site
+    // had already resolved the same (map, name) pair.
+    let (primary, secondary, misses, updates) = isolate.stub_cache_statistics();
+    let (primary_used, secondary_used) = isolate.stub_cache_occupancy();
+    println!(
+        "  stub cache: {} primary hits, {} secondary hits, {} misses, {} updates",
+        primary, secondary, misses, updates
+    );
+    println!("              {primary_used}/4096 primary slots, {secondary_used}/1024 secondary");
 }
 
 /// `--print-bytecode`

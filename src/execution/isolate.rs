@@ -60,6 +60,10 @@ pub struct Isolate {
     /// from a cache-shaped data structure nothing reads.
     pub(crate) ic_statistics: crate::ic::ic::ICStatistics,
 
+    /// `Isolate::stub_cache_`: the shared `(map, name) -> handler` table a
+    /// megamorphic site consults before giving up.
+    pub(crate) stub_cache: crate::ic::stub_cache::StubCache,
+
     /// `--trace-ic`. V8 logs each transition as it happens rather than
     /// dumping the vectors at the end, which is the only way to see the
     /// caches inside functions whose closures nothing retains.
@@ -88,6 +92,7 @@ impl Isolate {
             shared_function_infos: Vec::new(),
             output: Vec::new(),
             ic_statistics: Default::default(),
+            stub_cache: crate::ic::stub_cache::StubCache::new(),
             trace_ic_enabled: false,
             ic_trace: Vec::new(),
             script_function: Tagged::ZERO,
@@ -108,6 +113,7 @@ impl Isolate {
             shared_function_infos: Vec::new(),
             output: Vec::new(),
             ic_statistics: Default::default(),
+            stub_cache: crate::ic::stub_cache::StubCache::new(),
             trace_ic_enabled: false,
             ic_trace: Vec::new(),
             script_function: Tagged::ZERO,

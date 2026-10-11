@@ -155,6 +155,7 @@ which is the argument for reading it.
 | `src/ic/handler-configuration.h` | `src/ic/handler_configuration.rs` | [T] the Smi handler bit layout |
 | `src/ic/ic.h`, `ic.cc` | `src/ic/ic.rs` | [A] the monomorphic/polymorphic/megamorphic lattice, plus the global ICs |
 | `src/objects/property-cell.h` | `src/objects/property_cell.rs` | [T] layout; [A] the cell-type lattice |
+| `src/ic/stub-cache.h`, `.cc` | `src/ic/stub_cache.rs` | [T] table sizes and both hash functions; [A] the victim-cache eviction |
 | `src/parsing/token.h` | `src/parsing/token.rs` | [T] full token list, precedences and enum order |
 | `src/parsing/scanner.h`, `scanner.cc` | `src/parsing/scanner.rs` | [A] `c0_`, two-token lookahead, ASI line tracking |
 | `src/ast/ast.h` | `src/ast/ast.rs` | [R] node kinds follow `AST_NODE_LIST`; enums replace the class hierarchy |
@@ -164,7 +165,6 @@ which is the argument for reading it.
 
 | V8 | Would become | Notes |
 | --- | --- | --- |
-| `src/ic/stub-cache.h` | `src/ic/` | the global `(map, name) -> handler` hash table a megamorphic site consults before giving up |
 | `src/objects/contexts.h`, `src/ast/scopes.cc` | `src/objects/contexts.rs` | contexts, and therefore closures over locals |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
 | `src/objects/js-array.h`, `elements.cc` | `src/objects/` | real arrays with `length` and elements kinds |
@@ -277,9 +277,15 @@ survive the arena being reallocated — which is why growing old space is a
 * **`PropertyCell::dependent_code` is always empty.** It exists so that
   assigning to a global that an optimizing compiler had inlined as a
   constant can throw that code away. There is no such code.
-* **No stub cache.** In V8 a megamorphic site still consults a global
-  `(map, name) -> handler` hash table before falling back to the full
-  lookup. In `vx` megamorphic means the full lookup, every time.
+* **The stub cache holds only Smi handlers**, like the per-site caches, so
+  the pairs it cannot describe are the same ones: a prototype load, a
+  transitioning store. V8's table holds any handler.
+* **The stub cache is never cleared.** V8 clears it when maps move; in `vx`
+  a map and an internalized name both live in read-only space and a handler
+  is a Smi, so no entry can be invalidated by a collection and the table
+  needs neither tracing nor clearing. The assertion in
+  `update_megamorphic_cache` states that, where V8 asserts only the weaker
+  "not in the young generation".
 
 ### What an inline cache buys, measured
 
@@ -291,14 +297,29 @@ shape:
   LoadProperty slot 0: Monomorphic -> Polymorphic (map 0xdf0, 2 tracked)
   LoadProperty slot 0: Polymorphic -> Megamorphic (map 0xf40, 0 tracked)
 
-  property (map + field)      999 hits     22 misses   97.8% hit rate
-  global   (cell)            6994 hits     17 misses   99.8% hit rate
+  property   999 site hits      0 shared hits    22 misses
+  global    6994 site hits      0 shared hits    17 misses
 ```
 
-The two are counted apart because the mechanisms are different: a property
-site caches a map and climbs the lattice, a global site caches a cell and has
-nowhere to climb to. Summing them would hide which one is working. The misses
-that remain are one per site, plus the stores that add a property.
+Three tiers, counted apart, because each says something different:
+
+* a **site hit** means that site had seen this shape before;
+* a **shared hit** means the site had given up, but some *other* site had
+  already resolved the same `(map, name)` pair -- that is the stub cache;
+* a **miss** means nothing knew.
+
+Summing them would hide which tier is working. On a site deliberately fed
+six shapes and then hammered, the split is the whole story:
+
+```
+  property     0 site hits    200 shared hits   724 misses
+  stub cache: 200 primary hits, 0 secondary hits, 1 misses, 6 updates
+```
+
+Zero site hits, because the site is megamorphic and holds nothing. Two
+hundred shared hits, because the pairs were all in the table. The 724 misses
+are the property *stores* that build the objects, which are uncacheable by
+construction.
 
 ### What the offsets do and do not catch
 
