@@ -5,6 +5,17 @@ use crate::objects::tagged::Tagged;
 
 object_type!(JSFunction);
 
+/// `JSFunction::PrototypeOrInitialMapData`
+#[derive(Default)]
+pub struct PrototypeOrInitialMapData {
+    pub instance_prototype: Tagged,
+    pub non_instance_prototype: Tagged,
+    pub initial_map: Option<crate::objects::map::Map>,
+    pub has_instance_prototype: bool,
+    pub has_non_instance_prototype: bool,
+    pub has_initial_map: bool,
+}
+
 impl JSFunction {
     pub const K_PROPERTIES_OR_HASH_OFFSET: i32 = JSObject::K_PROPERTIES_OR_HASH_OFFSET;
     pub const K_ELEMENTS_OFFSET: i32 = JSObject::K_ELEMENTS_OFFSET;
@@ -42,11 +53,49 @@ impl JSFunction {
         self.field(Self::K_PROTOTYPE_OR_INITIAL_MAP_OFFSET)
     }
 
+    /// `JSFunction::TryGetPrototypeOrInitialMap`
+    pub fn try_get_prototype_or_initial_map(
+        self,
+        heap: &Heap,
+    ) -> Option<PrototypeOrInitialMapData> {
+        use crate::objects::instance_type as it;
+        use crate::objects::r#struct::Tuple2;
+
+        let mut proto_or_map = self.prototype_or_initial_map(heap);
+        if heap.is_the_hole(proto_or_map) {
+            return None;
+        }
+        let mut out = PrototypeOrInitialMapData::default();
+        let Some(object) = proto_or_map.to_strong_heap_object() else {
+            return None;
+        };
+        if heap.instance_type(object) == it::TUPLE2_TYPE {
+            let tuple = Tuple2::unchecked_cast(object);
+            out.has_non_instance_prototype = true;
+            out.non_instance_prototype = tuple.value2(heap);
+            proto_or_map = tuple.value1(heap);
+        }
+        let Some(object) = proto_or_map.to_strong_heap_object() else {
+            return Some(out);
+        };
+        if heap.instance_type(object) == it::MAP_TYPE {
+            let initial_map = crate::objects::map::Map::unchecked_cast(object);
+            out.instance_prototype = initial_map.prototype(heap);
+            out.has_initial_map = true;
+            out.initial_map = Some(initial_map);
+            out.has_instance_prototype = !heap.is_null(out.instance_prototype);
+            return Some(out);
+        }
+        out.instance_prototype = proto_or_map;
+        out.has_instance_prototype = true;
+        Some(out)
+    }
+
     /// `JSFunction::has_initial_map`
     #[inline]
     pub fn has_initial_map(self, heap: &Heap) -> bool {
-        match self.prototype_or_initial_map(heap).to_strong_heap_object() {
-            Some(object) => heap.instance_type(object) == crate::objects::instance_type::MAP_TYPE,
+        match self.try_get_prototype_or_initial_map(heap) {
+            Some(data) => data.has_initial_map,
             None => false,
         }
     }
@@ -54,12 +103,44 @@ impl JSFunction {
     /// `JSFunction::initial_map`
     #[inline]
     pub fn initial_map(self, heap: &Heap) -> crate::objects::map::Map {
-        debug_assert!(self.has_initial_map(heap));
-        crate::objects::map::Map::unchecked_cast(
-            self.prototype_or_initial_map(heap)
-                .to_strong_heap_object()
-                .unwrap(),
-        )
+        self.try_get_prototype_or_initial_map(heap)
+            .and_then(|data| data.initial_map)
+            .expect("an initial map")
+    }
+
+    /// `JSFunction::has_prototype`
+    #[inline]
+    pub fn has_prototype(self, heap: &Heap) -> bool {
+        self.try_get_prototype_or_initial_map(heap).is_some()
+    }
+
+    /// `JSFunction::has_non_instance_prototype`
+    #[inline]
+    pub fn has_non_instance_prototype(self, heap: &Heap) -> bool {
+        match self.try_get_prototype_or_initial_map(heap) {
+            Some(data) => data.has_non_instance_prototype,
+            None => false,
+        }
+    }
+
+    /// `JSFunction::prototype`
+    #[inline]
+    pub fn prototype(self, heap: &Heap) -> Tagged {
+        let data = self
+            .try_get_prototype_or_initial_map(heap)
+            .expect("a prototype");
+        if data.has_non_instance_prototype {
+            return data.non_instance_prototype;
+        }
+        data.instance_prototype
+    }
+
+    /// `JSFunction::instance_prototype`
+    #[inline]
+    pub fn instance_prototype(self, heap: &Heap) -> Option<Tagged> {
+        let data = self.try_get_prototype_or_initial_map(heap)?;
+        data.has_instance_prototype
+            .then_some(data.instance_prototype)
     }
 
     #[inline]
@@ -99,38 +180,90 @@ impl JSFunction {
 }
 
 impl crate::execution::isolate::Isolate {
-    /// `JSFunction::GetPrototype`
+    /// `JSFunction::instance_prototype`
     pub(crate) fn function_prototype_object(
         &mut self,
         function: JSFunction,
     ) -> crate::objects::js_objects::JSObject {
         use crate::objects::js_objects::JSObject;
-        let slot = function.prototype_or_initial_map(&self.heap);
-        if let Some(object) = slot.to_strong_heap_object() {
-            let instance_type = self.heap.instance_type(object);
-            if instance_type == crate::objects::instance_type::MAP_TYPE {
-                let map = crate::objects::map::Map::unchecked_cast(object);
-                return JSObject::unchecked_cast(
-                    map.prototype(&self.heap)
-                        .to_strong_heap_object()
-                        .expect("an initial map has a prototype"),
-                );
-            }
-            if crate::objects::instance_type::is_js_receiver(instance_type) {
-                return JSObject::unchecked_cast(object);
+        if let Some(prototype) = function.instance_prototype(&self.heap) {
+            if let Some(object) = prototype.to_strong_heap_object() {
+                if crate::objects::instance_type::is_js_receiver(
+                    self.heap.instance_type(object),
+                ) {
+                    return JSObject::unchecked_cast(object);
+                }
             }
         }
 
         let scope = self.handle_scope();
         let function_handle = self.create_object_handle(function.object());
-        let prototype = self.new_js_object();
+        let prototype = self.new_function_prototype();
         let prototype_handle = self.create_object_handle(prototype.object());
         let function = JSFunction::unchecked_cast(function_handle.object(self));
         let prototype_value = prototype_handle.get(self);
-        function.set_prototype_or_initial_map(&mut self.heap, prototype_value);
+        self.set_function_prototype(function, prototype_value);
         let prototype = JSObject::unchecked_cast(prototype_handle.object(self));
         self.close_handle_scope(scope);
         prototype
+    }
+
+    /// `Factory::NewFunctionPrototype`
+    fn new_function_prototype(&mut self) -> crate::objects::js_objects::JSObject {
+        self.new_js_object()
+    }
+
+    /// `JSFunction::SetPrototype`
+    pub(crate) fn set_function_prototype(&mut self, function: JSFunction, value: Tagged) {
+        use crate::objects::r#struct::Tuple2;
+
+        let is_receiver = match value.to_strong_heap_object() {
+            Some(object) => {
+                crate::objects::instance_type::is_js_receiver(self.heap.instance_type(object))
+            }
+            None => false,
+        };
+
+        if !is_receiver {
+            let data = function.try_get_prototype_or_initial_map(&self.heap);
+            if let Some(data) = &data {
+                if data.has_non_instance_prototype {
+                    let tuple = Tuple2::unchecked_cast(
+                        function
+                            .prototype_or_initial_map(&self.heap)
+                            .to_strong_heap_object()
+                            .expect("a Tuple2"),
+                    );
+                    tuple.set_value2(&mut self.heap, value);
+                    return;
+                }
+            }
+            let old_initial_map = data.and_then(|data| data.initial_map);
+            let new_instance_prototype = self.roots.object_prototype;
+            let new_prototype_or_initial_map = match old_initial_map {
+                Some(map) if map.prototype(&self.heap) == new_instance_prototype => map.tagged(),
+                _ => new_instance_prototype,
+            };
+
+            let scope = self.handle_scope();
+            let function_handle = self.create_object_handle(function.object());
+            let tuple = self.new_tuple2(new_prototype_or_initial_map, value);
+            let tuple = self.create_object_handle(tuple.object());
+            let function = JSFunction::unchecked_cast(function_handle.object(self));
+            let tuple_value = tuple.get(self);
+            function.set_prototype_or_initial_map(&mut self.heap, tuple_value);
+            self.close_handle_scope(scope);
+            return;
+        }
+
+        if function.has_initial_map(&self.heap) {
+            let map = function.initial_map(&self.heap);
+            if map.prototype(&self.heap) == value {
+                function.set_prototype_or_initial_map(&mut self.heap, map.tagged());
+                return;
+            }
+        }
+        function.set_prototype_or_initial_map(&mut self.heap, value);
     }
 
     /// `JSFunction::EnsureHasInitialMap`
@@ -150,16 +283,42 @@ impl crate::execution::isolate::Isolate {
 
         let map = self.new_js_object_map_for_constructor();
         let map_handle = self.create_object_handle(map.object());
+        let function = JSFunction::unchecked_cast(function_handle.object(self));
         let prototype_value = prototype_handle.get(self);
         let map = Map::unchecked_cast(map_handle.object(self));
-        map.set_prototype(&mut self.heap, prototype_value);
-
-        let function = JSFunction::unchecked_cast(function_handle.object(self));
-        let map_value = map_handle.get(self);
-        function.set_prototype_or_initial_map(&mut self.heap, map_value);
+        self.set_initial_map(function, map, prototype_value);
         let map = Map::unchecked_cast(map_handle.object(self));
         self.close_handle_scope(scope);
         map
+    }
+
+    /// `JSFunction::SetInitialMap`
+    pub(crate) fn set_initial_map(
+        &mut self,
+        function: JSFunction,
+        initial_map: crate::objects::map::Map,
+        prototype: Tagged,
+    ) {
+        use crate::objects::r#struct::Tuple2;
+        if initial_map.prototype(&self.heap) != prototype {
+            initial_map.set_prototype(&mut self.heap, prototype);
+        }
+
+        let data = function.try_get_prototype_or_initial_map(&self.heap);
+        let non_instance = data
+            .map(|data| data.has_non_instance_prototype)
+            .unwrap_or(false);
+        if non_instance {
+            let tuple = Tuple2::unchecked_cast(
+                function
+                    .prototype_or_initial_map(&self.heap)
+                    .to_strong_heap_object()
+                    .expect("a Tuple2"),
+            );
+            tuple.set_value1(&mut self.heap, initial_map.tagged());
+        } else {
+            function.set_prototype_or_initial_map(&mut self.heap, initial_map.tagged());
+        }
     }
 
     /// `Builtins::Construct`

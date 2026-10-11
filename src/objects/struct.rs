@@ -6,6 +6,49 @@ object_type!(
     AccessorPair
 );
 
+object_type!(
+    /// `Tuple2`
+    Tuple2
+);
+
+impl Tuple2 {
+    pub const K_VALUE1_OFFSET: i32 = crate::common::globals::K_TAGGED_SIZE;
+    pub const K_VALUE2_OFFSET: i32 = Self::K_VALUE1_OFFSET + crate::common::globals::K_TAGGED_SIZE;
+    pub const K_SIZE: i32 = Self::K_VALUE2_OFFSET + crate::common::globals::K_TAGGED_SIZE;
+
+    /// `Tuple2::value1`
+    #[inline]
+    pub fn value1(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_VALUE1_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_value1(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_VALUE1_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn value1_address(self) -> Address {
+        self.field(Self::K_VALUE1_OFFSET)
+    }
+
+    /// `Tuple2::value2`
+    #[inline]
+    pub fn value2(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_VALUE2_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_value2(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_VALUE2_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn value2_address(self) -> Address {
+        self.field(Self::K_VALUE2_OFFSET)
+    }
+}
+
 impl AccessorPair {
     pub const K_GETTER_OFFSET: i32 = crate::common::globals::K_TAGGED_SIZE;
     pub const K_SETTER_OFFSET: i32 = Self::K_GETTER_OFFSET + crate::common::globals::K_TAGGED_SIZE;

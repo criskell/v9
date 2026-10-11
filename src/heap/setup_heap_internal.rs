@@ -36,6 +36,9 @@ impl Isolate {
                 crate::objects::r#struct::AccessorPair::K_SIZE,
             )
             .tagged();
+        self.roots.tuple2_map = self
+            .new_bare_map(TUPLE2_TYPE, crate::objects::r#struct::Tuple2::K_SIZE)
+            .tagged();
         self.roots.enum_cache_map = self
             .new_bare_map(
                 ENUM_CACHE_TYPE,

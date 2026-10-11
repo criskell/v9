@@ -591,8 +591,9 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::TestInstanceOf => {
-                    let message = self.new_string("`instanceof` is not implemented").tagged();
-                    return Err(Thrown(message));
+                    let object = self.read_register(frame, register_operand(self, 0));
+                    let value = self.instance_of(object, self.accumulator(frame))?;
+                    self.set_accumulator(frame, value);
                 }
 
                 // -- literals ---------------------------------------------

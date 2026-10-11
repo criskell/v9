@@ -407,6 +407,29 @@ impl Isolate {
         info
     }
 
+    /// `Factory::NewTuple2`
+    pub fn new_tuple2(
+        &mut self,
+        value1: Tagged,
+        value2: Tagged,
+    ) -> crate::objects::r#struct::Tuple2 {
+        use crate::objects::r#struct::Tuple2;
+        let scope = self.handle_scope();
+        let value1 = self.create_handle(value1);
+        let value2 = self.create_handle(value2);
+        let object = self
+            .allocate_raw_with_retry_or_fail(Tuple2::K_SIZE as usize, AllocationType::Young);
+        let map = self.roots.tuple2_map.to_strong_heap_object().unwrap();
+        self.heap.set_map(object, map);
+        let tuple = Tuple2::unchecked_cast(object);
+        let value1 = value1.get(self);
+        let value2 = value2.get(self);
+        tuple.set_value1(&mut self.heap, value1);
+        tuple.set_value2(&mut self.heap, value2);
+        self.close_handle_scope(scope);
+        tuple
+    }
+
     /// `ClassBoilerplate::New`
     pub fn new_class_boilerplate(
         &mut self,
@@ -649,7 +672,7 @@ impl Isolate {
         let shared_value = shared_handle.get(self);
         function.set_shared_function_info(&mut self.heap, shared_value);
         function.set_context(&mut self.heap, self.roots.undefined_value);
-        function.set_prototype_or_initial_map(&mut self.heap, self.roots.undefined_value);
+        function.set_prototype_or_initial_map(&mut self.heap, self.roots.the_hole_value);
         if is_native {
             function.set_feedback_vector(&mut self.heap, self.roots.undefined_value);
         } else {

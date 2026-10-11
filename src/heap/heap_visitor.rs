@@ -57,6 +57,12 @@ impl Isolate {
                 visit(pair.getter_address());
                 visit(pair.setter_address());
             }
+            it::TUPLE2_TYPE => {
+                use crate::objects::r#struct::Tuple2;
+                let tuple = Tuple2::unchecked_cast(object);
+                visit(tuple.value1_address());
+                visit(tuple.value2_address());
+            }
 
             it::ENUM_CACHE_TYPE => {
                 use crate::objects::descriptor_array::EnumCache;

@@ -637,3 +637,112 @@ mod tests {
         assert_eq!(isolate.to_string(negative_zero), "0");
     }
 }
+
+impl crate::execution::isolate::Isolate {
+    /// `Object::InstanceOf`
+    pub(crate) fn instance_of(
+        &mut self,
+        object: Tagged,
+        callable: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
+        let is_receiver = match callable.to_strong_heap_object() {
+            Some(holder) => {
+                crate::objects::instance_type::is_js_receiver(self.heap.instance_type(holder))
+            }
+            None => false,
+        };
+        if !is_receiver {
+            let message = self
+                .new_string("Right-hand side of 'instanceof' is not an object")
+                .tagged();
+            return Err(Thrown(message));
+        }
+        if !self.is_callable_value(callable) {
+            let message = self
+                .new_string("Right-hand side of 'instanceof' is not callable")
+                .tagged();
+            return Err(Thrown(message));
+        }
+        self.ordinary_has_instance(callable, object)
+    }
+
+    /// `Object::OrdinaryHasInstance`
+    pub(crate) fn ordinary_has_instance(
+        &mut self,
+        callable: Tagged,
+        object: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
+        if !self.is_callable_value(callable) {
+            return Ok(self.boolean_value(false));
+        }
+        let Some(receiver) = object.to_strong_heap_object() else {
+            return Ok(self.boolean_value(false));
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver)) {
+            return Ok(self.boolean_value(false));
+        }
+
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(receiver);
+        let function = crate::objects::js_function::JSFunction::unchecked_cast(
+            callable.to_strong_heap_object().expect("a callable"),
+        );
+        let prototype = self.function_prototype_getter(function);
+        let prototype_handle = self.create_handle(prototype);
+        let receiver = object_handle.object(self);
+        let prototype = prototype_handle.get(self);
+        self.close_handle_scope(scope);
+        let Some(prototype_object) = prototype.to_strong_heap_object() else {
+            let message = self
+                .new_string("Function has non-object prototype in instanceof")
+                .tagged();
+            return Err(Thrown(message));
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(prototype_object))
+        {
+            let message = self
+                .new_string("Function has non-object prototype in instanceof")
+                .tagged();
+            return Err(Thrown(message));
+        }
+
+        let result = self.has_in_prototype_chain(receiver, prototype);
+        Ok(self.boolean_value(result))
+    }
+
+    /// `JSReceiver::HasInPrototypeChain`
+    pub(crate) fn has_in_prototype_chain(
+        &self,
+        object: crate::objects::tagged::HeapObject,
+        prototype: Tagged,
+    ) -> bool {
+        let mut current = self.heap.map(object);
+        loop {
+            let parent =
+                crate::objects::map::Map::unchecked_cast(current).prototype(&self.heap);
+            let Some(parent_object) = parent.to_strong_heap_object() else {
+                return false;
+            };
+            if parent == prototype {
+                return true;
+            }
+            if !crate::objects::instance_type::is_js_receiver(
+                self.heap.instance_type(parent_object),
+            ) {
+                return false;
+            }
+            current = self.heap.map(parent_object);
+        }
+    }
+
+    fn is_callable_value(&self, value: Tagged) -> bool {
+        match value.to_strong_heap_object() {
+            Some(object) => {
+                crate::objects::instance_type::is_callable(self.heap.instance_type(object))
+            }
+            None => false,
+        }
+    }
+}

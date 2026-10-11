@@ -14,7 +14,18 @@ impl Isolate {
         &mut self,
         holder: crate::objects::js_function::JSFunction,
     ) -> Tagged {
-        self.function_prototype_object(holder).tagged()
+        if holder.has_prototype(&self.heap) {
+            return holder.prototype(&self.heap);
+        }
+        let scope = self.handle_scope();
+        let holder_handle = self.create_object_handle(holder.object());
+        self.function_prototype_object(holder);
+        let holder = crate::objects::js_function::JSFunction::unchecked_cast(
+            holder_handle.object(self),
+        );
+        let prototype = holder.prototype(&self.heap);
+        self.close_handle_scope(scope);
+        prototype
     }
 
     /// `Accessors::FunctionPrototypeSetter`
@@ -23,7 +34,7 @@ impl Isolate {
         holder: crate::objects::js_function::JSFunction,
         value: Tagged,
     ) {
-        holder.set_prototype_or_initial_map(&mut self.heap, value);
+        self.set_function_prototype(holder, value);
     }
 
     /// `Accessors::MakeFunctionPrototypeInfo`
