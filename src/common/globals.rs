@@ -1,6 +1,10 @@
 pub const K_INT32_SIZE: i32 = 4;
 pub const K_INT64_SIZE: i32 = 8;
 pub const K_DOUBLE_SIZE: i32 = 8;
+
+pub const K_HOLE_NAN_UPPER32: u32 = 0xFFF7FFFF;
+pub const K_HOLE_NAN_LOWER32: u32 = 0xFFF7FFFF;
+pub const K_HOLE_NAN_INT64: u64 = ((K_HOLE_NAN_UPPER32 as u64) << 32) | K_HOLE_NAN_LOWER32 as u64;
 pub const K_SYSTEM_POINTER_SIZE: i32 = 8;
 pub const K_SYSTEM_POINTER_SIZE_LOG2: i32 = 3;
 

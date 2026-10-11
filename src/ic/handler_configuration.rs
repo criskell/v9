@@ -11,6 +11,7 @@ pub enum HandlerKind {
     Global = 1,
     Field = 2,
     ConstantFromPrototype = 3,
+    NativeDataProperty = 4,
 }
 
 impl HandlerKind {
@@ -19,6 +20,7 @@ impl HandlerKind {
             1 => HandlerKind::Global,
             2 => HandlerKind::Field,
             3 => HandlerKind::ConstantFromPrototype,
+            4 => HandlerKind::NativeDataProperty,
             _ => HandlerKind::Normal,
         }
     }
@@ -46,6 +48,15 @@ const fn mask(bits: u32) -> u32 {
 pub struct Handler(u32);
 
 impl Handler {
+    /// `LoadHandler::LoadNativeDataProperty`
+    pub fn native_data_property(descriptor_index: u32) -> Handler {
+        debug_assert!(descriptor_index <= mask(DESCRIPTOR_INDEX_BITS));
+        Handler(
+            ((HandlerKind::NativeDataProperty as u32) << KIND_SHIFT)
+                | (descriptor_index << DESCRIPTOR_INDEX_SHIFT),
+        )
+    }
+
     pub fn field(
         storage_offset_in_words: u32,
         is_inobject: bool,

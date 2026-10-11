@@ -45,6 +45,9 @@ pub struct Heap {
     pub gc_count: usize,
     pub bytes_promoted: usize,
     pub bytes_evacuated: usize,
+
+    /// `ReadOnlyRoots::the_hole_value`
+    pub(crate) the_hole_value: Tagged,
 }
 
 impl Heap {
@@ -80,6 +83,7 @@ impl Heap {
             gc_count: 0,
             bytes_promoted: 0,
             bytes_evacuated: 0,
+            the_hole_value: Tagged::ZERO,
         }
     }
 
@@ -209,6 +213,11 @@ impl Heap {
     }
 
     #[inline]
+    /// `ReadOnlyRoots::the_hole_value`
+    pub fn is_the_hole(&self, value: Tagged) -> bool {
+        self.the_hole_value != Tagged::ZERO && value == self.the_hole_value
+    }
+
     pub fn read_u64(&self, address: Address) -> u64 {
         let i = self.index_aligned(address, 8);
         u64::from_ne_bytes(self.memory[i..i + 8].try_into().unwrap())

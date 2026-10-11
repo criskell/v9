@@ -209,6 +209,45 @@ impl Isolate {
         self.new_number(result as f64)
     }
 
+    /// `Object::ToArrayLength`
+    // Tries to convert an object to an array length. Returns true and sets the
+    // output parameter if it succeeds.
+    pub fn to_array_length(&self, value: Tagged) -> Option<u32> {
+        if let Some(smi) = crate::objects::smi::Smi::try_to_int(value) {
+            return if smi >= 0 { Some(smi as u32) } else { None };
+        }
+        let number = crate::objects::heap_number::number_value(&self.heap, value)?;
+        if number < 0.0 || number.fract() != 0.0 || number > u32::MAX as f64 {
+            return None;
+        }
+        Some(number as u32)
+    }
+
+    /// `Object::ToArrayIndex`
+    // Tries to convert an object to an array index. Returns true and sets the
+    // output parameter if it succeeds. Equivalent to ToArrayLength, but does
+    // not allow kMaxUInt32.
+    pub fn to_array_index(&self, value: Tagged) -> Option<u32> {
+        match self.to_array_length(value) {
+            Some(length) if length != u32::MAX => Some(length),
+            _ => None,
+        }
+    }
+
+    /// `String::AsArrayIndex`
+    pub fn string_as_array_index(&self, value: Tagged) -> Option<u32> {
+        let string = crate::objects::string::String::try_cast(&self.heap, value)?;
+        let text = string.to_rust_string(&self.heap);
+        if text.is_empty() || (text.len() > 1 && text.starts_with('0')) {
+            return None;
+        }
+        let index: u32 = text.parse().ok()?;
+        if index == u32::MAX {
+            return None;
+        }
+        Some(index)
+    }
+
     pub fn to_int32(&self, value: Tagged) -> i32 {
         if value.is_smi() {
             return Smi::to_int(value);

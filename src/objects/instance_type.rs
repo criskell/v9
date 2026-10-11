@@ -66,6 +66,7 @@ pub const HEAP_NUMBER_TYPE: InstanceType = 129;
 pub const ODDBALL_TYPE: InstanceType = 130;
 pub const MAP_TYPE: InstanceType = 131;
 pub const FIXED_ARRAY_TYPE: InstanceType = 132;
+pub const FIXED_DOUBLE_ARRAY_TYPE: InstanceType = 144;
 pub const PROPERTY_ARRAY_TYPE: InstanceType = 133;
 pub const DESCRIPTOR_ARRAY_TYPE: InstanceType = 134;
 pub const TRANSITION_ARRAY_TYPE: InstanceType = 135;
@@ -185,6 +186,7 @@ pub fn instance_type_name(t: InstanceType) -> &'static str {
         ODDBALL_TYPE => "ODDBALL",
         MAP_TYPE => "MAP",
         FIXED_ARRAY_TYPE => "FIXED_ARRAY",
+        FIXED_DOUBLE_ARRAY_TYPE => "FIXED_DOUBLE_ARRAY",
         PROPERTY_ARRAY_TYPE => "PROPERTY_ARRAY",
         DESCRIPTOR_ARRAY_TYPE => "DESCRIPTOR_ARRAY",
         TRANSITION_ARRAY_TYPE => "TRANSITION_ARRAY",
@@ -241,6 +243,7 @@ mod tests {
             ODDBALL_TYPE,
             MAP_TYPE,
             FIXED_ARRAY_TYPE,
+            FIXED_DOUBLE_ARRAY_TYPE,
             JS_OBJECT_TYPE,
             JS_ARRAY_TYPE,
             JS_FUNCTION_TYPE,

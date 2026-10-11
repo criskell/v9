@@ -284,8 +284,7 @@ impl Isolate {
                 }
                 Bytecode::GetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
-                    let key = self.key_to_name(accumulator);
-                    accumulator = self.load_property(object, key)?;
+                    accumulator = self.get_keyed_property(object, accumulator)?;
                 }
                 Bytecode::SetNamedProperty | Bytecode::DefineNamedOwnProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
@@ -297,8 +296,7 @@ impl Isolate {
                 Bytecode::SetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let key = self.read_register(frame, register_operand(self, 1));
-                    let key = self.key_to_name(key);
-                    self.store_property(object, key, accumulator)?;
+                    self.set_keyed_property(object, key, accumulator)?;
                     accumulator = self.undefined_value();
                 }
 
@@ -405,7 +403,7 @@ impl Isolate {
                     accumulator = self.new_js_object().tagged();
                 }
                 Bytecode::CreateEmptyArrayLiteral => {
-                    accumulator = self.new_js_object().tagged();
+                    accumulator = self.new_js_array(0).tagged();
                 }
                 Bytecode::CreateClosure => {
                     let index = operand(self, 0);
@@ -627,6 +625,75 @@ impl Isolate {
         }
         let text = self.to_string(key);
         self.internalize_string(&text).tagged()
+    }
+
+    /// `KeyedLoadIC::Load`
+    fn get_keyed_property(&mut self, object: Tagged, key: Tagged) -> ExecutionResult {
+        if let Some(index) = self.to_array_index(key) {
+            if let Some(value) = self.load_element(object, index)? {
+                return Ok(value);
+            }
+        }
+        let name = self.key_to_name(key);
+        self.load_property(object, name)
+    }
+
+    /// `KeyedStoreIC::Store`
+    fn set_keyed_property(
+        &mut self,
+        object: Tagged,
+        key: Tagged,
+        value: Tagged,
+    ) -> ExecutionResult {
+        if let Some(index) = self.to_array_index(key) {
+            if self.store_element(object, index, value)? {
+                return Ok(value);
+            }
+        }
+        let name = self.key_to_name(key);
+        self.store_property(object, name, value)
+    }
+
+    /// `JSObject::GetElement`
+    fn load_element(&mut self, object: Tagged, index: u32) -> Result<Option<Tagged>, Thrown> {
+        use crate::objects::elements::ElementsAccessor;
+        let Some(receiver) = object.to_strong_heap_object() else {
+            return Ok(None);
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver)) {
+            return Ok(None);
+        }
+        let holder = JSObject::unchecked_cast(receiver);
+        let kind = holder.get_elements_kind(&self.heap);
+        if !crate::objects::elements_kind::is_fast_elements_kind(kind) {
+            return Ok(None);
+        }
+        let accessor = ElementsAccessor::for_kind(kind);
+        match accessor.get(self, holder, index) {
+            Some(value) => Ok(Some(value)),
+            None if self.is_js_array(holder) => Ok(Some(self.undefined_value())),
+            None => Ok(None),
+        }
+    }
+
+    /// `JSObject::SetElement`
+    fn store_element(&mut self, object: Tagged, index: u32, value: Tagged) -> Result<bool, Thrown> {
+        let Some(receiver) = object.to_strong_heap_object() else {
+            return Ok(false);
+        };
+        if !crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver)) {
+            return Ok(false);
+        }
+        let holder = JSObject::unchecked_cast(receiver);
+        if !self.is_js_array(holder) {
+            return Ok(false);
+        }
+        self.add_data_element(holder, index, value);
+        Ok(true)
+    }
+
+    fn is_js_array(&self, object: JSObject) -> bool {
+        self.heap.instance_type(object.object()) == crate::objects::instance_type::JS_ARRAY_TYPE
     }
 
     fn load_named_property_ic(

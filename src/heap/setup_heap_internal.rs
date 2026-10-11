@@ -1,8 +1,10 @@
 use crate::execution::isolate::Isolate;
 use crate::heap::heap::AllocationType;
 use crate::objects::descriptor_array::DescriptorArray;
+use crate::objects::elements_kind::{self, ElementsKind};
 use crate::objects::fixed_array::{FixedArray, PropertyArray};
 use crate::objects::instance_type::*;
+use crate::objects::js_array::JSArray;
 use crate::objects::map::Map;
 use crate::objects::oddball::{Oddball, OddballKind};
 use crate::objects::tagged::Tagged;
@@ -25,6 +27,7 @@ impl Isolate {
 
         self.roots.descriptor_array_map = self.new_bare_map(DESCRIPTOR_ARRAY_TYPE, 0).tagged();
         self.roots.fixed_array_map = self.new_bare_map(FIXED_ARRAY_TYPE, 0).tagged();
+        self.roots.fixed_double_array_map = self.new_bare_map(FIXED_DOUBLE_ARRAY_TYPE, 0).tagged();
         self.roots.property_array_map = self.new_bare_map(PROPERTY_ARRAY_TYPE, 0).tagged();
         self.roots.transition_array_map = self.new_bare_map(TRANSITION_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_vector_map = self.new_bare_map(FEEDBACK_VECTOR_TYPE, 0).tagged();
@@ -108,6 +111,7 @@ impl Isolate {
         self.roots.the_hole_value = self
             .new_oddball(OddballKind::TheHole, "hole", f64::NAN, "undefined")
             .tagged();
+        self.heap.the_hole_value = self.roots.the_hole_value;
         self.roots.uninitialized_value = self
             .new_oddball(
                 OddballKind::Uninitialized,
@@ -128,7 +132,10 @@ impl Isolate {
         self.roots.js_object_map = self
             .new_js_object_map(JS_OBJECT_TYPE, Map::K_INITIAL_INOBJECT_SLACK)
             .tagged();
-        self.roots.js_array_map = self.new_js_object_map(JS_ARRAY_TYPE, 0).tagged();
+        for kind in elements_kind::FAST_ELEMENTS_KIND_SEQUENCE {
+            let map = self.new_js_array_map(kind);
+            self.roots.set_initial_js_array_map(kind, map.tagged());
+        }
         self.roots.js_global_object_map = self
             .new_js_object_map(JS_GLOBAL_OBJECT_TYPE, Map::K_INITIAL_INOBJECT_SLACK)
             .tagged();
@@ -248,6 +255,17 @@ impl Isolate {
         let map = self.new_bare_map(instance_type, instance_size);
         map.set_inobject_properties_start_in_words(&mut self.heap, header_words);
         map.set_prototype(&mut self.heap, self.roots.null_value);
+        map
+    }
+
+    fn new_js_array_map(&mut self, kind: ElementsKind) -> Map {
+        let map = self.new_bare_map(JS_ARRAY_TYPE, JSArray::K_SIZE);
+        map.set_inobject_properties_start_in_words(
+            &mut self.heap,
+            JSArray::K_SIZE / crate::common::globals::K_TAGGED_SIZE,
+        );
+        map.set_prototype(&mut self.heap, self.roots.null_value);
+        map.set_elements_kind(&mut self.heap, kind);
         map
     }
 

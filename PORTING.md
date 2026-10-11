@@ -143,6 +143,11 @@ which is the argument for reading it.
 | `src/objects/lookup.cc`, transition half of `map.cc` | `src/objects/lookup.rs` | [A] data properties on the prototype chain |
 | `src/objects/js-function.h` | `src/objects/js_function.rs` | [T] layout: shared, context, feedback vector |
 | `src/objects/contexts.h` | `src/objects/contexts.rs` | [T] slot indices; function contexts only |
+| `src/objects/elements-kind.h`, `.cc` | `src/objects/elements_kind.rs` | [T] the six fast kinds and the generalisation lattice |
+| `src/objects/fixed-primitive-array.h` | `src/objects/fixed_primitive_array.rs` | [T] `FixedDoubleArray` with V8's hole NaN |
+| `src/objects/js-array.h` | `src/objects/js_array.rs` | [T] layout; fast elements only |
+| `src/objects/elements.cc` | `src/objects/elements.rs` | [A] `ElementsAccessor`: get, set, add, grow, convert |
+| `src/builtins/accessors.cc` | `src/builtins/accessors.rs` | [R] `ArrayLength` getter and setter, nothing else |
 | `src/objects/scope-info.h` | `src/objects/scope_info.rs` | [A] the context slot names, nothing else |
 | `src/roots/roots.h` | `src/roots/roots.rs` | [A] the roots `vx` needs |
 | `src/execution/isolate.h` | `src/execution/isolate.rs` | [A] heap + roots + string table + bootstrap |
@@ -188,7 +193,6 @@ which is the argument for reading it.
 | --- | --- | --- |
 | `src/objects/scope-info.h` (the rest) | `src/objects/scope_info.rs` | `with`, `catch`, block and module scopes |
 | `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
-| `src/objects/js-array.h`, `elements.cc` | `src/objects/` | real arrays with `length` and elements kinds |
 | `src/objects/dictionary.h` | `src/objects/` | dictionary-mode objects |
 | `src/compiler/`, `src/maglev/`, `src/baseline/` | — | optimizing tiers; not planned |
 
@@ -344,6 +348,10 @@ maps to.
 | `objects/string_table.rs` | V8's table is an open-addressed hash table in the heap, keyed by `StringTableKey` so a lookup needs no allocation. `vx` uses a Rust `HashMap` beside the heap: one object per name is preserved, but the table is not a heap object and is not collected. Internalized strings go in read-only space and are copied, where V8 uses old space with a write barrier and `ThinString` forwarding. |
 | `parsing/parser.rs` | No preparser: V8 scans function bodies once with a `PreParser` that records only scope information and parses them fully on first call, while `vx` parses everything eagerly. `let`/`const` get function scope, so block scoping and the temporal dead zone are not enforced. No classes, generators, async functions, destructuring, spread, template literals, `for...in`/`for...of`, `switch`, `try`, `with`, labels, `new`, getters or setters. |
 | `parsing/scanner.rs` | Scans Rust `char`, not UTF-16 code units; the two differ only for lone surrogates, which cannot appear in a `&str`. String literals are still converted to UTF-16 when they become heap strings, so `length` stays correct. No template literals, no regular expression literals, no `\u` escapes in identifiers, no numeric separators, no BigInt. Identifier start/continue use Rust's Unicode alphabetic classes rather than the exact `ID_Start`/`ID_Continue` tables. |
+| `objects/elements.rs` | V8 generates one `ElementsAccessor` subclass per kind through CRTP, so the kind is a compile-time constant and every access is monomorphic. `vx` has one struct carrying the kind and matches on it — the same decomposition, with the dispatch moved to run time, which costs nothing here because the interpreter is not generated code. No `Push`/`Pop`/`Shift`/`Unshift`/`Fill`/`Reverse`/`CopyElements`, no `KeyAccumulator`, no typed arrays, no dictionary elements. |
+| `objects/js_array.rs` | Fast elements only, and `length` is always a Smi: V8 allows a HeapNumber length up to 2^32-1, and a `JSArray` whose length does not fit a Smi cannot be built here. No read-only length, no `ArraySetLength` per ES 15.4.5.2 (so `length` assignment never rejects), no allocation sites or pretenuring. |
+| `objects/js_objects.rs` | `ShouldConvertToSlowElements` computes V8's answer but `vx` has no `NumberDictionary`, so a sparse array stays fast and stores the gap as holes. `a[1e6] = 1` therefore allocates a million slots where V8 would go to dictionary mode. The `kMaxGap` check is ported and its verdict is deliberately ignored, which is where dictionary elements will plug in. |
+| `builtins/accessors.rs` | Two accessors out of V8's thirty-odd, and they are reached by name rather than through an `AccessorInfo` in the array map's descriptors, since `vx` has no accessor properties. The load IC still caches the result with a `kNativeDataProperty` handler, which is the kind V8 uses for it. |
 | `objects/elements_kind.rs` | The six fast kinds keep V8's numbering, since the predicates are range checks on it. No nonextensible, sealed, frozen, typed-array, arguments, string-wrapper, shared-array or wasm kinds, so `DICTIONARY_ELEMENTS` and `NO_ELEMENTS` are renumbered to 6 and 7. `DICTIONARY_ELEMENTS` is declared but not produced. |
 
 ### What an inline cache buys, measured

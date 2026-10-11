@@ -54,6 +54,9 @@ impl Isolate {
     }
 
     pub fn get_property(&self, object: JSObject, name: Tagged) -> Tagged {
+        if let Some(length) = self.array_length_if_requested(object, name) {
+            return length;
+        }
         match self.get_property_raw(object, name) {
             Some(value) => self.unwrap_cell(object, value),
             None => self.undefined_value(),
@@ -83,6 +86,23 @@ impl Isolate {
         )
     }
 
+    pub(crate) fn array_length_if_requested(
+        &self,
+        object: JSObject,
+        name: Tagged,
+    ) -> Option<Tagged> {
+        use crate::objects::instance_type::JS_ARRAY_TYPE;
+        if self.heap.instance_type(object.object()) != JS_ARRAY_TYPE {
+            return None;
+        }
+        let string = crate::objects::string::String::try_cast(&self.heap, name)?;
+        if string.to_rust_string(&self.heap) != "length" {
+            return None;
+        }
+        let array = crate::objects::js_array::JSArray::unchecked_cast(object.object());
+        Some(self.array_length_getter(array))
+    }
+
     #[inline]
     fn unwrap_cell(&self, holder: JSObject, value: Tagged) -> Tagged {
         if !self.is_global_object(holder) {
@@ -100,6 +120,10 @@ impl Isolate {
     }
 
     pub fn set_property(&mut self, object: JSObject, name: Tagged, value: Tagged) -> bool {
+        if self.array_length_if_requested(object, name).is_some() {
+            self.array_length_setter(object, value);
+            return true;
+        }
         if self.is_global_object(object) {
             self.store_global(name, value);
             return true;

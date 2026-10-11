@@ -1,5 +1,6 @@
 use crate::common::globals::K_TAGGED_SIZE;
 use crate::heap::heap::Heap;
+use crate::objects::elements_kind::ElementsKind;
 use crate::objects::fixed_array::PropertyArray;
 use crate::objects::map::Map;
 use crate::objects::tagged::{Address, Tagged};
@@ -15,6 +16,30 @@ impl JSObject {
     /// `JSObject::kElementsOffset`
     pub const K_ELEMENTS_OFFSET: i32 = Self::K_PROPERTIES_OR_HASH_OFFSET + K_TAGGED_SIZE;
     pub const K_HEADER_SIZE: i32 = Self::K_ELEMENTS_OFFSET + K_TAGGED_SIZE;
+
+    // Maximal gap that can be introduced by adding an element beyond
+    // the current elements length.
+    pub const K_MAX_GAP: u32 = 1024;
+
+    // Maximal length of fast elements array that won't be checked for
+    // being dense enough on expansion.
+    pub const K_MAX_UNCHECKED_FAST_ELEMENTS_LENGTH: u32 = 5000;
+
+    pub const K_MIN_ADDED_ELEMENTS_CAPACITY: u32 = 16;
+
+    /// `JSObject::NewElementsCapacity`
+    // Computes the new capacity when expanding the elements of a JSObject.
+    #[inline]
+    pub const fn new_elements_capacity(old_capacity: u32) -> u32 {
+        // (old_capacity + 50%) + kMinAddedElementsCapacity
+        old_capacity + (old_capacity >> 1) + Self::K_MIN_ADDED_ELEMENTS_CAPACITY
+    }
+
+    /// `JSObject::GetElementsKind`
+    #[inline]
+    pub fn get_elements_kind(self, heap: &Heap) -> ElementsKind {
+        heap.map_of(self.object()).elements_kind(heap)
+    }
 
     #[inline]
     pub fn raw_properties_or_hash(self, heap: &Heap) -> Tagged {
@@ -108,6 +133,114 @@ impl JSObject {
 
     pub fn out_of_object_property_count(heap: &Heap, map: Map, field_count: i32) -> i32 {
         (field_count - map.inobject_properties(heap)).max(0)
+    }
+}
+
+impl crate::execution::isolate::Isolate {
+    /// `ShouldConvertToSlowElements`
+    pub(crate) fn should_convert_to_slow_elements(&self, capacity: u32, index: u32) -> (bool, u32) {
+        if index < capacity {
+            return (false, capacity);
+        }
+        if index - capacity >= JSObject::K_MAX_GAP {
+            return (true, capacity);
+        }
+        let new_capacity = JSObject::new_elements_capacity(index + 1);
+        (false, new_capacity)
+    }
+
+    /// `JSObject::GetElementsTransitionMap`
+    pub(crate) fn get_elements_transition_map(
+        &mut self,
+        object: JSObject,
+        to_kind: ElementsKind,
+    ) -> Tagged {
+        use crate::objects::instance_type::JS_ARRAY_TYPE;
+        let map = self.heap.map_of(object.object());
+        if map.instance_type(&self.heap) == JS_ARRAY_TYPE {
+            return self.roots.get_initial_js_array_map(to_kind);
+        }
+        map.set_elements_kind(&mut self.heap, to_kind);
+        map.tagged()
+    }
+
+    /// `JSObject::SetMapAndElements`
+    pub(crate) fn set_map_and_elements(
+        &mut self,
+        object: JSObject,
+        new_map: Tagged,
+        elements: Tagged,
+    ) {
+        let map = new_map.to_strong_heap_object().expect("a map");
+        self.heap.set_map(object.object(), map);
+        object.set_elements(&mut self.heap, elements);
+    }
+
+    /// `JSObject::TransitionElementsKind`
+    pub(crate) fn transition_elements_kind(&mut self, object: JSObject, to_kind: ElementsKind) {
+        use crate::objects::elements_kind as ek;
+        let from_kind = object.get_elements_kind(&self.heap);
+        let mut to_kind = to_kind;
+
+        if ek::is_holey_elements_kind(from_kind) {
+            to_kind = ek::get_holey_elements_kind(to_kind);
+        }
+
+        if from_kind == to_kind {
+            return;
+        }
+
+        let elements = object.elements(&self.heap);
+        if elements == self.roots.empty_fixed_array
+            || ek::is_double_elements_kind(from_kind) == ek::is_double_elements_kind(to_kind)
+        {
+            // No change is needed to the elements() buffer, the transition
+            // only requires a map change.
+            let new_map = self.get_elements_transition_map(object, to_kind);
+            let map = new_map.to_strong_heap_object().expect("a map");
+            self.heap.set_map(object.object(), map);
+        } else {
+            let capacity = crate::objects::elements::ElementsAccessor::for_kind(from_kind)
+                .get_capacity(&self.heap, elements);
+            self.basic_grow_capacity_and_convert(object, from_kind, to_kind, capacity);
+        }
+    }
+
+    /// `JSObject::AddDataElement`
+    pub(crate) fn add_data_element(&mut self, object: JSObject, index: u32, value: Tagged) {
+        use crate::objects::elements_kind as ek;
+        use crate::objects::instance_type::JS_ARRAY_TYPE;
+        use crate::objects::js_array::JSArray;
+
+        let is_js_array =
+            self.heap.map_of(object.object()).instance_type(&self.heap) == JS_ARRAY_TYPE;
+        let array = JSArray::unchecked_cast(object.object());
+        let old_length = if is_js_array {
+            array.length_value(&self.heap)
+        } else {
+            0
+        };
+
+        let mut kind = object.get_elements_kind(&self.heap);
+        let elements = object.elements(&self.heap);
+        let capacity = crate::objects::elements::ElementsAccessor::for_kind(kind)
+            .get_capacity(&self.heap, elements);
+        let (to_slow, mut new_capacity) = self.should_convert_to_slow_elements(capacity, index);
+        if to_slow {
+            new_capacity = JSObject::new_elements_capacity(index + 1);
+        }
+
+        let mut to = ek::optimal_elements_kind(&self.heap, value);
+        if ek::is_holey_elements_kind(kind) || !is_js_array || index > old_length {
+            to = ek::get_holey_elements_kind(to);
+            kind = ek::get_holey_elements_kind(kind);
+        }
+        let to = ek::get_more_general_elements_kind(kind, to);
+        self.add_element(object, index, value, to, new_capacity);
+
+        if is_js_array && index >= old_length {
+            array.set_length_value(&mut self.heap, index + 1);
+        }
     }
 }
 

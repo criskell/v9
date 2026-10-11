@@ -51,6 +51,8 @@ impl Isolate {
                 }
             }
 
+            it::FIXED_DOUBLE_ARRAY_TYPE => {}
+
             it::TRANSITION_ARRAY_TYPE => {
                 let array = WeakFixedArray::unchecked_cast(object);
                 for i in 0..array.length(&self.heap) {

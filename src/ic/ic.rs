@@ -133,6 +133,13 @@ impl Isolate {
         }
 
         self.ic_statistics.property.misses += 1;
+
+        if let Some(length) = self.array_length_if_requested(receiver, name) {
+            let handler = Handler::native_data_property(0);
+            self.update_ic(nexus, map, handler.as_smi(), name);
+            return length;
+        }
+
         let found = self.lookup_property(receiver, name);
         let value = match &found {
             Some(found) => found
@@ -160,6 +167,11 @@ impl Isolate {
         slot: i32,
     ) -> bool {
         if self.is_global_object(receiver) {
+            self.ic_statistics.property.misses += 1;
+            return self.set_property(receiver, name, value);
+        }
+
+        if self.array_length_if_requested(receiver, name).is_some() {
             self.ic_statistics.property.misses += 1;
             return self.set_property(receiver, name, value);
         }
@@ -222,10 +234,14 @@ impl Isolate {
 
     fn load_from_handler(&self, receiver: JSObject, handler: Tagged) -> Option<Tagged> {
         let handler = Handler::from_tagged(handler)?;
-        if handler.kind() != HandlerKind::Field {
-            return None;
+        match handler.kind() {
+            HandlerKind::Field => Some(self.read_field(receiver, handler)),
+            HandlerKind::NativeDataProperty => {
+                let array = crate::objects::js_array::JSArray::unchecked_cast(receiver.object());
+                Some(self.array_length_getter(array))
+            }
+            _ => None,
         }
-        Some(self.read_field(receiver, handler))
     }
 
     fn store_through_handler(

@@ -3,6 +3,7 @@ use crate::execution::isolate::Isolate;
 use crate::heap::factory::K_DESCRIPTOR_ARRAY_SLACK;
 use crate::heap::heap::Heap;
 use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
+use crate::objects::elements_kind::{self, ElementsKind};
 use crate::objects::instance_type::{self, InstanceType};
 use crate::objects::property_details::{default_data_field, Representation};
 use crate::objects::tagged::{Address, HeapObject, Tagged};
@@ -37,6 +38,9 @@ const IS_EXTENSIBLE_BIT: u32 = 27;
 
 pub const K_INVALID_ENUM_CACHE_SENTINEL: u32 = (1 << ENUM_LENGTH_BITS) - 1;
 
+const ELEMENTS_KIND_SHIFT: u8 = 2;
+const ELEMENTS_KIND_BITS: u8 = 6;
+
 const IS_CALLABLE_BIT: u8 = 0;
 const IS_UNDETECTABLE_BIT: u8 = 1;
 const IS_CONSTRUCTOR_BIT: u8 = 5;
@@ -44,6 +48,11 @@ const IS_CONSTRUCTOR_BIT: u8 = 5;
 #[inline]
 const fn mask32(bits: u32) -> u32 {
     (1u32 << bits) - 1
+}
+
+#[inline]
+const fn mask8(bits: u8) -> u8 {
+    (1u8 << bits) - 1
 }
 
 impl Map {
@@ -176,6 +185,62 @@ impl Map {
     #[inline]
     pub fn set_is_constructor(self, heap: &mut Heap, value: bool) {
         self.set_bit_field_bit(heap, IS_CONSTRUCTOR_BIT, value);
+    }
+
+    // -- bit_field2 ---------------------------------------------------------
+
+    #[inline]
+    pub fn bit_field2(self, heap: &Heap) -> u8 {
+        heap.read_u8(self.field(Self::K_BIT_FIELD2_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_bit_field2(self, heap: &mut Heap, value: u8) {
+        heap.write_u8(self.field(Self::K_BIT_FIELD2_OFFSET), value);
+    }
+
+    /// `Map::elements_kind`
+    #[inline]
+    pub fn elements_kind(self, heap: &Heap) -> ElementsKind {
+        let bits = (self.bit_field2(heap) >> ELEMENTS_KIND_SHIFT) & mask8(ELEMENTS_KIND_BITS);
+        ElementsKind::from_bits(bits)
+    }
+
+    /// `Map::set_elements_kind`
+    #[inline]
+    pub fn set_elements_kind(self, heap: &mut Heap, kind: ElementsKind) {
+        let cleared = self.bit_field2(heap) & !(mask8(ELEMENTS_KIND_BITS) << ELEMENTS_KIND_SHIFT);
+        self.set_bit_field2(heap, cleared | ((kind as u8) << ELEMENTS_KIND_SHIFT));
+    }
+
+    /// `Map::has_fast_elements`
+    #[inline]
+    pub fn has_fast_elements(self, heap: &Heap) -> bool {
+        elements_kind::is_fast_elements_kind(self.elements_kind(heap))
+    }
+
+    /// `Map::has_fast_smi_elements`
+    #[inline]
+    pub fn has_fast_smi_elements(self, heap: &Heap) -> bool {
+        elements_kind::is_smi_elements_kind(self.elements_kind(heap))
+    }
+
+    /// `Map::has_fast_object_elements`
+    #[inline]
+    pub fn has_fast_object_elements(self, heap: &Heap) -> bool {
+        elements_kind::is_object_elements_kind(self.elements_kind(heap))
+    }
+
+    /// `Map::has_fast_double_elements`
+    #[inline]
+    pub fn has_fast_double_elements(self, heap: &Heap) -> bool {
+        elements_kind::is_double_elements_kind(self.elements_kind(heap))
+    }
+
+    /// `Map::has_dictionary_elements`
+    #[inline]
+    pub fn has_dictionary_elements(self, heap: &Heap) -> bool {
+        elements_kind::is_dictionary_elements_kind(self.elements_kind(heap))
     }
 
     // -- bit_field3 ---------------------------------------------------------

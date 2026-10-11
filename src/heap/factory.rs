@@ -2,9 +2,12 @@ use crate::common::globals::K_TAGGED_SIZE;
 use crate::execution::isolate::Isolate;
 use crate::heap::heap::AllocationType;
 use crate::objects::descriptor_array::DescriptorArray;
+use crate::objects::elements_kind::{self, ElementsKind};
 use crate::objects::fixed_array::{FixedArray, PropertyArray};
+use crate::objects::fixed_primitive_array::FixedDoubleArray;
 use crate::objects::heap_number::HeapNumber;
 use crate::objects::instance_type::InstanceType;
+use crate::objects::js_array::JSArray;
 use crate::objects::js_objects::JSObject;
 use crate::objects::map::Map;
 use crate::objects::smi::Smi;
@@ -70,6 +73,71 @@ impl Isolate {
         let undefined = self.undefined_value();
         for i in 0..length {
             array.set(&mut self.heap, i, undefined);
+        }
+        array
+    }
+
+    /// `Factory::NewFixedDoubleArray`
+    pub fn new_fixed_double_array(&mut self, length: i32) -> FixedDoubleArray {
+        let map = self
+            .roots
+            .fixed_double_array_map
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self.heap.allocate_raw_or_fail(
+            FixedDoubleArray::size_for(length) as usize,
+            AllocationType::Young,
+        );
+        self.heap.set_map(object, map);
+        let array = FixedDoubleArray::unchecked_cast(object);
+        array.set_length(&mut self.heap, length);
+        array.fill_with_holes(&mut self.heap, 0, length);
+        array
+    }
+
+    /// `Factory::NewJSArrayWithElements`
+    pub fn new_js_array_with_elements(
+        &mut self,
+        elements: Tagged,
+        kind: ElementsKind,
+        length: u32,
+    ) -> JSArray {
+        let map = self
+            .roots
+            .get_initial_js_array_map(kind)
+            .to_strong_heap_object()
+            .unwrap();
+        let object = self
+            .heap
+            .allocate_raw_or_fail(JSArray::K_SIZE as usize, AllocationType::Young);
+        self.heap.set_map(object, map);
+        let array = JSArray::unchecked_cast(object);
+        let empty = self.roots.empty_fixed_array;
+        array
+            .as_js_object()
+            .set_raw_properties_or_hash(&mut self.heap, empty);
+        array.set_elements(&mut self.heap, elements);
+        array.set_length_value(&mut self.heap, length);
+        array
+    }
+
+    /// `Factory::NewJSArray`
+    pub fn new_js_array(&mut self, capacity: i32) -> JSArray {
+        let kind = elements_kind::get_initial_fast_elements_kind();
+        let elements = if capacity == 0 {
+            self.roots.empty_fixed_array
+        } else {
+            self.new_fixed_array_with_holes(capacity).tagged()
+        };
+        self.new_js_array_with_elements(elements, kind, 0)
+    }
+
+    /// `Factory::NewFixedArrayWithHoles`
+    pub fn new_fixed_array_with_holes(&mut self, length: i32) -> FixedArray {
+        let array = self.new_fixed_array(length);
+        let the_hole = self.the_hole_value();
+        for index in 0..length {
+            array.set(&mut self.heap, index, the_hole);
         }
         array
     }
@@ -534,6 +602,9 @@ impl Isolate {
             it::PROPERTY_ARRAY_TYPE => {
                 PropertyArray::size_for(PropertyArray::unchecked_cast(object).length(&self.heap))
             }
+            it::FIXED_DOUBLE_ARRAY_TYPE => FixedDoubleArray::size_for(
+                FixedDoubleArray::unchecked_cast(object).length(&self.heap),
+            ),
             it::TRANSITION_ARRAY_TYPE => {
                 use crate::objects::fixed_array::WeakFixedArray;
                 WeakFixedArray::size_for(WeakFixedArray::unchecked_cast(object).length(&self.heap))

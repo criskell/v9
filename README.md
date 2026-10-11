@@ -12,7 +12,7 @@ $ cargo run -- run demo.js
 factorials: 873
 sqrt(total) floor = 29
 
-$ cargo test        # 488 tests
+$ cargo test        # 512 tests
 ```
 
 No dependencies: `std` only. No `unsafe`.
@@ -97,14 +97,24 @@ Commands: `run`, `bytecode`, `ast`, `ic`, `maps`, `gc`, `heap`, `roots`.
   captures nothing allocates no context at all, and a reference is compiled
   to a `(depth, slot)` pair -- a pointer walk of known length, never a
   search.
+* **Real arrays, with elements kinds.** An array's backing store is typed by
+  what it holds: `[1,2,3]` is `PACKED_SMI_ELEMENTS`, so its store is a
+  `FixedArray` of Smis; `[1.5]` is `PACKED_DOUBLE_ELEMENTS`, so its store is
+  a `FixedDoubleArray` of raw `f64` with no boxing; a write past the end
+  makes it holey. The kinds form V8's lattice and only ever generalise —
+  having seen `1.5`, an array keeps the double store even if every later
+  value is an integer — and each kind has its own map, so the shape is
+  visible to an inline cache.
 * **The language:** numbers and strings, `var`/`let`/`const`, operators with
   JavaScript's coercions, `if`/`while`/`do`/`for`, `break`/`continue`,
-  functions, recursion, closures, objects, property access, method calls, `typeof`.
+  functions, recursion, closures, objects, arrays, property access, method calls, `typeof`.
 
 ## What does not
 
-No classes, no `try`/`catch`, no generators or `async`, no real arrays, no
-`for...in`. Contexts are function contexts only: no `with`, no `catch`
+No classes, no `try`/`catch`, no generators or `async`, no `for...in`, no
+array methods (`push`, `map`, …). Elements are always fast: a sparse array
+stays a dense backing store full of holes where V8 would switch to a
+dictionary. Contexts are function contexts only: no `with`, no `catch`
 scope, no per-iteration `let` binding in a loop. Inline caches cover named property access and globals; prototype loads,
 transitioning stores and `globalThis.x` still do the full lookup.
 

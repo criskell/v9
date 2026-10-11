@@ -25,11 +25,14 @@ macro_rules! roots_table {
     };
 }
 
+use crate::objects::elements_kind::{self, ElementsKind};
+
 roots_table!(
     meta_map,
     heap_number_map,
     oddball_map,
     fixed_array_map,
+    fixed_double_array_map,
     property_array_map,
     descriptor_array_map,
     transition_array_map,
@@ -46,7 +49,12 @@ roots_table!(
     internalized_one_byte_string_map,
     internalized_two_byte_string_map,
     js_object_map,
-    js_array_map,
+    js_array_packed_smi_elements_map,
+    js_array_holey_smi_elements_map,
+    js_array_packed_elements_map,
+    js_array_holey_elements_map,
+    js_array_packed_double_elements_map,
+    js_array_holey_double_elements_map,
     js_function_map,
     js_native_function_map,
     js_global_object_map,
@@ -95,5 +103,33 @@ impl RootsTable {
                 .to_strong_heap_object()
                 .expect("root map read before the root table was set up"),
         )
+    }
+}
+
+impl RootsTable {
+    /// `Context::GetInitialJSArrayMap`
+    pub fn get_initial_js_array_map(&self, kind: ElementsKind) -> Tagged {
+        debug_assert!(elements_kind::is_fast_elements_kind(kind));
+        match kind {
+            ElementsKind::PackedSmiElements => self.js_array_packed_smi_elements_map,
+            ElementsKind::HoleySmiElements => self.js_array_holey_smi_elements_map,
+            ElementsKind::PackedElements => self.js_array_packed_elements_map,
+            ElementsKind::HoleyElements => self.js_array_holey_elements_map,
+            ElementsKind::PackedDoubleElements => self.js_array_packed_double_elements_map,
+            ElementsKind::HoleyDoubleElements => self.js_array_holey_double_elements_map,
+            other => panic!("not a fast elements kind: {other}"),
+        }
+    }
+
+    pub fn set_initial_js_array_map(&mut self, kind: ElementsKind, map: Tagged) {
+        match kind {
+            ElementsKind::PackedSmiElements => self.js_array_packed_smi_elements_map = map,
+            ElementsKind::HoleySmiElements => self.js_array_holey_smi_elements_map = map,
+            ElementsKind::PackedElements => self.js_array_packed_elements_map = map,
+            ElementsKind::HoleyElements => self.js_array_holey_elements_map = map,
+            ElementsKind::PackedDoubleElements => self.js_array_packed_double_elements_map = map,
+            ElementsKind::HoleyDoubleElements => self.js_array_holey_double_elements_map = map,
+            other => panic!("not a fast elements kind: {other}"),
+        }
     }
 }
