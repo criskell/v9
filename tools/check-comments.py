@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Reports comments in src/ that do not appear in the V8 source.
 
-A comment in the Rust source is kept only where V8 has one, copied as
-written. This finds the ones that are not V8's.
+A comment in the Rust source is kept only where V8 has one at the same
+construct, and then it is copied as written. This finds the ones that are not
+V8's.
 
-Judging is per contiguous comment block, not per line, because the same
-comment reflows to different line breaks in Rust: a block of seven words or
-more matches on word shingles, so reflow is invisible, and a shorter block
-has to appear verbatim as one of V8's own comment blocks or lines. Matching a
-short comment against all of V8's comment text instead would pass anything
-whose words occur somewhere, which is how section banners survived.
+Two things are checked per contiguous comment block, not per line, because the
+same comment reflows to different line breaks in Rust:
+
+  * the block, normalised and rejoined, has to be a contiguous slice of one of
+    V8's own comment blocks -- not merely a bag of words that occur in V8, and
+    not spliced from two different comments;
+
+  * that V8 comment has to live in a file this module maps onto, so a comment
+    cannot be matched against something unrelated elsewhere in V8. Matching
+    anywhere in V8 is how `>>>, logical shift right` passed by colliding with
+    a comment about the ARM LSR instruction.
 
   tools/check-comments.py [v8-checkout]
 """
@@ -19,70 +25,57 @@ V8 = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1 else "~/devel/v8")
 
 def normalise(text):
     text = re.sub(r"`([^`]*)`", r"\1", text)
-    text = re.sub(r"\b([a-z0-9]+)_([a-z0-9_]+)\b", lambda m: m.group(0), text)
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
-SHINGLE = 7
+def comment_blocks(path):
+    """Every contiguous run of comment lines in a V8 file, each kept whole."""
+    blocks, run = [], []
+    with open(path, errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if line.startswith("//"):
+                run.append(line.lstrip("/").strip())
+                continue
+            # A trailing comment on a line of code counts too.
+            trailing = line.partition("//")
+            if trailing[1] and "\"" not in trailing[0]:
+                run.append(trailing[2].strip())
+                continue
+            # A one-line block comment counts too: that is how V8 writes the
+            # section headers inside its macro lists.
+            block = re.match(r".*?/\*(.*?)\*/", line)
+            if block:
+                run.append(block.group(1).strip())
+                continue
+            if run:
+                blocks.append(normalise(" ".join(run)))
+                run = []
+    if run:
+        blocks.append(normalise(" ".join(run)))
+    return [block for block in blocks if block]
 
-def shingles(words):
-    if len(words) <= SHINGLE:
-        return [" ".join(words)]
-    return [" ".join(words[i:i + SHINGLE]) for i in range(len(words) - SHINGLE + 1)]
+DIRECTORY_CACHE = {}
 
-def collect(run):
-    """One contiguous run of V8 comment lines.
+def mapped_comments(rel):
+    """The comments of the V8 directory `src/<rel>` maps onto.
 
-    The run goes in whole, so a vx comment that reflowed it matches on
-    shingles, and every line of it goes in on its own, so a vx comment that
-    copied one line of it matches exactly.
+    Not just `<stem>.h`: V8 scatters one header's implementations across
+    neighbours (`HashTable::FindEntry` is in hash-table.h, but
+    `UpdateMaxNumberKey` and `HasSufficientCapacityToAdd` are in objects.cc),
+    while vx groups by header. The directory is the unit that still rules out
+    matching a comment against an unrelated part of V8.
     """
-    text = normalise(" ".join(run))
-    haystack.update(shingles(text.split()))
-    exact.add(text)
-    for line in run:
-        exact.add(normalise(line))
-
-haystack = set()
-exact = set()
-for root, _, files in os.walk(os.path.join(V8, "src")):
-    for name in files:
-        if not name.endswith((".h", ".cc", ".tq")):
-            continue
-        run = []
-        with open(os.path.join(root, name), errors="replace") as handle:
-            for line in handle:
-                line = line.strip()
-                if line.startswith("//"):
-                    run.append(line.lstrip("/").strip())
-                    continue
-                # A trailing comment on a line of code counts too.
-                trailing = line.partition("//")
-                if trailing[1] and "\"" not in trailing[0]:
-                    run.append(trailing[2].strip())
-                    continue
-                # A one-line block comment counts too: that is how V8
-                # writes the section headers inside its macro lists.
-                block = re.match(r".*?/\*(.*?)\*/", line)
-                if block:
-                    run.append(block.group(1).strip())
-                    continue
-                if run:
-                    collect(run)
-                    run = []
-        if run:
-            collect(run)
-
-# A block of one or two words carries no evidence of having been copied: the
-# word is bound to occur in V8 somewhere. Those are reported whatever V8 has.
-MIN_WORDS = 3
-
-def is_v8s(key):
-    words = key.split()
-    if len(words) < MIN_WORDS:
-        return False
-    if len(words) < SHINGLE:
-        return key in exact
-    return all(shingle in haystack for shingle in shingles(words))
+    directory = os.path.dirname(rel)
+    if directory in DIRECTORY_CACHE:
+        return DIRECTORY_CACHE[directory]
+    root = os.path.join(V8, "src", directory)
+    blocks = []
+    if os.path.isdir(root):
+        for name in sorted(os.listdir(root)):
+            if name.endswith((".h", ".cc", ".tq")):
+                blocks += comment_blocks(os.path.join(root, name))
+    DIRECTORY_CACHE[directory] = blocks
+    return blocks
 
 ASSERT_MACRO = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
 
@@ -134,6 +127,7 @@ def assert_messages(path):
 total = flagged = 0
 for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
                                   capture_output=True, text=True).stdout.split()):
+    pool = mapped_comments(path[len("src/"):])
     report = []
     block = []
 
@@ -142,7 +136,7 @@ for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
         if not block:
             return
         key = normalise(" ".join(body for _, _, body in block))
-        if is_v8s(key):
+        if key and any(key in v8s for v8s in pool):
             return
         for number, stripped, _ in block:
             report.append((number, stripped))
@@ -162,6 +156,7 @@ for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
         total += 1
         block.append((number, stripped, body))
     judge(block)
+
     messages = [] if path.endswith("heap/heap.rs") else assert_messages(path)
     for number in messages:
         report.append((number, "<assertion message>"))

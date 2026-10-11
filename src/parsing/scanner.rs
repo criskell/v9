@@ -603,9 +603,6 @@ impl Scanner {
     }
 
     fn scan_template_span(&mut self, beg_pos: usize) -> TokenDesc {
-        // A TemplateLiteral is made up of 0 or more kTemplateSpan tokens
-        // (literal text followed by a substitution expression), finalized by a
-        // single kTemplateTail.
         let mut literal = String::new();
         let token = loop {
             let Some(c) = self.c0 else {

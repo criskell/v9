@@ -12,18 +12,6 @@ object_type!(
     Map
 );
 
-// ---------------------------------------------------------------------------
-//   is_prototype_map                 bit  20
-//   is_dictionary_map                bit  21
-//   owns_descriptors                 bit  22
-//   is_in_retained_map_list          bit  23
-//   is_deprecated                    bit  24
-//   is_unstable                      bit  25
-//   is_migration_target              bit  26
-//   is_extensible                    bit  27
-//   may_have_interesting_properties  bit  28
-// ---------------------------------------------------------------------------
-
 const ENUM_LENGTH_SHIFT: u32 = 0;
 const ENUM_LENGTH_BITS: u32 = 10;
 const NUMBER_OF_OWN_DESCRIPTORS_SHIFT: u32 = 10;

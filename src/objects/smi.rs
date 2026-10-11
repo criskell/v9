@@ -55,8 +55,6 @@ impl Smi {
         }
     }
 
-    // Returns true if value can be converted to a SMI, and returns the
-    // resulting integer value of the SMI in |smi_int_value|.
     #[inline]
     pub fn try_from_f64(value: f64) -> Option<Tagged> {
         if value == 0.0 && value.is_sign_negative() {

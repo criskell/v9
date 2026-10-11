@@ -45,7 +45,6 @@ pub enum Token {
     BitAnd,
     Shl,
     Sar,
-    /// `>>>`, logical shift right.
     Shr,
     Mul,
     Div,
