@@ -276,7 +276,8 @@ impl Parser {
             Token::Function => self.parse_hoistable_declaration(),
             Token::Try => self.parse_try_statement(),
             Token::Throw => self.parse_throw_statement(),
-            Token::Switch | Token::With | Token::Debugger => {
+            Token::Switch => self.parse_switch_statement(),
+            Token::With | Token::Debugger => {
                 Err(self.unexpected_token_with_hint("this statement is not implemented"))
             }
             Token::Class => self.parse_class_declaration(),
@@ -418,6 +419,55 @@ impl Parser {
         self.state().hoisted_functions.push(function);
         self.declare_variable(&name, VariableMode::Var);
         Ok(Statement::Empty { position })
+    }
+
+    fn parse_switch_statement(&mut self) -> Result<Statement> {
+        // SwitchStatement ::
+        //   'switch' '(' Expression ')' '{' CaseClause* '}'
+        // CaseClause ::
+        //   'case' Expression ':' StatementList
+        //   'default' ':' StatementList
+        let position = self.peek_position();
+
+        self.consume(Token::Switch);
+        self.expect(Token::LeftParen)?;
+        let tag = self.parse_expression()?;
+        self.expect(Token::RightParen)?;
+
+        let mut default_seen = false;
+        let mut cases = Vec::new();
+        self.expect(Token::LeftBrace)?;
+        while self.peek() != Token::RightBrace {
+            let label = if self.check(Token::Case) {
+                Some(self.parse_expression()?)
+            } else {
+                self.expect(Token::Default)?;
+                if default_seen {
+                    return Err(ParserError {
+                        message: "More than one default clause in switch statement".to_string(),
+                        location: self.scanner.location(),
+                    });
+                }
+                default_seen = true;
+                None
+            };
+            self.expect(Token::Colon)?;
+            let mut statements = Vec::new();
+            while !matches!(
+                self.peek(),
+                Token::Case | Token::Default | Token::RightBrace
+            ) {
+                statements.push(self.parse_statement_list_item()?);
+            }
+            cases.push(CaseClause { label, statements });
+        }
+        self.expect(Token::RightBrace)?;
+
+        Ok(Statement::Switch {
+            tag,
+            cases,
+            position,
+        })
     }
 
     fn parse_if_statement(&mut self) -> Result<Statement> {

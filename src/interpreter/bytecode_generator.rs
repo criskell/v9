@@ -4,7 +4,9 @@ use crate::common::globals::VariableLocation;
 use crate::interpreter::bytecode_array_builder::{BytecodeArrayBuilder, BytecodeArrayData};
 use crate::interpreter::bytecode_label::BytecodeLabels;
 use crate::interpreter::bytecode_register::Register;
-use crate::interpreter::control_flow_builders::{ConditionalControlFlowBuilder, LoopBuilder};
+use crate::interpreter::control_flow_builders::{
+    ConditionalControlFlowBuilder, LoopBuilder, SwitchBuilder,
+};
 use crate::parsing::token::Token;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -44,6 +46,11 @@ pub struct GeneratorError {
 
 type Result<T> = std::result::Result<T, GeneratorError>;
 
+enum Breakable {
+    Loop(LoopBuilder),
+    Switch(SwitchBuilder),
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Resolution {
     Local(Register),
@@ -67,7 +74,7 @@ pub struct BytecodeGenerator {
     builder: BytecodeArrayBuilder,
     scope_chain: Vec<Scope>,
     context_registers: Vec<Option<Register>>,
-    loop_stack: Vec<LoopBuilder>,
+    loop_stack: Vec<Breakable>,
     finally_stack: Vec<FinallyScope>,
     functions: Vec<CompiledFunction>,
 }
@@ -241,6 +248,7 @@ impl BytecodeGenerator {
                 ..
             } => self.visit_for_statement(init.as_deref(), condition.as_ref(), next.as_ref(), body),
             Statement::Return { value, .. } => self.visit_return_statement(value.as_ref()),
+            Statement::Switch { tag, cases, .. } => self.visit_switch_statement(tag, cases),
             Statement::Break { .. } => {
                 if self.loop_stack.is_empty() {
                     return Err(GeneratorError {
@@ -249,18 +257,20 @@ impl BytecodeGenerator {
                 }
                 self.check_does_not_cross_finally("break")?;
                 let depth = self.loop_stack.len() - 1;
-                self.loop_stack[depth].emit_break(&mut self.builder);
+                match &mut self.loop_stack[depth] {
+                    Breakable::Loop(builder) => builder.emit_break(&mut self.builder),
+                    Breakable::Switch(builder) => builder.emit_break(&mut self.builder),
+                }
                 Ok(())
             }
             Statement::Continue { .. } => {
-                if self.loop_stack.is_empty() {
+                let Some(depth) = self.innermost_loop() else {
                     return Err(GeneratorError {
                         message: "`continue` outside a loop".to_string(),
                     });
-                }
+                };
                 self.check_does_not_cross_finally("continue")?;
-                let depth = self.loop_stack.len() - 1;
-                self.loop_stack[depth].emit_continue(&mut self.builder);
+                Self::loop_at(&mut self.loop_stack, depth).emit_continue(&mut self.builder);
                 Ok(())
             }
         }
@@ -325,9 +335,9 @@ impl BytecodeGenerator {
     }
 
     fn visit_while_statement(&mut self, condition: &Expression, body: &Statement) -> Result<()> {
-        self.loop_stack.push(LoopBuilder::new());
+        self.loop_stack.push(Breakable::Loop(LoopBuilder::new()));
         let depth = self.loop_stack.len() - 1;
-        self.loop_stack[depth].loop_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).loop_header(&mut self.builder);
 
         let mut exit_labels = BytecodeLabels::new();
         let always_true = condition.to_boolean_is_true() == Some(true);
@@ -343,26 +353,26 @@ impl BytecodeGenerator {
         }
 
         self.visit_statement(body)?;
-        self.loop_stack[depth].bind_continue_target(&mut self.builder);
-        self.loop_stack[depth].jump_to_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).bind_continue_target(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).jump_to_header(&mut self.builder);
 
         self.builder.bind_labels(&mut exit_labels);
-        self.loop_stack[depth].finish(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).finish(&mut self.builder);
         self.loop_stack.pop();
         Ok(())
     }
 
     fn visit_do_while_statement(&mut self, body: &Statement, condition: &Expression) -> Result<()> {
-        self.loop_stack.push(LoopBuilder::new());
+        self.loop_stack.push(Breakable::Loop(LoopBuilder::new()));
         let depth = self.loop_stack.len() - 1;
-        self.loop_stack[depth].loop_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).loop_header(&mut self.builder);
 
         self.visit_statement(body)?;
-        self.loop_stack[depth].bind_continue_target(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).bind_continue_target(&mut self.builder);
 
         let mut exit_labels = BytecodeLabels::new();
         if condition.to_boolean_is_true() == Some(true) {
-            self.loop_stack[depth].jump_to_header(&mut self.builder);
+            Self::loop_at(&mut self.loop_stack, depth).jump_to_header(&mut self.builder);
         } else {
             let mut again_labels = BytecodeLabels::new();
             self.visit_for_test(
@@ -372,11 +382,11 @@ impl BytecodeGenerator {
                 TestFallthrough::Then,
             )?;
             self.builder.bind_labels(&mut again_labels);
-            self.loop_stack[depth].jump_to_header(&mut self.builder);
+            Self::loop_at(&mut self.loop_stack, depth).jump_to_header(&mut self.builder);
         }
 
         self.builder.bind_labels(&mut exit_labels);
-        self.loop_stack[depth].finish(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).finish(&mut self.builder);
         self.loop_stack.pop();
         Ok(())
     }
@@ -392,9 +402,9 @@ impl BytecodeGenerator {
             self.visit_statement(init)?;
         }
 
-        self.loop_stack.push(LoopBuilder::new());
+        self.loop_stack.push(Breakable::Loop(LoopBuilder::new()));
         let depth = self.loop_stack.len() - 1;
-        self.loop_stack[depth].loop_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).loop_header(&mut self.builder);
 
         let mut exit_labels = BytecodeLabels::new();
         if let Some(condition) = condition {
@@ -412,14 +422,14 @@ impl BytecodeGenerator {
 
         self.visit_statement(body)?;
 
-        self.loop_stack[depth].bind_continue_target(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).bind_continue_target(&mut self.builder);
         if let Some(next) = next {
             self.visit_for_effect(next)?;
         }
-        self.loop_stack[depth].jump_to_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).jump_to_header(&mut self.builder);
 
         self.builder.bind_labels(&mut exit_labels);
-        self.loop_stack[depth].finish(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).finish(&mut self.builder);
         self.loop_stack.pop();
         Ok(())
     }
@@ -433,6 +443,69 @@ impl BytecodeGenerator {
             }
         }
         Ok(())
+    }
+
+    fn visit_switch_statement(&mut self, tag: &Expression, cases: &[CaseClause]) -> Result<()> {
+        self.visit_for_accumulator_value(tag)?;
+
+        let number_of_cases = cases.iter().filter(|clause| clause.label.is_some()).count();
+        let default_case = cases.iter().position(|clause| clause.label.is_none());
+
+        self.loop_stack
+            .push(Breakable::Switch(SwitchBuilder::new(number_of_cases)));
+        let depth = self.loop_stack.len() - 1;
+
+        let result = (|| -> Result<()> {
+            let mark = self.builder.register_allocator().next_register_index();
+            let tag_holder = self.builder.register_allocator().new_register();
+            self.builder.store_accumulator_in_register(tag_holder);
+
+            let mut case_compare_ctr = 0;
+            for clause in cases {
+                let Some(label) = &clause.label else {
+                    continue;
+                };
+                self.visit_for_accumulator_value(label)?;
+                self.builder
+                    .compare_operation(Token::EqStrict, tag_holder);
+                Self::switch_at(&mut self.loop_stack, depth)
+                    .jump_to_case_if_true(&mut self.builder, case_compare_ctr);
+                case_compare_ctr += 1;
+            }
+            self.builder.register_allocator().release_registers(mark);
+
+            if default_case.is_some() {
+                Self::switch_at(&mut self.loop_stack, depth).jump_to_default(&mut self.builder);
+            } else {
+                Self::switch_at(&mut self.loop_stack, depth).emit_break(&mut self.builder);
+            }
+
+            let mut case_compare_ctr = 0;
+            for (index, clause) in cases.iter().enumerate() {
+                if Some(index) == default_case {
+                    Self::switch_at(&mut self.loop_stack, depth).bind_default(&mut self.builder);
+                } else {
+                    Self::switch_at(&mut self.loop_stack, depth).bind_case_target_for_compare_jump(
+                        &mut self.builder,
+                        case_compare_ctr,
+                    );
+                    case_compare_ctr += 1;
+                }
+                self.visit_statements(&clause.statements)?;
+            }
+            Ok(())
+        })();
+
+        Self::switch_at(&mut self.loop_stack, depth).finish(&mut self.builder);
+        self.loop_stack.pop();
+        result
+    }
+
+    fn switch_at(stack: &mut [Breakable], depth: usize) -> &mut SwitchBuilder {
+        match &mut stack[depth] {
+            Breakable::Switch(builder) => builder,
+            Breakable::Loop(_) => unreachable!(),
+        }
     }
 
     fn visit_return_statement(&mut self, value: Option<&Expression>) -> Result<()> {
@@ -467,6 +540,19 @@ impl BytecodeGenerator {
         Ok(())
     }
 
+
+    fn loop_at(stack: &mut [Breakable], depth: usize) -> &mut LoopBuilder {
+        match &mut stack[depth] {
+            Breakable::Loop(builder) => builder,
+            Breakable::Switch(_) => unreachable!(),
+        }
+    }
+
+    fn innermost_loop(&self) -> Option<usize> {
+        self.loop_stack
+            .iter()
+            .rposition(|breakable| matches!(breakable, Breakable::Loop(_)))
+    }
 
     fn resolve(&self, name: &str) -> Resolution {
         let mut context_depth = 0;
@@ -1562,9 +1648,9 @@ impl BytecodeGenerator {
         self.builder.load_literal_smi(0);
         self.builder.store_accumulator_in_register(index);
 
-        self.loop_stack.push(LoopBuilder::new());
+        self.loop_stack.push(Breakable::Loop(LoopBuilder::new()));
         let depth = self.loop_stack.len() - 1;
-        self.loop_stack[depth].loop_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).loop_header(&mut self.builder);
 
         let mut exit_labels = BytecodeLabels::new();
         self.builder.for_in_done(index, cache_length);
@@ -1573,19 +1659,19 @@ impl BytecodeGenerator {
 
         self.builder
             .for_in_next(receiver, index, triple.truncate(2));
-        let skip = self.loop_stack[depth].continue_labels().new_label();
-        let target = self.loop_stack[depth].continue_labels().label_mut(skip);
+        let skip = Self::loop_at(&mut self.loop_stack, depth).continue_labels().new_label();
+        let target = Self::loop_at(&mut self.loop_stack, depth).continue_labels().label_mut(skip);
         self.builder.jump_if_undefined(target);
 
         self.build_variable_assignment(each);
         self.visit_statement(body)?;
 
-        self.loop_stack[depth].bind_continue_target(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).bind_continue_target(&mut self.builder);
         self.builder.for_in_step(index);
-        self.loop_stack[depth].jump_to_header(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).jump_to_header(&mut self.builder);
 
         self.builder.bind_labels(&mut exit_labels);
-        self.loop_stack[depth].finish(&mut self.builder);
+        Self::loop_at(&mut self.loop_stack, depth).finish(&mut self.builder);
         self.loop_stack.pop();
 
         self.builder.bind_labels(&mut subject_undefined);

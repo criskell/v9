@@ -47,6 +47,52 @@ impl BlockBuilder {
 }
 
 #[derive(Default)]
+pub struct SwitchBuilder {
+    breakable: BreakableControlFlowBuilder,
+    case_sites: Vec<BytecodeLabel>,
+    default: BytecodeLabels,
+}
+
+impl SwitchBuilder {
+    pub fn new(number_of_cases: usize) -> SwitchBuilder {
+        SwitchBuilder {
+            breakable: BreakableControlFlowBuilder::new(),
+            case_sites: (0..number_of_cases).map(|_| BytecodeLabel::new()).collect(),
+            default: BytecodeLabels::new(),
+        }
+    }
+
+    pub fn jump_to_case_if_true(&mut self, builder: &mut BytecodeArrayBuilder, index: usize) {
+        builder.jump_if_true(&mut self.case_sites[index]);
+    }
+
+    pub fn bind_case_target_for_compare_jump(
+        &mut self,
+        builder: &mut BytecodeArrayBuilder,
+        index: usize,
+    ) {
+        builder.bind(&mut self.case_sites[index]);
+    }
+
+    pub fn jump_to_default(&mut self, builder: &mut BytecodeArrayBuilder) {
+        let label = self.default.new_label();
+        builder.jump(self.default.label_mut(label));
+    }
+
+    pub fn bind_default(&mut self, builder: &mut BytecodeArrayBuilder) {
+        builder.bind_labels(&mut self.default);
+    }
+
+    pub fn emit_break(&mut self, builder: &mut BytecodeArrayBuilder) {
+        self.breakable.emit_break(builder);
+    }
+
+    pub fn finish(&mut self, builder: &mut BytecodeArrayBuilder) {
+        self.breakable.bind_break_target(builder);
+    }
+}
+
+#[derive(Default)]
 pub struct LoopBuilder {
     breakable: BreakableControlFlowBuilder,
     continue_labels: BytecodeLabels,

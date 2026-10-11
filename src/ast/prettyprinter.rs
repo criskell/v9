@@ -151,6 +151,23 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
                 }
             }
         }
+        Statement::Switch { tag, cases, .. } => {
+            out.push_str("SWITCH\n");
+            print_expression(out, tag, depth + 1);
+            for clause in cases {
+                indent(out, depth + 1);
+                match &clause.label {
+                    Some(label) => {
+                        out.push_str("CASE\n");
+                        print_expression(out, label, depth + 2);
+                    }
+                    None => out.push_str("DEFAULT\n"),
+                }
+                for statement in &clause.statements {
+                    print_statement(out, statement, depth + 2);
+                }
+            }
+        }
         Statement::If {
             condition,
             then_statement,

@@ -60,6 +60,12 @@ pub enum PropertyKey {
 }
 
 #[derive(Clone, Debug)]
+pub struct CaseClause {
+    pub label: Option<Expression>,
+    pub statements: Vec<Statement>,
+}
+
+#[derive(Clone, Debug)]
 pub struct ClassLiteralProperty {
     pub key: PropertyKey,
     pub value: FunctionLiteral,
@@ -337,6 +343,12 @@ pub enum Statement {
         position: Position,
     },
 
+    Switch {
+        tag: Expression,
+        cases: Vec<CaseClause>,
+        position: Position,
+    },
+
     Return {
         value: Option<Expression>,
         position: Position,
@@ -362,6 +374,7 @@ impl Statement {
             | Statement::While { position, .. }
             | Statement::DoWhile { position, .. }
             | Statement::For { position, .. }
+            | Statement::Switch { position, .. }
             | Statement::Return { position, .. }
             | Statement::ForIn { position, .. }
             | Statement::TryFinally { position, .. }
