@@ -12,6 +12,20 @@ use vx::objects::map::Map;
 use vx::objects::smi::Smi;
 use vx::objects::transitions::TransitionsAccessor;
 
+#[derive(Copy, Clone)]
+struct Rooted(usize);
+
+impl Rooted {
+    fn new(isolate: &mut Isolate, object: JSObject) -> Rooted {
+        isolate.handles.push(object.tagged());
+        Rooted(isolate.handles.len() - 1)
+    }
+
+    fn get(self, isolate: &Isolate) -> JSObject {
+        JSObject::unchecked_cast(isolate.handles[self.0].to_strong_heap_object().unwrap())
+    }
+}
+
 #[test]
 fn a_constructor_run_many_times_produces_one_shape() {
     let mut isolate = Isolate::new();
@@ -20,9 +34,13 @@ fn a_constructor_run_many_times_produces_one_shape() {
     let mut maps = std::collections::HashSet::new();
     for i in 0..500 {
         let point = isolate.new_js_object();
-        isolate.set_property_by_str(point, "x", Smi::from_int(i));
-        isolate.set_property_by_str(point, "y", Smi::from_int(i * 2));
-        maps.insert(point.map(&isolate.heap));
+        let point = Rooted::new(&mut isolate, point);
+        let target = point.get(&isolate);
+        isolate.set_property_by_str(target, "x", Smi::from_int(i));
+        let target = point.get(&isolate);
+        isolate.set_property_by_str(target, "y", Smi::from_int(i * 2));
+        maps.insert(point.get(&isolate).map(&isolate.heap));
+        isolate.handles.clear();
     }
 
     assert_eq!(maps.len(), 1, "500 instances, one hidden class");
@@ -159,31 +177,43 @@ fn inherited_and_own_properties_resolve_in_the_right_order() {
     let mut isolate = Isolate::new();
 
     let base = isolate.new_js_object();
-    isolate.set_property_by_str(base, "kind", Smi::from_int(1));
-    isolate.set_property_by_str(base, "shared", Smi::from_int(2));
+    let base = Rooted::new(&mut isolate, base);
+    let target = base.get(&isolate);
+    isolate.set_property_by_str(target, "kind", Smi::from_int(1));
+    let target = base.get(&isolate);
+    isolate.set_property_by_str(target, "shared", Smi::from_int(2));
 
     let derived = isolate.new_js_object();
-    isolate.set_property_by_str(derived, "own", Smi::from_int(3));
+    let derived = Rooted::new(&mut isolate, derived);
+    let target = derived.get(&isolate);
+    isolate.set_property_by_str(target, "own", Smi::from_int(3));
+    let base_value = base.get(&isolate).tagged();
     derived
+        .get(&isolate)
         .map(&isolate.heap)
-        .set_prototype(&mut isolate.heap, base.tagged());
+        .set_prototype(&mut isolate.heap, base_value);
 
-    assert_eq!(Smi::to_int(isolate.get_property_by_str(derived, "own")), 3);
-    assert_eq!(Smi::to_int(isolate.get_property_by_str(derived, "kind")), 1);
+    let target = derived.get(&isolate);
+    assert_eq!(Smi::to_int(isolate.get_property_by_str(target, "own")), 3);
+    let target = derived.get(&isolate);
+    assert_eq!(Smi::to_int(isolate.get_property_by_str(target, "kind")), 1);
 
     // Shadowing creates an own property and leaves the prototype alone.
-    isolate.set_property_by_str(derived, "kind", Smi::from_int(9));
-    assert_eq!(Smi::to_int(isolate.get_property_by_str(derived, "kind")), 9);
-    assert_eq!(Smi::to_int(isolate.get_property_by_str(base, "kind")), 1);
+    let target = derived.get(&isolate);
+    isolate.set_property_by_str(target, "kind", Smi::from_int(9));
+    let target = derived.get(&isolate);
+    assert_eq!(Smi::to_int(isolate.get_property_by_str(target, "kind")), 9);
+    let target = base.get(&isolate);
+    assert_eq!(Smi::to_int(isolate.get_property_by_str(target, "kind")), 1);
 
     // Still inherited.
     assert_eq!(
-        Smi::to_int(isolate.get_property_by_str(derived, "shared")),
+        Smi::to_int(isolate.get_property_by_str(derived.get(&isolate), "shared")),
         2
     );
     // Absent everywhere.
     assert_eq!(
-        isolate.get_property_by_str(derived, "missing"),
+        isolate.get_property_by_str(derived.get(&isolate), "missing"),
         isolate.undefined_value()
     );
 }
@@ -227,11 +257,12 @@ fn numbers_choose_between_immediate_and_boxed_representations() {
 fn maps_are_immovable_so_shapes_outlive_collections() {
     let mut isolate = Isolate::new();
     let object = isolate.new_js_object();
-    isolate.set_property_by_str(object, "x", Smi::from_int(1));
-    let map_before = object.map(&isolate.heap);
+    let object = Rooted::new(&mut isolate, object);
+    let target = object.get(&isolate);
+    isolate.set_property_by_str(target, "x", Smi::from_int(1));
+    let map_before = object.get(&isolate).map(&isolate.heap);
     let descriptors_before = map_before.instance_descriptors(&isolate.heap);
 
-    isolate.handles.push(object.tagged());
     for _ in 0..5 {
         for i in 0..50 {
             isolate.new_heap_number(i as f64);
@@ -239,7 +270,7 @@ fn maps_are_immovable_so_shapes_outlive_collections() {
         isolate.collect_garbage();
     }
 
-    let moved = JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap());
+    let moved = object.get(&isolate);
     assert_eq!(moved.map(&isolate.heap), map_before);
     assert_eq!(
         map_before.instance_descriptors(&isolate.heap),
@@ -250,8 +281,10 @@ fn maps_are_immovable_so_shapes_outlive_collections() {
 
     // And transitions still lead to it.
     let fresh = isolate.new_js_object();
-    isolate.set_property_by_str(fresh, "x", Smi::from_int(2));
-    assert_eq!(fresh.map(&isolate.heap), map_before);
+    let fresh = Rooted::new(&mut isolate, fresh);
+    let target = fresh.get(&isolate);
+    isolate.set_property_by_str(target, "x", Smi::from_int(2));
+    assert_eq!(fresh.get(&isolate).map(&isolate.heap), map_before);
 }
 
 #[test]
@@ -262,8 +295,11 @@ fn the_initial_map_is_shared_and_never_mutated() {
 
     for i in 0..10 {
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, &format!("f{i}"), Smi::zero());
-        assert_ne!(object.map(&isolate.heap), initial);
+        let object = Rooted::new(&mut isolate, object);
+        let target = object.get(&isolate);
+        isolate.set_property_by_str(target, &format!("f{i}"), Smi::zero());
+        assert_ne!(object.get(&isolate).map(&isolate.heap), initial);
+        isolate.handles.clear();
     }
 
     assert_eq!(

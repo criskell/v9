@@ -23,6 +23,21 @@ impl Isolate {
 
 #[cfg(test)]
 mod tests {
+    use crate::objects::js_objects::JSObject;
+    #[derive(Copy, Clone)]
+    struct Rooted(usize);
+
+    impl Rooted {
+        fn new(isolate: &mut Isolate, object: JSObject) -> Rooted {
+            isolate.handles.push(object.tagged());
+            Rooted(isolate.handles.len() - 1)
+        }
+
+        fn get(self, isolate: &Isolate) -> JSObject {
+            JSObject::unchecked_cast(isolate.handles[self.0].to_strong_heap_object().unwrap())
+        }
+    }
+
     use super::*;
     use crate::objects::property_details::default_data_field;
     use crate::objects::smi::Smi;
@@ -31,8 +46,9 @@ mod tests {
     fn widening_only_happens_when_the_value_is_actually_wider() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "x", Smi::from_int(1));
-        let map = object.map(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1));
+        let map = object.get(&isolate).map(&isolate.heap);
         let x = isolate.internalize_string("x").tagged();
 
         assert_eq!(
@@ -41,7 +57,7 @@ mod tests {
                 .representation(),
             Representation::Smi
         );
-        isolate.set_property_by_str(object, "x", Smi::from_int(2));
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(2));
         assert_eq!(
             map.find_property_details(&isolate.heap, x)
                 .unwrap()
@@ -55,14 +71,15 @@ mod tests {
     fn the_field_index_and_attributes_survive_a_widening() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "a", Smi::from_int(1));
-        isolate.set_property_by_str(object, "b", Smi::from_int(2));
-        let map = object.map(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "a", Smi::from_int(1));
+        isolate.set_property_by_str(object.get(&isolate), "b", Smi::from_int(2));
+        let map = object.get(&isolate).map(&isolate.heap);
         let b = isolate.internalize_string("b").tagged();
         let before = map.find_property_details(&isolate.heap, b).unwrap();
 
         let boxed = isolate.new_heap_number(1.5).tagged();
-        isolate.set_property_by_str(object, "b", boxed);
+        isolate.set_property_by_str(object.get(&isolate), "b", boxed);
 
         let after = map.find_property_details(&isolate.heap, b).unwrap();
         assert_eq!(after.representation(), Representation::Tagged);

@@ -253,7 +253,7 @@ fn collecting_twice_in_a_row_is_stable() {
         .run_script("var a = [1, 2, 3]; var o = { x: a };")
         .expect("runs");
 
-    let first = isolate.collect_all_garbage();
+    isolate.collect_all_garbage();
     let second = isolate.collect_all_garbage();
     assert_eq!(
         second.swept_objects, 0,
@@ -263,7 +263,11 @@ fn collecting_twice_in_a_row_is_stable() {
         second.moved_objects, 0,
         "a compacted heap has nothing left to slide"
     );
-    assert!(second.marked_objects <= first.marked_objects);
+    let third = isolate.collect_all_garbage();
+    assert_eq!(
+        third.marked_objects, second.marked_objects,
+        "once the nursery is drained the live set stops changing"
+    );
 
     let global = isolate.global_object();
     let o = JSObject::unchecked_cast(

@@ -360,8 +360,18 @@ impl Isolate {
 
 #[cfg(test)]
 mod tests {
-    fn rooted(isolate: &Isolate) -> JSObject {
-        JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap())
+    #[derive(Copy, Clone)]
+    struct Rooted(usize);
+
+    impl Rooted {
+        fn new(isolate: &mut Isolate, object: JSObject) -> Rooted {
+            isolate.handles.push(object.tagged());
+            Rooted(isolate.handles.len() - 1)
+        }
+
+        fn get(self, isolate: &Isolate) -> JSObject {
+            JSObject::unchecked_cast(isolate.handles[self.0].to_strong_heap_object().unwrap())
+        }
     }
 
     use super::*;
@@ -374,26 +384,31 @@ mod tests {
     fn adding_a_property_moves_the_object_to_a_new_map() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        let map_before = object.map(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        let map_before = object.get(&isolate).map(&isolate.heap);
 
-        assert!(isolate.set_property_by_str(object, "x", Smi::from_int(1)));
+        assert!(isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1)));
 
-        let map_after = object.map(&isolate.heap);
+        let map_after = object.get(&isolate).map(&isolate.heap);
         assert_ne!(map_before, map_after, "the shape changed");
         assert_eq!(map_before.number_of_own_descriptors(&isolate.heap), 0);
         assert_eq!(map_after.number_of_own_descriptors(&isolate.heap), 1);
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(object, "x")), 1);
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "x")),
+            1
+        );
     }
 
     #[test]
     fn the_new_map_points_back_at_the_old_one() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        let map0 = object.map(&isolate.heap);
-        isolate.set_property_by_str(object, "x", Smi::from_int(1));
-        let map1 = object.map(&isolate.heap);
-        isolate.set_property_by_str(object, "y", Smi::from_int(2));
-        let map2 = object.map(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        let map0 = object.get(&isolate).map(&isolate.heap);
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1));
+        let map1 = object.get(&isolate).map(&isolate.heap);
+        isolate.set_property_by_str(object.get(&isolate), "y", Smi::from_int(2));
+        let map2 = object.get(&isolate).map(&isolate.heap);
 
         assert_eq!(map2.back_pointer(&isolate.heap), Some(map1));
         assert_eq!(map1.back_pointer(&isolate.heap), Some(map0));
@@ -404,16 +419,20 @@ mod tests {
     fn objects_built_the_same_way_share_a_map() {
         let mut isolate = Isolate::new();
         let a = isolate.new_js_object();
+        let a = Rooted::new(&mut isolate, a);
         let b = isolate.new_js_object();
+        let b = Rooted::new(&mut isolate, b);
 
-        for object in [a, b] {
+        for rooted in [a, b] {
+            let object = rooted.get(&isolate);
             isolate.set_property_by_str(object, "x", Smi::from_int(1));
+            let object = rooted.get(&isolate);
             isolate.set_property_by_str(object, "y", Smi::from_int(2));
         }
 
         assert_eq!(
-            a.map(&isolate.heap),
-            b.map(&isolate.heap),
+            a.get(&isolate).map(&isolate.heap),
+            b.get(&isolate).map(&isolate.heap),
             "this is the entire point of hidden classes"
         );
     }
@@ -422,22 +441,30 @@ mod tests {
     fn property_order_produces_different_shapes() {
         let mut isolate = Isolate::new();
         let xy = isolate.new_js_object();
-        isolate.set_property_by_str(xy, "x", Smi::from_int(1));
-        isolate.set_property_by_str(xy, "y", Smi::from_int(2));
+        let xy = Rooted::new(&mut isolate, xy);
+        isolate.set_property_by_str(xy.get(&isolate), "x", Smi::from_int(1));
+        isolate.set_property_by_str(xy.get(&isolate), "y", Smi::from_int(2));
 
         let yx = isolate.new_js_object();
-        isolate.set_property_by_str(yx, "y", Smi::from_int(2));
-        isolate.set_property_by_str(yx, "x", Smi::from_int(1));
+        let yx = Rooted::new(&mut isolate, yx);
+        isolate.set_property_by_str(yx.get(&isolate), "y", Smi::from_int(2));
+        isolate.set_property_by_str(yx.get(&isolate), "x", Smi::from_int(1));
 
         assert_ne!(
-            xy.map(&isolate.heap),
-            yx.map(&isolate.heap),
+            xy.get(&isolate).map(&isolate.heap),
+            yx.get(&isolate).map(&isolate.heap),
             "{{x, y}} and {{y, x}} are different shapes -- the classic \
              performance footgun"
         );
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(xy, "x")), 1);
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(yx, "x")), 1);
-        let x_in_xy = xy.map(&isolate.heap);
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(xy.get(&isolate), "x")),
+            1
+        );
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(yx.get(&isolate), "x")),
+            1
+        );
+        let x_in_xy = xy.get(&isolate).map(&isolate.heap);
         let x_key = isolate.internalize_string("x").tagged();
         assert_eq!(
             x_in_xy
@@ -447,7 +474,8 @@ mod tests {
             0
         );
         assert_eq!(
-            yx.map(&isolate.heap)
+            yx.get(&isolate)
+                .map(&isolate.heap)
                 .find_property_details(&isolate.heap, x_key)
                 .unwrap()
                 .field_index(),
@@ -461,8 +489,9 @@ mod tests {
         let map0 = isolate.roots.js_object_map();
 
         let a = isolate.new_js_object();
-        isolate.set_property_by_str(a, "x", Smi::from_int(1));
-        let map1 = a.map(&isolate.heap);
+        let a = Rooted::new(&mut isolate, a);
+        isolate.set_property_by_str(a.get(&isolate), "x", Smi::from_int(1));
+        let map1 = a.get(&isolate).map(&isolate.heap);
 
         let x = isolate.internalize_string("x").tagged();
         assert_eq!(
@@ -472,35 +501,48 @@ mod tests {
         );
 
         let b = isolate.new_js_object();
-        isolate.set_property_by_str(b, "x", Smi::from_int(9));
-        assert_eq!(b.map(&isolate.heap), map1);
+        let b = Rooted::new(&mut isolate, b);
+        isolate.set_property_by_str(b.get(&isolate), "x", Smi::from_int(9));
+        assert_eq!(b.get(&isolate).map(&isolate.heap), map1);
     }
 
     #[test]
     fn a_branching_shape_graph_keeps_both_paths() {
         let mut isolate = Isolate::new();
         let base = isolate.new_js_object();
-        isolate.set_property_by_str(base, "x", Smi::from_int(1));
-        let map1 = base.map(&isolate.heap);
+        let base = Rooted::new(&mut isolate, base);
+        isolate.set_property_by_str(base.get(&isolate), "x", Smi::from_int(1));
+        let map1 = base.get(&isolate).map(&isolate.heap);
 
         let left = isolate.new_js_object();
-        isolate.set_property_by_str(left, "x", Smi::from_int(1));
-        isolate.set_property_by_str(left, "y", Smi::from_int(2));
+        let left = Rooted::new(&mut isolate, left);
+        isolate.set_property_by_str(left.get(&isolate), "x", Smi::from_int(1));
+        isolate.set_property_by_str(left.get(&isolate), "y", Smi::from_int(2));
 
         let right = isolate.new_js_object();
-        isolate.set_property_by_str(right, "x", Smi::from_int(1));
-        isolate.set_property_by_str(right, "z", Smi::from_int(3));
+        let right = Rooted::new(&mut isolate, right);
+        isolate.set_property_by_str(right.get(&isolate), "x", Smi::from_int(1));
+        isolate.set_property_by_str(right.get(&isolate), "z", Smi::from_int(3));
 
-        assert_ne!(left.map(&isolate.heap), right.map(&isolate.heap));
+        assert_ne!(
+            left.get(&isolate).map(&isolate.heap),
+            right.get(&isolate).map(&isolate.heap)
+        );
         assert_eq!(
             TransitionsAccessor::number_of_transitions(&isolate.heap, map1),
             2,
             "one shape, two successors"
         );
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(left, "y")), 2);
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(right, "z")), 3);
         assert_eq!(
-            isolate.get_property_by_str(left, "z"),
+            Smi::to_int(isolate.get_property_by_str(left.get(&isolate), "y")),
+            2
+        );
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(right.get(&isolate), "z")),
+            3
+        );
+        assert_eq!(
+            isolate.get_property_by_str(left.get(&isolate), "z"),
             isolate.undefined_value(),
             "shapes do not leak into each other"
         );
@@ -510,12 +552,13 @@ mod tests {
     fn descriptor_arrays_are_shared_down_a_chain_rather_than_copied() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "a", Smi::from_int(1));
-        let map1 = object.map(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "a", Smi::from_int(1));
+        let map1 = object.get(&isolate).map(&isolate.heap);
         let descriptors1 = map1.instance_descriptors(&isolate.heap);
 
-        isolate.set_property_by_str(object, "b", Smi::from_int(2));
-        let map2 = object.map(&isolate.heap);
+        isolate.set_property_by_str(object.get(&isolate), "b", Smi::from_int(2));
+        let map2 = object.get(&isolate).map(&isolate.heap);
         let descriptors2 = map2.instance_descriptors(&isolate.heap);
 
         assert_eq!(
@@ -538,35 +581,36 @@ mod tests {
     fn properties_spill_into_a_backing_store_when_the_inline_slots_run_out() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.handles.push(object.tagged());
-        let inline_slots = object.map(&isolate.heap).inobject_properties(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        let inline_slots = object
+            .get(&isolate)
+            .map(&isolate.heap)
+            .inobject_properties(&isolate.heap);
         assert_eq!(inline_slots, Map::K_INITIAL_INOBJECT_SLACK);
 
         let count = inline_slots + 3;
         for i in 0..count {
             let name = format!("p{i}");
-            let object = rooted(&isolate);
-            assert!(isolate.set_property_by_str(object, &name, Smi::from_int(i)));
+            assert!(isolate.set_property_by_str(object.get(&isolate), &name, Smi::from_int(i)));
         }
 
         for i in 0..count {
             let name = format!("p{i}");
-            let object = rooted(&isolate);
             assert_eq!(
-                Smi::to_int(isolate.get_property_by_str(object, &name)),
+                Smi::to_int(isolate.get_property_by_str(object.get(&isolate), &name)),
                 i,
                 "property {name} was lost"
             );
         }
 
-        let object = rooted(&isolate);
-        let array = object.property_array(&isolate.heap);
+        let array = object.get(&isolate).property_array(&isolate.heap);
         assert!(
             array.length(&isolate.heap) >= count - inline_slots,
             "the overflow must have a backing store"
         );
         assert_eq!(
             object
+                .get(&isolate)
                 .map(&isolate.heap)
                 .number_of_own_descriptors(&isolate.heap),
             count
@@ -577,25 +621,30 @@ mod tests {
     fn overwriting_a_property_does_not_change_the_shape() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "x", Smi::from_int(1));
-        let map = object.map(&isolate.heap);
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1));
+        let map = object.get(&isolate).map(&isolate.heap);
 
-        assert!(isolate.set_property_by_str(object, "x", Smi::from_int(2)));
+        assert!(isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(2)));
         assert_eq!(
-            object.map(&isolate.heap),
+            object.get(&isolate).map(&isolate.heap),
             map,
             "a write is not a shape change"
         );
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(object, "x")), 2);
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "x")),
+            2
+        );
     }
 
     #[test]
     fn assigning_a_wider_value_generalizes_the_field_representation() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "x", Smi::from_int(1));
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1));
 
-        let map = object.map(&isolate.heap);
+        let map = object.get(&isolate).map(&isolate.heap);
         let x = isolate.internalize_string("x").tagged();
         assert_eq!(
             map.find_property_details(&isolate.heap, x)
@@ -605,17 +654,17 @@ mod tests {
         );
 
         let boxed = isolate.new_heap_number(1.5).tagged();
-        assert!(isolate.set_property_by_str(object, "x", boxed));
+        assert!(isolate.set_property_by_str(object.get(&isolate), "x", boxed));
 
         assert_eq!(
             map.find_property_details(&isolate.heap, x)
                 .unwrap()
                 .representation(),
             Representation::Tagged,
-            "a field that has held both a Smi and an object is tagged"
+            "a field that has held both a Smi and an object.get(&isolate) is tagged"
         );
         assert!(map.is_unstable(&isolate.heap));
-        let read_back = isolate.get_property_by_str(object, "x");
+        let read_back = isolate.get_property_by_str(object.get(&isolate), "x");
         assert_eq!(number_value(&isolate.heap, read_back), Some(1.5));
     }
 
@@ -623,12 +672,13 @@ mod tests {
     fn a_missing_property_reads_as_undefined() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
+        let object = Rooted::new(&mut isolate, object);
         assert_eq!(
-            isolate.get_property_by_str(object, "nope"),
+            isolate.get_property_by_str(object.get(&isolate), "nope"),
             isolate.undefined_value()
         );
         assert_eq!(
-            isolate.get_own_property(object, isolate.roots.empty_string),
+            isolate.get_own_property(object.get(&isolate), isolate.roots.empty_string),
             None
         );
     }
@@ -637,49 +687,66 @@ mod tests {
     fn lookup_walks_the_prototype_chain() {
         let mut isolate = Isolate::new();
         let prototype = isolate.new_js_object();
-        isolate.set_property_by_str(prototype, "inherited", Smi::from_int(7));
+        let prototype = Rooted::new(&mut isolate, prototype);
+        isolate.set_property_by_str(prototype.get(&isolate), "inherited", Smi::from_int(7));
 
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "own", Smi::from_int(1));
-        let map = object.map(&isolate.heap);
-        map.set_prototype(&mut isolate.heap, prototype.tagged());
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "own", Smi::from_int(1));
+        let map = object.get(&isolate).map(&isolate.heap);
+        let prototype_value = prototype.get(&isolate).tagged();
+        map.set_prototype(&mut isolate.heap, prototype_value);
 
         assert_eq!(
-            Smi::to_int(isolate.get_property_by_str(object, "inherited")),
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "inherited")),
             7
         );
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(object, "own")), 1);
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "own")),
+            1
+        );
 
         let inherited = isolate.internalize_string("inherited").tagged();
-        assert_eq!(isolate.get_own_property(object, inherited), None);
+        assert_eq!(
+            isolate.get_own_property(object.get(&isolate), inherited),
+            None
+        );
 
-        let found = isolate.lookup_property(object, inherited).unwrap();
-        assert_eq!(found.holder, prototype);
-        assert_eq!(found.holder_map, prototype.map(&isolate.heap));
+        let found = isolate
+            .lookup_property(object.get(&isolate), inherited)
+            .unwrap();
+        assert_eq!(found.holder, prototype.get(&isolate));
+        assert_eq!(found.holder_map, prototype.get(&isolate).map(&isolate.heap));
     }
 
     #[test]
     fn an_own_property_shadows_an_inherited_one() {
         let mut isolate = Isolate::new();
         let prototype = isolate.new_js_object();
-        isolate.set_property_by_str(prototype, "x", Smi::from_int(7));
+        let prototype = Rooted::new(&mut isolate, prototype);
+        isolate.set_property_by_str(prototype.get(&isolate), "x", Smi::from_int(7));
 
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "marker", Smi::zero());
-        let map = object.map(&isolate.heap);
-        map.set_prototype(&mut isolate.heap, prototype.tagged());
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "marker", Smi::zero());
+        let map = object.get(&isolate).map(&isolate.heap);
+        let prototype_value = prototype.get(&isolate).tagged();
+        map.set_prototype(&mut isolate.heap, prototype_value);
 
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(object, "x")), 7);
-        isolate.set_property_by_str(object, "x", Smi::from_int(1));
         assert_eq!(
-            Smi::to_int(isolate.get_property_by_str(object, "x")),
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "x")),
+            7
+        );
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1));
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "x")),
             1,
             "the own property wins"
         );
         assert_eq!(
-            Smi::to_int(isolate.get_property_by_str(prototype, "x")),
+            Smi::to_int(isolate.get_property_by_str(prototype.get(&isolate), "x")),
             7,
-            "and the prototype is untouched"
+            "and the prototype.get(&isolate) is untouched"
         );
     }
 
@@ -687,42 +754,49 @@ mod tests {
     fn a_non_extensible_object_refuses_new_properties_but_allows_writes() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.set_property_by_str(object, "x", Smi::from_int(1));
+        let object = Rooted::new(&mut isolate, object);
+        isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(1));
         object
+            .get(&isolate)
             .map(&isolate.heap)
             .set_is_extensible(&mut isolate.heap, false);
 
         assert!(
-            !isolate.set_property_by_str(object, "y", Smi::from_int(2)),
+            !isolate.set_property_by_str(object.get(&isolate), "y", Smi::from_int(2)),
             "Object.preventExtensions blocks additions"
         );
         assert!(
-            isolate.set_property_by_str(object, "x", Smi::from_int(3)),
+            isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(3)),
             "existing properties are still writable"
         );
-        assert_eq!(Smi::to_int(isolate.get_property_by_str(object, "x")), 3);
+        assert_eq!(
+            Smi::to_int(isolate.get_property_by_str(object.get(&isolate), "x")),
+            3
+        );
     }
 
     #[test]
     fn a_long_shape_chain_stays_consistent() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        isolate.handles.push(object.tagged());
+        let object = Rooted::new(&mut isolate, object);
+        isolate.handles.push(object.get(&isolate).tagged());
         const N: i32 = 40;
         for i in 0..N {
-            let object = rooted(&isolate);
-            assert!(isolate.set_property_by_str(object, &format!("f{i}"), Smi::from_int(i * 3)));
+            assert!(isolate.set_property_by_str(
+                object.get(&isolate),
+                &format!("f{i}"),
+                Smi::from_int(i * 3)
+            ));
         }
 
-        let object = rooted(&isolate);
-        let map = object.map(&isolate.heap);
+        let map = object.get(&isolate).map(&isolate.heap);
         assert_eq!(map.number_of_own_descriptors(&isolate.heap), N);
         assert_eq!(map.own_property_names(&isolate.heap).len() as i32, N);
 
         for i in 0..N {
-            let object = rooted(&isolate);
             assert_eq!(
-                Smi::to_int(isolate.get_property_by_str(object, &format!("f{i}"))),
+                Smi::to_int(isolate.get_property_by_str(object.get(&isolate), &format!("f{i}"))),
                 i * 3
             );
         }
@@ -747,9 +821,10 @@ mod tests {
         let mut maps = std::collections::HashSet::new();
         for i in 0..1000 {
             let object = isolate.new_js_object();
-            isolate.set_property_by_str(object, "x", Smi::from_int(i));
-            isolate.set_property_by_str(object, "y", Smi::from_int(i));
-            maps.insert(object.map(&isolate.heap));
+            let object = Rooted::new(&mut isolate, object);
+            isolate.set_property_by_str(object.get(&isolate), "x", Smi::from_int(i));
+            isolate.set_property_by_str(object.get(&isolate), "y", Smi::from_int(i));
+            maps.insert(object.get(&isolate).map(&isolate.heap));
         }
         assert_eq!(maps.len(), 1, "1000 objects, 1 hidden class");
     }

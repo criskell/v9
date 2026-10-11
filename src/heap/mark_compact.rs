@@ -18,6 +18,8 @@ pub struct MarkCompactStats {
 impl Isolate {
     /// `MarkCompactCollector::CollectGarbage`
     pub fn collect_all_garbage(&mut self) -> MarkCompactStats {
+        self.collect_garbage();
+
         let mut stats = MarkCompactStats {
             old_space_before: self.heap.old_space().size(),
             ..Default::default()

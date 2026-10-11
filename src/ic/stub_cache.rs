@@ -174,11 +174,19 @@ mod tests {
 
         fn shape(&mut self, properties: &[&str]) -> Map {
             let object = self.isolate.new_js_object();
+            self.isolate.handles.push(object.tagged());
+            let slot = self.isolate.handles.len() - 1;
+            let rooted = |isolate: &crate::execution::isolate::Isolate| {
+                crate::objects::js_objects::JSObject::unchecked_cast(
+                    isolate.handles[slot].to_strong_heap_object().unwrap(),
+                )
+            };
             for property in properties {
+                let object = rooted(&self.isolate);
                 self.isolate
                     .set_property_by_str(object, property, Smi::from_int(1));
             }
-            object.map(&self.isolate.heap)
+            rooted(&self.isolate).map(&self.isolate.heap)
         }
     }
 

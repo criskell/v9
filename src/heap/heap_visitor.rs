@@ -166,6 +166,21 @@ impl Isolate {
 
 #[cfg(test)]
 mod tests {
+    use crate::objects::js_objects::JSObject;
+    #[derive(Copy, Clone)]
+    struct Rooted(usize);
+
+    impl Rooted {
+        fn new(isolate: &mut Isolate, object: JSObject) -> Rooted {
+            isolate.handles.push(object.tagged());
+            Rooted(isolate.handles.len() - 1)
+        }
+
+        fn get(self, isolate: &Isolate) -> JSObject {
+            JSObject::unchecked_cast(isolate.handles[self.0].to_strong_heap_object().unwrap())
+        }
+    }
+
     use super::*;
     use crate::objects::smi::Smi;
     use crate::objects::tagged::Tagged;
@@ -180,21 +195,27 @@ mod tests {
     fn a_plain_object_exposes_its_header_and_inline_slots() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
-        let slots = slots_of(&isolate, object.object());
+        let object = Rooted::new(&mut isolate, object);
+        let slots = slots_of(&isolate, object.get(&isolate).object());
         assert_eq!(slots.len(), 2 + Map::K_INITIAL_INOBJECT_SLACK as usize);
-        assert_eq!(slots[0], object.properties_or_hash_address());
-        assert_eq!(slots[1], object.elements_address());
-        assert!(!slots.contains(&object.address()));
+        assert_eq!(slots[0], object.get(&isolate).properties_or_hash_address());
+        assert_eq!(slots[1], object.get(&isolate).elements_address());
+        assert!(!slots.contains(&object.get(&isolate).address()));
     }
 
     #[test]
     fn every_reference_an_object_holds_is_reachable_through_a_visited_slot() {
         let mut isolate = Isolate::new();
         let object = isolate.new_js_object();
+        let object = Rooted::new(&mut isolate, object);
         let value = isolate.new_heap_number(1.5).tagged();
-        isolate.set_property_by_str(object, "x", value);
+        isolate.handles.push(value);
+        let value_slot = isolate.handles.len() - 1;
+        let target = object.get(&isolate);
+        isolate.set_property_by_str(target, "x", value);
 
-        let slots = slots_of(&isolate, object.object());
+        let value = isolate.handles[value_slot];
+        let slots = slots_of(&isolate, object.get(&isolate).object());
         let found = slots
             .iter()
             .any(|address| isolate.heap.read_tagged(*address) == value);
