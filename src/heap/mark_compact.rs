@@ -51,6 +51,12 @@ impl Isolate {
         for value in roots {
             self.mark_object(bitmap, worklist, value);
         }
+
+        let mut outside: Vec<HeapObject> = Vec::new();
+        self.for_each_object_outside_old_space(&mut |_, object| outside.push(object));
+        for object in outside {
+            worklist.push(object);
+        }
     }
 
     /// `MarkCompactCollector::MarkObject`

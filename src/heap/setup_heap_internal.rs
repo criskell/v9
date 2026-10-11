@@ -311,7 +311,11 @@ mod tests {
         for (name, value) in isolate.roots.named() {
             if matches!(
                 name,
-                "global_object" | "object_prototype" | "function_prototype" | "array_prototype"
+                "global_object"
+                    | "native_context"
+                    | "object_prototype"
+                    | "function_prototype"
+                    | "array_prototype"
             ) {
                 continue;
             }

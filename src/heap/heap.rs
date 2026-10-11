@@ -226,6 +226,10 @@ impl Heap {
         self.the_hole_value != Tagged::ZERO && value == self.the_hole_value
     }
 
+    pub fn contains(&self, address: Address) -> bool {
+        address != 0 && (address as usize) < self.memory.len()
+    }
+
     pub fn read_u64(&self, address: Address) -> u64 {
         let i = self.index_aligned(address, 8);
         u64::from_ne_bytes(self.memory[i..i + 8].try_into().unwrap())

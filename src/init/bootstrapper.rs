@@ -51,6 +51,185 @@ impl Isolate {
 
         let global = self.roots.global_object;
         self.set_property_by_str(self.global_object(), "globalThis", global);
+
+        self.initialize_native_context();
+        self.close_handle_scope(scope);
+    }
+
+    fn initialize_native_context(&mut self) {
+        use crate::objects::contexts::NativeContext;
+        use crate::objects::elements_kind::FAST_ELEMENTS_KIND_SEQUENCE;
+
+        let undefined = self.undefined_value();
+        let context = self.new_function_context(
+            NativeContext::NATIVE_CONTEXT_SLOTS
+                - crate::objects::contexts::Context::MIN_CONTEXT_SLOTS,
+            undefined,
+        );
+        let context = NativeContext::unchecked_cast(context.object());
+        self.roots.native_context = context.tagged();
+
+        let scope = self.handle_scope();
+
+        let object_prototype = self.new_js_object();
+        let object_prototype = self.create_object_handle(object_prototype.object());
+        self.install_builtin(
+            object_prototype,
+            "hasOwnProperty",
+            Builtin::ObjectPrototypeHasOwnProperty,
+            1,
+        );
+        self.install_builtin(
+            object_prototype,
+            "toString",
+            Builtin::ObjectPrototypeToString,
+            0,
+        );
+
+        let array_prototype = self.new_js_object();
+        let array_prototype = self.create_object_handle(array_prototype.object());
+        self.install_builtin(array_prototype, "push", Builtin::ArrayPrototypePush, 1);
+        self.install_builtin(array_prototype, "pop", Builtin::ArrayPrototypePop, 0);
+        self.install_builtin(array_prototype, "join", Builtin::ArrayPrototypeJoin, 1);
+        self.install_builtin(
+            array_prototype,
+            "indexOf",
+            Builtin::ArrayPrototypeIndexOf,
+            1,
+        );
+
+        let string_prototype = self.new_js_object();
+        let string_prototype = self.create_object_handle(string_prototype.object());
+        self.install_builtin(
+            string_prototype,
+            "charAt",
+            Builtin::StringPrototypeCharAt,
+            1,
+        );
+        self.install_builtin(
+            string_prototype,
+            "indexOf",
+            Builtin::StringPrototypeIndexOf,
+            1,
+        );
+        self.install_builtin(string_prototype, "slice", Builtin::StringPrototypeSlice, 2);
+        self.install_builtin(
+            string_prototype,
+            "toUpperCase",
+            Builtin::StringPrototypeToUpperCase,
+            0,
+        );
+        self.install_builtin(
+            string_prototype,
+            "toLowerCase",
+            Builtin::StringPrototypeToLowerCase,
+            0,
+        );
+
+        let number_prototype = self.new_js_object();
+        let number_prototype = self.create_object_handle(number_prototype.object());
+        self.install_builtin(
+            number_prototype,
+            "toString",
+            Builtin::NumberPrototypeToString,
+            0,
+        );
+
+        let function_prototype = self.new_js_object();
+        let function_prototype = self.create_object_handle(function_prototype.object());
+        self.install_builtin(
+            function_prototype,
+            "call",
+            Builtin::FunctionPrototypeCall,
+            1,
+        );
+
+        let object_prototype_value = object_prototype.get(self);
+        self.roots.object_prototype = object_prototype_value;
+        for prototype in [
+            array_prototype,
+            string_prototype,
+            number_prototype,
+            function_prototype,
+        ] {
+            let map = self.heap.map_of(prototype.object(self));
+            map.set_prototype(&mut self.heap, object_prototype_value);
+        }
+
+        let object_maps = [self.roots.js_object_map, self.roots.js_global_object_map];
+        for map in object_maps {
+            let map =
+                crate::objects::map::Map::unchecked_cast(map.to_strong_heap_object().unwrap());
+            map.set_prototype(&mut self.heap, object_prototype_value);
+        }
+
+        let array_prototype_value = array_prototype.get(self);
+        self.roots.array_prototype = array_prototype_value;
+        for kind in FAST_ELEMENTS_KIND_SEQUENCE {
+            let map = crate::objects::map::Map::unchecked_cast(
+                self.roots
+                    .get_initial_js_array_map(kind)
+                    .to_strong_heap_object()
+                    .unwrap(),
+            );
+            map.set_prototype(&mut self.heap, array_prototype_value);
+        }
+        let dictionary_array_map = crate::objects::map::Map::unchecked_cast(
+            self.roots
+                .js_array_dictionary_elements_map
+                .to_strong_heap_object()
+                .unwrap(),
+        );
+        dictionary_array_map.set_prototype(&mut self.heap, array_prototype_value);
+
+        let function_prototype_value = function_prototype.get(self);
+        self.roots.function_prototype = function_prototype_value;
+        for map in [
+            self.roots.js_function_map,
+            self.roots.js_native_function_map,
+        ] {
+            let map =
+                crate::objects::map::Map::unchecked_cast(map.to_strong_heap_object().unwrap());
+            map.set_prototype(&mut self.heap, function_prototype_value);
+        }
+
+        let context = NativeContext::unchecked_cast(
+            self.roots.native_context.to_strong_heap_object().unwrap(),
+        );
+        let string_prototype_value = string_prototype.get(self);
+        let number_prototype_value = number_prototype.get(self);
+        context.set(
+            &mut self.heap,
+            NativeContext::INITIAL_OBJECT_PROTOTYPE_INDEX,
+            object_prototype_value,
+        );
+        context.set(
+            &mut self.heap,
+            NativeContext::INITIAL_ARRAY_PROTOTYPE_INDEX,
+            array_prototype_value,
+        );
+        context.set(
+            &mut self.heap,
+            NativeContext::INITIAL_STRING_PROTOTYPE_INDEX,
+            string_prototype_value,
+        );
+        context.set(
+            &mut self.heap,
+            NativeContext::INITIAL_NUMBER_PROTOTYPE_INDEX,
+            number_prototype_value,
+        );
+        context.set(
+            &mut self.heap,
+            NativeContext::INITIAL_FUNCTION_PROTOTYPE_INDEX,
+            function_prototype_value,
+        );
+
+        let object_constructor = self.new_js_object();
+        let object_constructor = self.create_object_handle(object_constructor.object());
+        self.install_builtin(object_constructor, "keys", Builtin::ObjectKeys, 1);
+        let object_constructor_value = object_constructor.get(self);
+        self.set_property_by_str(self.global_object(), "Object", object_constructor_value);
+
         self.close_handle_scope(scope);
     }
 

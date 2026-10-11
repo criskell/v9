@@ -490,6 +490,9 @@ impl Isolate {
             .feedback_vector_map
             .to_strong_heap_object()
             .unwrap();
+        let scope = self.handle_scope();
+        let shared_handle = self.create_object_handle(shared.object());
+        let metadata_handle = self.create_handle(metadata);
         let object = self.allocate_raw_with_retry_or_fail(
             FeedbackVector::size_for(length) as usize,
             AllocationType::Old,
@@ -498,7 +501,10 @@ impl Isolate {
         let vector = FeedbackVector::unchecked_cast(object);
         vector.set_length(&mut self.heap, length);
         vector.set_invocation_count(&mut self.heap, 0);
-        vector.set_shared_function_info(&mut self.heap, shared.tagged());
+        let shared_value = shared_handle.get(self);
+        let metadata = metadata_handle.get(self);
+        self.close_handle_scope(scope);
+        vector.set_shared_function_info(&mut self.heap, shared_value);
         vector.set_metadata(&mut self.heap, metadata);
         let uninitialized = self.roots.uninitialized_value;
         for slot in 0..length {

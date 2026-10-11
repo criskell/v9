@@ -209,6 +209,32 @@ impl Isolate {
         self.new_number(result as f64)
     }
 
+    /// `Object::GetPrototypeChainRootMap`
+    ///
+    /// `Map::GetPrototypeChainRootMap`
+    pub fn get_prototype_chain_root(&self, value: Tagged) -> Option<Tagged> {
+        use crate::objects::contexts::NativeContext;
+        use crate::objects::instance_type as it;
+
+        let context =
+            NativeContext::unchecked_cast(self.roots.native_context.to_strong_heap_object()?);
+        if value.is_smi() {
+            return Some(context.get(&self.heap, NativeContext::INITIAL_NUMBER_PROTOTYPE_INDEX));
+        }
+        let object = value.to_strong_heap_object()?;
+        let instance_type = self.heap.instance_type(object);
+        if it::is_js_receiver(instance_type) {
+            return None;
+        }
+        if it::is_string(instance_type) {
+            return Some(context.get(&self.heap, NativeContext::INITIAL_STRING_PROTOTYPE_INDEX));
+        }
+        if instance_type == it::HEAP_NUMBER_TYPE {
+            return Some(context.get(&self.heap, NativeContext::INITIAL_NUMBER_PROTOTYPE_INDEX));
+        }
+        None
+    }
+
     /// `Object::ToArrayLength`
     // Tries to convert an object to an array length. Returns true and sets the
     // output parameter if it succeeds.

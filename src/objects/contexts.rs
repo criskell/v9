@@ -85,6 +85,46 @@ impl Context {
     }
 }
 
+object_type!(
+    /// `NativeContext`
+    NativeContext
+);
+
+impl NativeContext {
+    /// `Context::OBJECT_FUNCTION_INDEX`
+    pub const OBJECT_FUNCTION_INDEX: i32 = Context::MIN_CONTEXT_SLOTS;
+    pub const ARRAY_FUNCTION_INDEX: i32 = Self::OBJECT_FUNCTION_INDEX + 1;
+    pub const STRING_FUNCTION_INDEX: i32 = Self::ARRAY_FUNCTION_INDEX + 1;
+    pub const NUMBER_FUNCTION_INDEX: i32 = Self::STRING_FUNCTION_INDEX + 1;
+    pub const BOOLEAN_FUNCTION_INDEX: i32 = Self::NUMBER_FUNCTION_INDEX + 1;
+    pub const FUNCTION_FUNCTION_INDEX: i32 = Self::BOOLEAN_FUNCTION_INDEX + 1;
+
+    /// `Context::INITIAL_OBJECT_PROTOTYPE_INDEX`
+    pub const INITIAL_OBJECT_PROTOTYPE_INDEX: i32 = Self::FUNCTION_FUNCTION_INDEX + 1;
+    pub const INITIAL_ARRAY_PROTOTYPE_INDEX: i32 = Self::INITIAL_OBJECT_PROTOTYPE_INDEX + 1;
+    pub const INITIAL_STRING_PROTOTYPE_INDEX: i32 = Self::INITIAL_ARRAY_PROTOTYPE_INDEX + 1;
+    pub const INITIAL_NUMBER_PROTOTYPE_INDEX: i32 = Self::INITIAL_STRING_PROTOTYPE_INDEX + 1;
+    pub const INITIAL_BOOLEAN_PROTOTYPE_INDEX: i32 = Self::INITIAL_NUMBER_PROTOTYPE_INDEX + 1;
+    pub const INITIAL_FUNCTION_PROTOTYPE_INDEX: i32 = Self::INITIAL_BOOLEAN_PROTOTYPE_INDEX + 1;
+
+    pub const NATIVE_CONTEXT_SLOTS: i32 = Self::INITIAL_FUNCTION_PROTOTYPE_INDEX + 1;
+
+    #[inline]
+    pub fn as_context(self) -> Context {
+        Context::unchecked_cast(self.object())
+    }
+
+    #[inline]
+    pub fn get(self, heap: &Heap, index: i32) -> Tagged {
+        self.as_context().get(heap, index)
+    }
+
+    #[inline]
+    pub fn set(self, heap: &mut Heap, index: i32, value: Tagged) {
+        self.as_context().set(heap, index, value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

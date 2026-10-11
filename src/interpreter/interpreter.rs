@@ -43,7 +43,7 @@ impl Isolate {
             let builtin = Builtin::from_id(shared.builtin_id(&self.heap))
                 .expect("a native function names a builtin");
             self.call_depth += 1;
-            let result = self.call_builtin(builtin, args);
+            let result = self.call_builtin(builtin, receiver, args);
             self.call_depth -= 1;
             return result;
         }
@@ -970,16 +970,37 @@ impl Isolate {
             {
                 Ok(self.get_property(JSObject::unchecked_cast(receiver), name))
             }
-            _ => {
-                let object_text = self.to_string(object);
-                let name_text = self.to_string(name);
-                let message = self
-                    .new_string(&format!(
-                        "Cannot read property '{name_text}' of {object_text}"
-                    ))
-                    .tagged();
-                Err(Thrown(message))
+            _ => self.load_property_from_primitive(object, name),
+        }
+    }
+
+    /// `Object::GetProperty`
+    fn load_property_from_primitive(&mut self, object: Tagged, name: Tagged) -> ExecutionResult {
+        if let Some(string) = crate::objects::string::String::try_cast(&self.heap, object) {
+            if self.name_is(name, "length") {
+                return Ok(self.string_length_getter(string));
             }
+        }
+        if let Some(prototype) = self.get_prototype_chain_root(object) {
+            if let Some(holder) = prototype.to_strong_heap_object() {
+                let holder = JSObject::unchecked_cast(holder);
+                return Ok(self.get_property(holder, name));
+            }
+        }
+        let object_text = self.to_string(object);
+        let name_text = self.to_string(name);
+        let message = self
+            .new_string(&format!(
+                "Cannot read property '{name_text}' of {object_text}"
+            ))
+            .tagged();
+        Err(Thrown(message))
+    }
+
+    fn name_is(&self, name: Tagged, text: &str) -> bool {
+        match crate::objects::string::String::try_cast(&self.heap, name) {
+            Some(string) => string.to_rust_string(&self.heap) == text,
+            None => false,
         }
     }
 
