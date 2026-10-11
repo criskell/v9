@@ -1,6 +1,7 @@
 use crate::ast::ast::*;
 use crate::ast::scopes::{ScopeChain, ScopeKind};
 use crate::parsing::scanner::{Location, Scanner};
+use crate::objects::function_kind::FunctionKind;
 use crate::parsing::token::Token;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1045,26 +1046,20 @@ impl Parser {
             }
             Token::This => {
                 self.next();
+                self.record_reference("this");
                 Ok(Expression::This { position })
             }
             Token::LeftParen => {
-                self.consume(Token::LeftParen);
-                if self.peek() == Token::RightParen {
-                    return Err(
-                        self.unexpected_token_with_hint("arrow functions are not implemented")
-                    );
+                if self.parenthesis_starts_an_arrow_parameter_list() {
+                    return self.parse_parenthesised_arrow_function(position);
                 }
+                self.consume(Token::LeftParen);
                 let saved = self.accept_in;
                 self.accept_in = true;
                 let expression = self.parse_expression();
                 self.accept_in = saved;
                 let expression = expression?;
                 self.expect(Token::RightParen)?;
-                if self.peek() == Token::Arrow {
-                    return Err(
-                        self.unexpected_token_with_hint("arrow functions are not implemented")
-                    );
-                }
                 Ok(expression)
             }
             Token::LeftBracket => self.parse_array_literal(),
@@ -1079,11 +1074,7 @@ impl Parser {
                 } else {
                     None
                 };
-                let function = self.parse_function_literal(name, position)?;
-                Ok(Expression::FunctionLiteral {
-                    function: Box::new(function),
-                    position,
-                })
+                self.parse_function_expression(name, position)
             }
             Token::Super => {
                 self.consume(Token::Super);
@@ -1107,13 +1098,7 @@ impl Parser {
                     position,
                 })
             }
-            Token::Class => {
-                let class = self.parse_class_literal()?;
-                Ok(Expression::ClassLiteral {
-                    class: Box::new(class),
-                    position,
-                })
-            }
+            Token::Class => self.parse_class_expression(position),
             Token::Div | Token::AssignDiv => {
                 Err(self
                     .unexpected_token_with_hint("regular expression literals are not implemented"))
@@ -1121,9 +1106,7 @@ impl Parser {
             token if token.is_any_identifier() => {
                 let name = self.parse_identifier()?;
                 if self.peek() == Token::Arrow {
-                    return Err(
-                        self.unexpected_token_with_hint("arrow functions are not implemented")
-                    );
+                    return self.parse_arrow_function(vec![name], position);
                 }
                 self.record_reference(&name);
                 Ok(Expression::VariableProxy { name, position })
@@ -1331,6 +1314,7 @@ impl Parser {
     ) -> Result<FunctionLiteral> {
         self.function_state.push(FunctionState::default());
         self.scope_chain.push(ScopeKind::Function);
+        self.declare_receiver();
         let body = if call_super {
             vec![Statement::Return {
                 value: Some(Expression::SuperCallForwardArgs { position }),
@@ -1343,6 +1327,7 @@ impl Parser {
         let state = self.function_state.pop().expect("the function state");
         Ok(FunctionLiteral {
             name,
+            kind: FunctionKind::NormalFunction,
             parameters: Vec::new(),
             body,
             scope,
@@ -1460,7 +1445,12 @@ impl Parser {
             in_static_method: is_static,
         });
         self.scope_chain.push(ScopeKind::Function);
-        self.parse_function_body(name, parameters, position)
+        self.declare_receiver();
+        self.parse_function_body(name, FunctionKind::NormalFunction, parameters, position)
+    }
+
+    fn declare_receiver(&mut self) {
+        self.scope_chain.current().declare_parameter("this", -1);
     }
 
     fn parse_function_literal(
@@ -1472,12 +1462,14 @@ impl Parser {
 
         self.function_state.push(FunctionState::default());
         self.scope_chain.push(ScopeKind::Function);
-        self.parse_function_body(name, parameters, position)
+        self.declare_receiver();
+        self.parse_function_body(name, FunctionKind::NormalFunction, parameters, position)
     }
 
     fn parse_function_body(
         &mut self,
         name: Option<String>,
+        kind: FunctionKind,
         parameters: Vec<String>,
         position: Position,
     ) -> Result<FunctionLiteral> {
@@ -1504,8 +1496,126 @@ impl Parser {
 
         Ok(FunctionLiteral {
             name,
+            kind,
             parameters,
             body,
+            scope,
+            hoisted_functions: state.hoisted_functions,
+            position,
+        })
+    }
+
+    #[inline(never)]
+    fn parse_class_expression(&mut self, position: Position) -> Result<Expression> {
+        let class = self.parse_class_literal()?;
+        Ok(Expression::ClassLiteral {
+            class: Box::new(class),
+            position,
+        })
+    }
+
+    #[inline(never)]
+    fn parse_function_expression(
+        &mut self,
+        name: Option<String>,
+        position: Position,
+    ) -> Result<Expression> {
+        let function = self.parse_function_literal(name, position)?;
+        Ok(Expression::FunctionLiteral {
+            function: Box::new(function),
+            position,
+        })
+    }
+
+    #[inline(never)]
+    fn parse_parenthesised_arrow_function(&mut self, position: Position) -> Result<Expression> {
+        let parameters = self.parse_formal_parameter_list()?;
+        self.parse_arrow_function(parameters, position)
+    }
+
+    #[inline(never)]
+    fn parse_arrow_function(
+        &mut self,
+        parameters: Vec<String>,
+        position: Position,
+    ) -> Result<Expression> {
+        let function = self.parse_arrow_function_literal(parameters, position)?;
+        Ok(Expression::FunctionLiteral {
+            function: Box::new(function),
+            position,
+        })
+    }
+
+    fn parenthesis_starts_an_arrow_parameter_list(&mut self) -> bool {
+        debug_assert_eq!(self.peek(), Token::LeftParen);
+        let bookmark = self.scanner.peek_location().beg_pos;
+        let mut depth = 0;
+        let is_arrow = loop {
+            match self.scanner.next() {
+                Token::LeftParen | Token::LeftBracket | Token::LeftBrace => depth += 1,
+                Token::RightParen | Token::RightBracket | Token::RightBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break self.scanner.peek() == Token::Arrow;
+                    }
+                }
+                Token::Eos | Token::Illegal => break false,
+                _ => {}
+            }
+        };
+        self.scanner.seek_next(bookmark);
+        is_arrow
+    }
+
+    fn parse_arrow_function_literal(
+        &mut self,
+        parameters: Vec<String>,
+        position: Position,
+    ) -> Result<FunctionLiteral> {
+        debug_assert_eq!(self.peek(), Token::Arrow);
+        if self.scanner.has_line_terminator_before_next() {
+            // No line terminator allowed between the parameters and the arrow:
+            // ArrowFunction[In, Yield, Await] :
+            //   ArrowParameters[?Yield, ?Await] [no LineTerminator here] =>
+            //   ConciseBody[?In]
+            // If the next token is not `=>`, it's a syntax error anyway.
+            return Err(self.unexpected_token_with_hint("no newline before `=>`"));
+        }
+        self.expect(Token::Arrow)?;
+        self.function_state.push(FunctionState {
+            hoisted_functions: Vec::new(),
+            in_static_method: self
+                .function_state
+                .last()
+                .is_some_and(|state| state.in_static_method),
+        });
+        self.scope_chain.push(ScopeKind::Function);
+
+        if self.peek() == Token::LeftBrace {
+            return self.parse_function_body(None, FunctionKind::ArrowFunction, parameters, position);
+        }
+
+        for (index, parameter) in parameters.iter().enumerate() {
+            self.scope_chain
+                .current()
+                .declare_parameter(parameter, index as i32);
+        }
+        let saved = self.accept_in;
+        self.accept_in = true;
+        let value = self.parse_assignment_expression();
+        self.accept_in = saved;
+        let scope = self.scope_chain.pop();
+        let state = self.function_state.pop().expect("the function state");
+        let value = value?;
+
+        Ok(FunctionLiteral {
+            name: None,
+            kind: FunctionKind::ArrowFunction,
+            parameters,
+            body: vec![Statement::Return {
+                value: Some(value),
+                position,
+            }],
             scope,
             hoisted_functions: state.hoisted_functions,
             position,

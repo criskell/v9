@@ -10,6 +10,7 @@ pub mod elements_kind;
 pub mod feedback_vector;
 pub mod fixed_array;
 pub mod fixed_primitive_array;
+pub mod function_kind;
 pub mod hash_table;
 pub mod heap_number;
 pub mod instance_type;

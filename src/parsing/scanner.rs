@@ -176,6 +176,19 @@ impl Scanner {
         self.cursor += 1;
     }
 
+    pub fn seek_next(&mut self, position: usize) {
+        self.current = TokenDesc::default();
+        self.next = TokenDesc::default();
+        self.next_next = TokenDesc::default();
+        self.cursor = position;
+        self.has_line_terminator_before_next = false;
+        self.has_line_terminator_after_next = false;
+        self.error = None;
+        self.advance();
+        self.scan_into_next();
+        debug_assert_eq!(self.next.location.beg_pos, position);
+    }
+
     #[inline]
     fn position(&self) -> usize {
         self.cursor.saturating_sub(1)

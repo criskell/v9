@@ -602,6 +602,16 @@ impl BytecodeGenerator {
         Ok(())
     }
 
+    fn build_this_variable_load(&mut self) {
+        match self.resolve("this") {
+            Resolution::Global => {
+                self.builder
+                    .load_accumulator_with_register(Register::receiver());
+            }
+            _ => self.build_variable_load("this"),
+        }
+    }
+
     fn build_variable_load(&mut self, name: &str) {
         match self.resolve(name) {
             Resolution::Local(register) | Resolution::Parameter(register) => {
@@ -649,8 +659,7 @@ impl BytecodeGenerator {
                 Ok(())
             }
             Expression::This { .. } => {
-                self.builder
-                    .load_accumulator_with_register(Register::receiver());
+                self.build_this_variable_load();
                 Ok(())
             }
             Expression::Assignment {

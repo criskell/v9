@@ -574,8 +574,6 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
     for (source, expected) in [
         ("class A { [k]() {} }", "computed class members"),
         ("class A { x = 1; }", "class fields"),
-        ("x => x", "arrow functions"),
-        ("() => 1", "arrow functions"),
         ("for (var x of y) {}", "for...of"),
         ("for (var a, b in y) {}", "single variable"),
         ("with (a) {}", "not implemented"),
@@ -583,6 +581,8 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
         ("f(...a)", "spread"),
         ("a?.b", "optional chaining"),
         ("function f(a = 1) {}", "default parameters"),
+        ("x\n=> x", "no newline before `=>`"),
+        ("(a, ...b) => a", "rest parameters"),
         ("function f(...a) {}", "rest parameters"),
         ("({m() {}})", "method shorthand"),
         ("outer: while (a) { break outer; }", "not implemented"),

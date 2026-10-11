@@ -93,6 +93,7 @@ pub struct ClassLiteral {
 #[derive(Clone, Debug)]
 pub struct FunctionLiteral {
     pub name: Option<String>,
+    pub kind: crate::objects::function_kind::FunctionKind,
     pub parameters: Vec<String>,
     pub body: Vec<Statement>,
     pub scope: crate::ast::scopes::Scope,
