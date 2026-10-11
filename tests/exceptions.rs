@@ -211,3 +211,118 @@ fn the_handler_table_covers_only_the_try_region() {
         "the handler at {handler} must sit outside the range it guards ({start}..{end})"
     );
 }
+
+#[test]
+fn a_finally_block_runs_on_the_normal_path() {
+    assert_eq!(
+        output("try { console.log('try'); } finally { console.log('finally'); }"),
+        vec!["try", "finally"]
+    );
+}
+
+#[test]
+fn a_finally_block_runs_before_the_exception_leaves() {
+    assert_eq!(
+        output(
+            "function g() { try { throw 'x'; } finally { console.log('finally'); } }
+             try { g(); } catch (e) { console.log('caught ' + e); }"
+        ),
+        vec!["finally", "caught x"],
+        "the finally runs first, then the exception continues outward"
+    );
+}
+
+#[test]
+fn a_return_from_the_try_runs_the_finally_first() {
+    assert_eq!(
+        output(
+            "function f() { try { return 'returned'; } finally { console.log('finally'); } }
+             console.log(f());"
+        ),
+        vec!["finally", "returned"],
+        "the return value is held in a register while the finally runs"
+    );
+}
+
+#[test]
+fn a_return_in_the_finally_overrides_the_one_in_the_try() {
+    assert_eq!(
+        evaluate("function f() { try { return 1; } finally { return 2; } } f()"),
+        "2"
+    );
+}
+
+#[test]
+fn a_finally_runs_for_catch_too() {
+    assert_eq!(
+        output(
+            "try { throw 'a'; }
+             catch (e) { console.log('caught ' + e); }
+             finally { console.log('finally'); }"
+        ),
+        vec!["caught a", "finally"]
+    );
+    assert_eq!(
+        output(
+            "try { console.log('ok'); }
+             catch (e) { console.log('not reached'); }
+             finally { console.log('finally'); }"
+        ),
+        vec!["ok", "finally"]
+    );
+}
+
+#[test]
+fn nested_finallys_run_from_the_inside_out() {
+    assert_eq!(
+        output(
+            "function f() {
+               try {
+                 try { return 'r'; } finally { console.log('inner'); }
+               } finally { console.log('outer'); }
+             }
+             console.log(f());"
+        ),
+        vec!["inner", "outer", "r"]
+    );
+}
+
+#[test]
+fn a_throw_from_the_finally_replaces_the_original() {
+    assert_eq!(
+        evaluate(
+            "var r;
+             try {
+               try { throw 'first'; } finally { throw 'second'; }
+             } catch (e) { r = e; }
+             r"
+        ),
+        "second"
+    );
+}
+
+#[test]
+fn a_transfer_out_of_a_try_with_finally_is_refused() {
+    // V8 routes break and continue through the same token dispatch as a
+    // return. `vx` only records returns, so it refuses rather than skipping
+    // the finally block.
+    let mut isolate = Isolate::new();
+    isolate.setup_global_object();
+    let error = isolate
+        .run_script("while (true) { try { break; } finally { } }")
+        .expect_err("should be refused");
+    assert!(
+        error.contains("`break` across a `finally`"),
+        "unexpected error: {error}"
+    );
+
+    // A loop wholly inside the try is fine: the break does not cross it.
+    assert_eq!(
+        evaluate(
+            "var n = 0;
+             try { while (true) { n = 1; break; } } finally { n = n + 1; }
+             n"
+        ),
+        "2"
+    );
+}

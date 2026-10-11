@@ -243,6 +243,13 @@ pub enum Statement {
         position: Position,
     },
 
+    /// `TryFinallyStatement`
+    TryFinally {
+        try_block: Vec<Statement>,
+        finally_block: Vec<Statement>,
+        position: Position,
+    },
+
     /// `ThrowStatement`
     Throw {
         exception: Expression,
@@ -326,6 +333,7 @@ impl Statement {
             | Statement::For { position, .. }
             | Statement::Return { position, .. }
             | Statement::ForIn { position, .. }
+            | Statement::TryFinally { position, .. }
             | Statement::TryCatch { position, .. }
             | Statement::Throw { position, .. }
             | Statement::Break { position }

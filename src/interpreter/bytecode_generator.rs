@@ -56,11 +56,20 @@ enum Resolution {
     Global,
 }
 
+struct FinallyScope {
+    token: Register,
+    result: Register,
+    loop_mark: usize,
+    saw_return: bool,
+    finalization_sites: BytecodeLabels,
+}
+
 pub struct BytecodeGenerator {
     builder: BytecodeArrayBuilder,
     scope_chain: Vec<Scope>,
     context_registers: Vec<Option<Register>>,
     loop_stack: Vec<LoopBuilder>,
+    finally_stack: Vec<FinallyScope>,
     functions: Vec<CompiledFunction>,
 }
 
@@ -71,6 +80,7 @@ impl BytecodeGenerator {
             scope_chain: vec![program.scope.clone()],
             context_registers: Vec::new(),
             loop_stack: Vec::new(),
+            finally_stack: Vec::new(),
             functions: Vec::new(),
         };
         generator.functions.push(CompiledFunction {
@@ -203,6 +213,11 @@ impl BytecodeGenerator {
                 body,
                 ..
             } => self.visit_for_in_statement(each, subject, body),
+            Statement::TryFinally {
+                try_block,
+                finally_block,
+                ..
+            } => self.visit_try_finally_statement(try_block, finally_block),
             Statement::Throw { exception, .. } => {
                 self.visit_for_accumulator_value(exception)?;
                 self.builder.emit_throw();
@@ -237,6 +252,7 @@ impl BytecodeGenerator {
                         message: "`break` outside a loop".to_string(),
                     });
                 }
+                self.check_does_not_cross_finally("break")?;
                 let depth = self.loop_stack.len() - 1;
                 self.loop_stack[depth].emit_break(&mut self.builder);
                 Ok(())
@@ -247,6 +263,7 @@ impl BytecodeGenerator {
                         message: "`continue` outside a loop".to_string(),
                     });
                 }
+                self.check_does_not_cross_finally("continue")?;
                 let depth = self.loop_stack.len() - 1;
                 self.loop_stack[depth].emit_continue(&mut self.builder);
                 Ok(())
@@ -417,6 +434,18 @@ impl BytecodeGenerator {
     }
 
     /// `BytecodeGenerator::VisitReturnStatement`
+    /// `ControlScopeForTryFinally::Execute`
+    fn check_does_not_cross_finally(&self, command: &str) -> Result<()> {
+        if let Some(scope) = self.finally_stack.last() {
+            if self.loop_stack.len() <= scope.loop_mark {
+                return Err(GeneratorError {
+                    message: format!("`{command}` across a `finally` is not implemented"),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn visit_return_statement(&mut self, value: Option<&Expression>) -> Result<()> {
         match value {
             Some(value) => self.visit_for_accumulator_value(value)?,
@@ -424,7 +453,29 @@ impl BytecodeGenerator {
                 self.builder.load_undefined();
             }
         }
-        self.builder.emit_return();
+        self.build_return()
+    }
+
+    /// `ControlScope::PerformCommand`
+    fn build_return(&mut self) -> Result<()> {
+        use crate::interpreter::bytecode_flags_and_tokens::TryFinallyContinuationToken;
+        use crate::interpreter::control_flow_builders::TryFinallyBuilder;
+
+        let Some(scope) = self.finally_stack.last_mut() else {
+            self.builder.emit_return();
+            return Ok(());
+        };
+        scope.saw_return = true;
+        let token = scope.token;
+        let result = scope.result;
+        self.builder.store_accumulator_in_register(result);
+        self.builder
+            .load_literal_smi(TryFinallyContinuationToken::K_RETURN_TOKEN);
+        self.builder.store_accumulator_in_register(token);
+        let depth = self.finally_stack.len() - 1;
+        let mut sites = std::mem::take(&mut self.finally_stack[depth].finalization_sites);
+        TryFinallyBuilder::leave_try(&mut self.builder, &mut sites);
+        self.finally_stack[depth].finalization_sites = sites;
         Ok(())
     }
 
@@ -1274,6 +1325,93 @@ impl BytecodeGenerator {
         self.loop_stack.pop();
 
         self.builder.bind_labels(&mut subject_undefined);
+        self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::BuildTryFinally`
+    fn visit_try_finally_statement(
+        &mut self,
+        try_block: &[Statement],
+        finally_block: &[Statement],
+    ) -> Result<()> {
+        use crate::codegen::handler_table::CatchPrediction;
+        use crate::interpreter::bytecode_flags_and_tokens::TryFinallyContinuationToken;
+        use crate::interpreter::control_flow_builders::TryFinallyBuilder;
+
+        if self.builder.exit_seen_in_block() {
+            return Ok(());
+        }
+
+        let mark = self.builder.register_allocator().next_register_index();
+        let mut try_control_builder =
+            TryFinallyBuilder::new(&mut self.builder, CatchPrediction::Uncaught);
+
+        let token = self.builder.register_allocator().new_register();
+        let result = self.builder.register_allocator().new_register();
+        let context = self.builder.register_allocator().new_register();
+        self.builder
+            .move_register(Register::current_context(), context);
+
+        self.finally_stack.push(FinallyScope {
+            token,
+            result,
+            loop_mark: self.loop_stack.len(),
+            saw_return: false,
+            finalization_sites: BytecodeLabels::new(),
+        });
+
+        try_control_builder.begin_try(&mut self.builder, context);
+        self.visit_statements(try_block)?;
+        try_control_builder.end_try(&mut self.builder);
+
+        // Record fall-through and exception cases.
+        let fall_through_needed = !self.builder.exit_seen_in_block();
+        if fall_through_needed {
+            self.builder
+                .load_literal_smi(TryFinallyContinuationToken::Fallthrough.value());
+            self.builder.store_accumulator_in_register(token);
+            self.builder.store_accumulator_in_register(result);
+        }
+        let depth = self.finally_stack.len() - 1;
+        let mut sites = std::mem::take(&mut self.finally_stack[depth].finalization_sites);
+        TryFinallyBuilder::leave_try(&mut self.builder, &mut sites);
+        try_control_builder.begin_handler(&mut self.builder);
+
+        // The accumulator contains the exception object.
+        self.builder.store_accumulator_in_register(result);
+        self.builder
+            .load_literal_smi(TryFinallyContinuationToken::Rethrow.value());
+        self.builder.store_accumulator_in_register(token);
+
+        let mut scope = self.finally_stack.pop().expect("the scope was pushed");
+        sites.append(&mut scope.finalization_sites);
+        TryFinallyBuilder::begin_finally(&mut self.builder, &mut sites);
+        self.visit_statements(finally_block)?;
+        try_control_builder.end_finally(&mut self.builder);
+
+        // Dynamic dispatch after the finally-block.
+        let mut done = BytecodeLabels::new();
+        if scope.saw_return {
+            let mut not_return = BytecodeLabels::new();
+            self.builder
+                .load_literal_smi(TryFinallyContinuationToken::K_RETURN_TOKEN);
+            self.builder.compare_operation(Token::EqStrict, token);
+            let label = not_return.new_label();
+            self.builder.jump_if_false(not_return.label_mut(label));
+            self.builder.load_accumulator_with_register(result);
+            self.build_return()?;
+            self.builder.bind_labels(&mut not_return);
+        }
+        self.builder
+            .load_literal_smi(TryFinallyContinuationToken::Rethrow.value());
+        self.builder.compare_operation(Token::EqStrict, token);
+        let label = done.new_label();
+        self.builder.jump_if_false(done.label_mut(label));
+        self.builder.load_accumulator_with_register(result);
+        self.builder.emit_rethrow();
+        self.builder.bind_labels(&mut done);
+
         self.builder.register_allocator().release_registers(mark);
         Ok(())
     }

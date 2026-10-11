@@ -97,6 +97,11 @@ impl BytecodeLabels {
         self.labels.len() - 1
     }
 
+    /// `BytecodeLabels::labels`
+    pub fn append(&mut self, other: &mut BytecodeLabels) {
+        self.labels.append(&mut other.labels);
+    }
+
     pub fn label_mut(&mut self, index: usize) -> &mut BytecodeLabel {
         &mut self.labels[index]
     }

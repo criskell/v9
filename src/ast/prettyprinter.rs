@@ -122,6 +122,23 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
             print_expression(out, subject, depth + 1);
             print_statement(out, body, depth + 1);
         }
+        Statement::TryFinally {
+            try_block,
+            finally_block,
+            ..
+        } => {
+            out.push_str("TRY FINALLY\n");
+            indent(out, depth + 1);
+            out.push_str("TRY\n");
+            for statement in try_block {
+                print_statement(out, statement, depth + 2);
+            }
+            indent(out, depth + 1);
+            out.push_str("FINALLY\n");
+            for statement in finally_block {
+                print_statement(out, statement, depth + 2);
+            }
+        }
         Statement::Throw { exception, .. } => {
             out.push_str("THROW\n");
             print_expression(out, exception, depth + 1);

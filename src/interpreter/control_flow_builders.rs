@@ -174,6 +174,56 @@ impl TryCatchBuilder {
     }
 }
 
+/// `TryFinallyBuilder`
+pub struct TryFinallyBuilder {
+    handler_id: i32,
+    catch_prediction: CatchPrediction,
+}
+
+impl TryFinallyBuilder {
+    pub fn new(
+        builder: &mut BytecodeArrayBuilder,
+        catch_prediction: CatchPrediction,
+    ) -> TryFinallyBuilder {
+        TryFinallyBuilder {
+            handler_id: builder.new_handler_entry(),
+            catch_prediction,
+        }
+    }
+
+    /// `TryFinallyBuilder::BeginTry`
+    pub fn begin_try(&mut self, builder: &mut BytecodeArrayBuilder, context: Register) {
+        builder.mark_try_begin(self.handler_id, context);
+    }
+
+    /// `TryFinallyBuilder::LeaveTry`
+    pub fn leave_try(builder: &mut BytecodeArrayBuilder, finalization_sites: &mut BytecodeLabels) {
+        let label = finalization_sites.new_label();
+        builder.jump(finalization_sites.label_mut(label));
+    }
+
+    /// `TryFinallyBuilder::EndTry`
+    pub fn end_try(&mut self, builder: &mut BytecodeArrayBuilder) {
+        builder.mark_try_end(self.handler_id);
+    }
+
+    /// `TryFinallyBuilder::BeginHandler`
+    pub fn begin_handler(&mut self, builder: &mut BytecodeArrayBuilder) {
+        builder.mark_handler(self.handler_id, self.catch_prediction);
+    }
+
+    /// `TryFinallyBuilder::BeginFinally`
+    pub fn begin_finally(
+        builder: &mut BytecodeArrayBuilder,
+        finalization_sites: &mut BytecodeLabels,
+    ) {
+        builder.bind_labels(finalization_sites);
+    }
+
+    /// `TryFinallyBuilder::EndFinally`
+    pub fn end_finally(&mut self, _builder: &mut BytecodeArrayBuilder) {}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

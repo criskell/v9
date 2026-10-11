@@ -1,6 +1,7 @@
 pub mod bytecode_array_builder;
 pub mod bytecode_array_iterator;
 pub mod bytecode_array_writer;
+pub mod bytecode_flags_and_tokens;
 pub mod bytecode_generator;
 pub mod bytecode_label;
 pub mod bytecode_node;

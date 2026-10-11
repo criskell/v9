@@ -562,8 +562,6 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
         ("for (var x of y) {}", "for...of"),
         ("for (var a, b in y) {}", "single variable"),
         ("switch (a) { }", "not implemented"),
-        ("try { } finally { }", "`finally`"),
-        ("try { } catch (e) { } finally { }", "`finally`"),
         ("function* f() {}", "generators"),
         ("f(...a)", "spread"),
         ("a?.b", "optional chaining"),

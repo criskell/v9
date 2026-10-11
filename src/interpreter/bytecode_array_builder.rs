@@ -603,6 +603,11 @@ impl BytecodeArrayBuilder {
     }
 
     /// `BytecodeArrayBuilder::Throw`
+    /// `BytecodeArrayBuilder::ReThrow`
+    pub fn emit_rethrow(&mut self) -> &mut Self {
+        self.output(Bytecode::ReThrow, &[])
+    }
+
     pub fn emit_throw(&mut self) -> &mut Self {
         self.output(Bytecode::Throw, &[])
     }

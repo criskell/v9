@@ -311,8 +311,14 @@ impl Parser {
         self.consume(Token::Try);
         let try_block = self.parse_block_body()?;
 
-        if self.peek() != Token::Catch {
-            return Err(self.unexpected_token_with_hint("`finally` is not implemented"));
+        if self.peek() == Token::Finally {
+            self.consume(Token::Finally);
+            let finally_block = self.parse_block_body()?;
+            return Ok(Statement::TryFinally {
+                try_block,
+                finally_block,
+                position,
+            });
         }
         self.consume(Token::Catch);
 
@@ -326,16 +332,24 @@ impl Parser {
         }
         let catch_block = self.parse_block_body()?;
 
-        if self.peek() == Token::Finally {
-            return Err(self.unexpected_token_with_hint("`finally` is not implemented"));
-        }
-
-        Ok(Statement::TryCatch {
+        let inner = Statement::TryCatch {
             try_block,
             catch_variable,
             catch_block,
             position,
-        })
+        };
+
+        if self.peek() == Token::Finally {
+            self.consume(Token::Finally);
+            let finally_block = self.parse_block_body()?;
+            return Ok(Statement::TryFinally {
+                try_block: vec![inner],
+                finally_block,
+                position,
+            });
+        }
+
+        Ok(inner)
     }
 
     /// `ParserBase::ParseBlock`
