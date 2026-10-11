@@ -219,6 +219,14 @@ pub enum Statement {
         position: Position,
     },
 
+    /// `ForInStatement`
+    ForIn {
+        each: String,
+        subject: Expression,
+        body: Box<Statement>,
+        position: Position,
+    },
+
     /// `TryCatchStatement`
     TryCatch {
         try_block: Vec<Statement>,
@@ -309,6 +317,7 @@ impl Statement {
             | Statement::DoWhile { position, .. }
             | Statement::For { position, .. }
             | Statement::Return { position, .. }
+            | Statement::ForIn { position, .. }
             | Statement::TryCatch { position, .. }
             | Statement::Throw { position, .. }
             | Statement::Break { position }

@@ -354,6 +354,52 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::TypeOf, &[slot])
     }
 
+    /// `BytecodeArrayBuilder::ForInEnumerate`
+    pub fn for_in_enumerate(&mut self, receiver: Register) -> &mut Self {
+        self.output(Bytecode::ForInEnumerate, &[receiver.to_operand()])
+    }
+
+    /// `BytecodeArrayBuilder::ForInPrepare`
+    pub fn for_in_prepare(&mut self, cache_info_triple: RegisterList) -> &mut Self {
+        debug_assert_eq!(cache_info_triple.register_count(), 3);
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::ForIn);
+        self.output(
+            Bytecode::ForInPrepare,
+            &[cache_info_triple.first_register().to_operand(), slot],
+        )
+    }
+
+    /// `BytecodeArrayBuilder::ForInNext`
+    pub fn for_in_next(
+        &mut self,
+        receiver: Register,
+        index: Register,
+        cache_type_array_pair: RegisterList,
+    ) -> &mut Self {
+        debug_assert_eq!(cache_type_array_pair.register_count(), 2);
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::ForIn);
+        self.output(
+            Bytecode::ForInNext,
+            &[
+                receiver.to_operand(),
+                index.to_operand(),
+                cache_type_array_pair.first_register().to_operand(),
+                slot,
+            ],
+        )
+    }
+
+    /// `BytecodeArrayBuilder::ForInStep`
+    pub fn for_in_step(&mut self, index: Register) -> &mut Self {
+        self.output(Bytecode::ForInStep, &[index.to_operand()])
+    }
+
+    /// `LoopBuilder::BreakIfForInDone`
+    pub fn for_in_done(&mut self, index: Register, cache_length: Register) -> &mut Self {
+        self.load_accumulator_with_register(index);
+        self.compare_operation(Token::EqStrict, cache_length)
+    }
+
     /// `BytecodeArrayBuilder::Delete`
     pub fn delete(&mut self, object: Register, strict: bool) -> &mut Self {
         let bytecode = if strict {

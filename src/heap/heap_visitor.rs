@@ -51,6 +51,13 @@ impl Isolate {
                 }
             }
 
+            it::ENUM_CACHE_TYPE => {
+                use crate::objects::descriptor_array::EnumCache;
+                let cache = EnumCache::unchecked_cast(object);
+                visit(cache.keys_address());
+                visit(cache.indices_address());
+            }
+
             it::FIXED_DOUBLE_ARRAY_TYPE => {}
 
             it::TRANSITION_ARRAY_TYPE => {

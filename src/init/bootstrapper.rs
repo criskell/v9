@@ -249,7 +249,12 @@ impl Isolate {
         );
         let function = self.new_js_function(shared).tagged();
         let target = JSObject::unchecked_cast(target.object(self));
-        self.set_property_by_str(target, name, function);
+        self.add_property_by_str_with_attributes(
+            target,
+            name,
+            function,
+            crate::objects::property_details::DONT_ENUM,
+        );
         self.close_handle_scope(scope);
     }
 

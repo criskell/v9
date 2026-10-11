@@ -45,6 +45,12 @@ for root, _, files in os.walk(os.path.join(V8, "src")):
                 if trailing[1] and "\"" not in trailing[0]:
                     run.append(trailing[2].strip())
                     continue
+                # A one-line block comment counts too: that is how V8
+                # writes the section headers inside its macro lists.
+                block = re.match(r".*?/\*(.*?)\*/", line)
+                if block:
+                    run.append(block.group(1).strip())
+                    continue
                 if run:
                     text = normalise(" ".join(run))
                     haystack.update(shingles(text.split()))
@@ -125,7 +131,7 @@ for path in sorted(subprocess.run(["find", "src", "-name", "*.rs"],
         total += 1
         key = normalise(body)
         # A doc line that is only a V8 symbol name is the allowed exception.
-        if re.fullmatch(r"`[A-Za-z_][A-Za-z0-9_:<>]*(\(\))?`\.?", body):
+        if re.fullmatch(r"`[A-Za-z_][A-Za-z0-9_:<>\[\]]*(\(\))?`\.?", body):
             continue
         if len(key) <= 12 or is_v8s(key):
             continue

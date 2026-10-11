@@ -45,6 +45,11 @@ impl Handle {
     }
 
     #[inline]
+    pub(crate) fn index(self) -> usize {
+        self.index
+    }
+
+    #[inline]
     pub(crate) fn object(self, isolate: &Isolate) -> HeapObject {
         self.get(isolate)
             .to_strong_heap_object()

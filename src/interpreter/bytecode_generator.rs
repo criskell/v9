@@ -197,6 +197,12 @@ impl BytecodeGenerator {
                 catch_block,
                 ..
             } => self.visit_try_catch_statement(try_block, catch_variable.as_deref(), catch_block),
+            Statement::ForIn {
+                each,
+                subject,
+                body,
+                ..
+            } => self.visit_for_in_statement(each, subject, body),
             Statement::Throw { exception, .. } => {
                 self.visit_for_accumulator_value(exception)?;
                 self.builder.emit_throw();
@@ -1189,6 +1195,64 @@ impl BytecodeGenerator {
         }
         self.visit_statements(catch_block)?;
         try_control_builder.end_catch(&mut self.builder);
+        self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    /// `BytecodeGenerator::VisitForInStatement`
+    fn visit_for_in_statement(
+        &mut self,
+        each: &str,
+        subject: &Expression,
+        body: &Statement,
+    ) -> Result<()> {
+        let mark = self.builder.register_allocator().next_register_index();
+        let mut subject_undefined = BytecodeLabels::new();
+
+        self.visit_for_accumulator_value(subject)?;
+        let label = subject_undefined.new_label();
+        self.builder
+            .jump_if_undefined_or_null(subject_undefined.label_mut(label));
+        let receiver = self.builder.register_allocator().new_register();
+        self.builder.store_accumulator_in_register(receiver);
+
+        // Used as kRegTriple and kRegPair in ForInPrepare and ForInNext.
+        let triple = self.builder.register_allocator().new_register_list(3);
+        let cache_length = triple.at(2);
+        self.builder.for_in_enumerate(receiver);
+        self.builder.for_in_prepare(triple);
+
+        let index = self.builder.register_allocator().new_register();
+        self.builder.load_literal_smi(0);
+        self.builder.store_accumulator_in_register(index);
+
+        self.loop_stack.push(LoopBuilder::new());
+        let depth = self.loop_stack.len() - 1;
+        self.loop_stack[depth].loop_header(&mut self.builder);
+
+        let mut exit_labels = BytecodeLabels::new();
+        self.builder.for_in_done(index, cache_length);
+        let exit = exit_labels.new_label();
+        self.builder.jump_if_true(exit_labels.label_mut(exit));
+
+        self.builder
+            .for_in_next(receiver, index, triple.truncate(2));
+        let skip = self.loop_stack[depth].continue_labels().new_label();
+        let target = self.loop_stack[depth].continue_labels().label_mut(skip);
+        self.builder.jump_if_undefined(target);
+
+        self.build_variable_assignment(each);
+        self.visit_statement(body)?;
+
+        self.loop_stack[depth].bind_continue_target(&mut self.builder);
+        self.builder.for_in_step(index);
+        self.loop_stack[depth].jump_to_header(&mut self.builder);
+
+        self.builder.bind_labels(&mut exit_labels);
+        self.loop_stack[depth].finish(&mut self.builder);
+        self.loop_stack.pop();
+
+        self.builder.bind_labels(&mut subject_undefined);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
     }

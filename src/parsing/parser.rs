@@ -471,6 +471,24 @@ impl Parser {
         })
     }
 
+    /// `ParserBase::ParseForEachStatementWithDeclarations`
+    fn for_in_each(&mut self, init: &Statement) -> Option<String> {
+        match init {
+            Statement::Declaration { declarations, .. } if declarations.len() == 1 => {
+                let declaration = &declarations[0];
+                if declaration.initializer.is_some() {
+                    return None;
+                }
+                Some(declaration.name.clone())
+            }
+            Statement::Expression {
+                expression: Expression::VariableProxy { name, .. },
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
     /// `ParserBase::ParseForStatement`
     fn parse_for_statement(&mut self) -> Result<Statement> {
         let position = self.peek_position();
@@ -487,10 +505,29 @@ impl Parser {
             Some(Box::new(init?))
         };
 
-        if matches!(self.peek(), Token::In | Token::Of) {
-            return Err(
-                self.unexpected_token_with_hint("for...in and for...of are not implemented")
-            );
+        if self.peek() == Token::Of {
+            return Err(self.unexpected_token_with_hint("for...of is not implemented"));
+        }
+        if self.peek() == Token::In {
+            let Some(init) = init else {
+                return Err(self.unexpected_token_with_hint("for...in needs a binding"));
+            };
+            let each = match self.for_in_each(&init) {
+                Some(name) => name,
+                None => {
+                    return Err(self.unexpected_token_with_hint("for...in takes a single variable"))
+                }
+            };
+            self.consume(Token::In);
+            let subject = self.parse_expression()?;
+            self.expect(Token::RightParen)?;
+            let body = Box::new(self.parse_statement()?);
+            return Ok(Statement::ForIn {
+                each,
+                subject,
+                body,
+                position,
+            });
         }
 
         self.expect(Token::Semicolon)?;

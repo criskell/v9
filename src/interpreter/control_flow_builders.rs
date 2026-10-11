@@ -88,6 +88,10 @@ impl LoopBuilder {
         self.breakable.break_labels()
     }
 
+    pub fn continue_labels(&mut self) -> &mut BytecodeLabels {
+        &mut self.continue_labels
+    }
+
     pub fn finish(&mut self, builder: &mut BytecodeArrayBuilder) {
         self.breakable.bind_break_target(builder);
     }

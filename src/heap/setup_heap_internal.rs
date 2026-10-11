@@ -30,6 +30,12 @@ impl Isolate {
         self.roots.fixed_double_array_map = self.new_bare_map(FIXED_DOUBLE_ARRAY_TYPE, 0).tagged();
         self.roots.number_dictionary_map = self.new_bare_map(NUMBER_DICTIONARY_TYPE, 0).tagged();
         self.roots.name_dictionary_map = self.new_bare_map(NAME_DICTIONARY_TYPE, 0).tagged();
+        self.roots.enum_cache_map = self
+            .new_bare_map(
+                ENUM_CACHE_TYPE,
+                crate::objects::descriptor_array::EnumCache::K_SIZE,
+            )
+            .tagged();
         self.roots.property_array_map = self.new_bare_map(PROPERTY_ARRAY_TYPE, 0).tagged();
         self.roots.transition_array_map = self.new_bare_map(TRANSITION_ARRAY_TYPE, 0).tagged();
         self.roots.feedback_vector_map = self.new_bare_map(FEEDBACK_VECTOR_TYPE, 0).tagged();

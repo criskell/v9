@@ -228,6 +228,12 @@ impl RegisterList {
     }
 
     /// `RegisterList::Truncate`
+    /// `RegisterList::operator[]`
+    pub fn at(self, index: i32) -> Register {
+        debug_assert!(index < self.register_count());
+        Register::new(self.first_register().index() + index)
+    }
+
     pub fn truncate(self, new_count: i32) -> RegisterList {
         debug_assert!(new_count >= 0 && new_count <= self.register_count);
         RegisterList {

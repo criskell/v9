@@ -667,6 +667,40 @@ impl Isolate {
                     next_offset = opcode_offset - delta;
                 }
 
+                // -- for...in ---------------------------------------------
+                Bytecode::ForInEnumerate => {
+                    let receiver = self.read_register(frame, register_operand(self, 0));
+                    let value = self.for_in_enumerate(receiver)?;
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::ForInPrepare => {
+                    let triple = register_operand(self, 0);
+                    let enumerable = self.accumulator(frame);
+                    let (cache_type, cache_array, cache_length) = self.for_in_prepare(enumerable);
+                    self.write_register(frame, triple, cache_type);
+                    self.write_register(frame, Register::new(triple.index() + 1), cache_array);
+                    self.write_register(
+                        frame,
+                        Register::new(triple.index() + 2),
+                        Smi::from_int(cache_length),
+                    );
+                }
+                Bytecode::ForInNext => {
+                    let receiver = self.read_register(frame, register_operand(self, 0));
+                    let index = self.read_register(frame, register_operand(self, 1));
+                    let pair = register_operand(self, 2);
+                    let cache_type = self.read_register(frame, pair);
+                    let cache_array = self.read_register(frame, Register::new(pair.index() + 1));
+                    let value =
+                        self.for_in_next(receiver, cache_type, cache_array, Smi::to_int(index))?;
+                    self.set_accumulator(frame, value);
+                }
+                Bytecode::ForInStep => {
+                    let register = register_operand(self, 0);
+                    let index = Smi::to_int(self.read_register(frame, register));
+                    self.write_register(frame, register, Smi::from_int(index + 1));
+                }
+
                 Bytecode::Return => return Ok(self.accumulator(frame)),
                 Bytecode::Throw | Bytecode::ReThrow => return Err(Thrown(self.accumulator(frame))),
 
@@ -808,7 +842,10 @@ impl Isolate {
 
     /// `KeyedLoadIC::Load`
     fn get_keyed_property(&mut self, object: Tagged, key: Tagged) -> ExecutionResult {
-        if let Some(index) = self.to_array_index(key) {
+        let index = self
+            .to_array_index(key)
+            .or_else(|| self.string_as_array_index(key));
+        if let Some(index) = index {
             if let Some(value) = self.load_element(object, index)? {
                 return Ok(value);
             }
@@ -828,7 +865,10 @@ impl Isolate {
         let object_handle = self.create_handle(object);
         let key_handle = self.create_handle(key);
         let value_handle = self.create_handle(value);
-        if let Some(index) = self.to_array_index(key) {
+        let index = self
+            .to_array_index(key)
+            .or_else(|| self.string_as_array_index(key));
+        if let Some(index) = index {
             if self.store_element(object, index, value)? {
                 self.close_handle_scope(scope);
                 return Ok(value);

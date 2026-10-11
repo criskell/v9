@@ -59,6 +59,7 @@ roots_table!(
     js_array_holey_double_elements_map,
     js_array_dictionary_elements_map,
     native_context,
+    enum_cache_map,
     js_function_map,
     js_native_function_map,
     js_global_object_map,

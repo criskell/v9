@@ -5,7 +5,7 @@ use crate::heap::heap::Heap;
 use crate::objects::descriptor_array::{DescriptorArray, K_NOT_FOUND};
 use crate::objects::elements_kind::{self, ElementsKind};
 use crate::objects::instance_type::{self, InstanceType};
-use crate::objects::property_details::{default_data_field, Representation};
+use crate::objects::property_details::Representation;
 use crate::objects::tagged::{Address, HeapObject, Tagged};
 
 object_type!(
@@ -511,6 +511,22 @@ impl Isolate {
         name: Tagged,
         representation: Representation,
     ) -> Map {
+        self.transition_to_data_property_with_attributes(
+            map,
+            name,
+            representation,
+            crate::objects::property_details::NONE,
+        )
+    }
+
+    /// `Map::TransitionToDataProperty`
+    pub fn transition_to_data_property_with_attributes(
+        &mut self,
+        map: Map,
+        name: Tagged,
+        representation: Representation,
+        attributes: crate::objects::property_details::PropertyAttributes,
+    ) -> Map {
         debug_assert!(instance_type::is_name(
             self.heap.instance_type_of(name).unwrap()
         ));
@@ -521,7 +537,8 @@ impl Isolate {
             return target;
         }
 
-        let new_map = self.copy_add_descriptor(map, name, representation);
+        let new_map =
+            self.copy_add_descriptor_with_attributes(map, name, representation, attributes);
 
         let transition_array_map = self.roots.transition_array_map();
         let _recorded =
@@ -558,15 +575,21 @@ impl Isolate {
         self.copy_normalized(fast_map)
     }
 
-    pub(crate) fn copy_add_descriptor(
+    /// `Map::CopyAddDescriptor`
+    pub(crate) fn copy_add_descriptor_with_attributes(
         &mut self,
         map: Map,
         name: Tagged,
         representation: Representation,
+        attributes: crate::objects::property_details::PropertyAttributes,
     ) -> Map {
         let number_of_own = map.number_of_own_descriptors(&self.heap);
         let field_index = number_of_own as u32;
-        let details = default_data_field(field_index, representation);
+        let details = crate::objects::property_details::data_field_with_attributes(
+            field_index,
+            representation,
+            attributes,
+        );
         let hole = self.the_hole_value();
 
         let descriptors = map.instance_descriptors(&self.heap);

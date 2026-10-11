@@ -154,6 +154,12 @@ bytecode_list! {
     JumpIfNotUndefined,            Use::READ_ACCUMULATOR, UImm;
     JumpIfUndefinedOrNull,         Use::READ_ACCUMULATOR, UImm;
 
+    // Complex flow control For..in
+    ForInEnumerate,           Use::WRITE_ACCUMULATOR, Reg;
+    ForInPrepare,             Use::READ_AND_CLOBBER_ACCUMULATOR, RegOutTriple, FeedbackSlot;
+    ForInNext,                Use::WRITE_ACCUMULATOR, Reg, Reg, RegPair, FeedbackSlot;
+    ForInStep,                Use::NONE, RegInOut;
+
     Return,                   Use::READ_ACCUMULATOR;
     Throw,                    Use::READ_ACCUMULATOR;
     ReThrow,                  Use::READ_ACCUMULATOR;

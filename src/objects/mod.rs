@@ -16,6 +16,7 @@ pub mod instance_type;
 pub mod js_array;
 pub mod js_function;
 pub mod js_objects;
+pub mod keys;
 pub mod lookup;
 pub mod map;
 pub mod map_updater;

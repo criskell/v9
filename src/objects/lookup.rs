@@ -335,6 +335,70 @@ impl Isolate {
         true
     }
 
+    /// `JSObject::AddProperty`
+    pub(crate) fn add_property_with_attributes(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+    ) -> bool {
+        let map = object.map(&self.heap);
+        if map.is_dictionary_map(&self.heap) {
+            return self.set_dictionary_property(object, name, value);
+        }
+        if map.find_property_details(&self.heap, name).is_some() {
+            return self.set_property_ignoring_cells(object, name, value, StoreOrigin::Named);
+        }
+
+        let representation = Representation::for_value(value);
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let value_handle = self.create_handle(value);
+        let name_handle = self.create_handle(name);
+
+        let new_map =
+            self.transition_to_data_property_with_attributes(map, name, representation, attributes);
+        let new_map_handle = self.create_object_handle(new_map.object());
+        let name = name_handle.get(self);
+        let field_index = new_map
+            .find_property_details(&self.heap, name)
+            .expect("the transition target must own the property")
+            .field_index() as i32;
+
+        let inobject = new_map.inobject_properties(&self.heap);
+        if field_index >= inobject {
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            self.grow_property_array(object, field_index - inobject + 1);
+        }
+
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let new_map = Map::unchecked_cast(new_map_handle.object(self));
+        let value = value_handle.get(self);
+        self.heap.set_map(object.object(), new_map.object());
+        object.set_fast_property_at(&mut self.heap, field_index, value);
+        self.close_handle_scope(scope);
+        true
+    }
+
+    pub(crate) fn add_property_by_str_with_attributes(
+        &mut self,
+        object: JSObject,
+        name: &str,
+        value: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+    ) -> bool {
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let value_handle = self.create_handle(value);
+        let key = self.internalize_string(name).tagged();
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let value = value_handle.get(self);
+        let result = self.add_property_with_attributes(object, key, value, attributes);
+        self.close_handle_scope(scope);
+        result
+    }
+
     pub fn set_property_by_str(&mut self, object: JSObject, name: &str, value: Tagged) -> bool {
         let scope = self.handle_scope();
         let object_handle = self.create_object_handle(object.object());

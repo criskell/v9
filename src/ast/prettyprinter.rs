@@ -112,6 +112,16 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
                 print_statement(out, statement, depth + 2);
             }
         }
+        Statement::ForIn {
+            each,
+            subject,
+            body,
+            ..
+        } => {
+            out.push_str(&format!("FOR IN {each}\n"));
+            print_expression(out, subject, depth + 1);
+            print_statement(out, body, depth + 1);
+        }
         Statement::Throw { exception, .. } => {
             out.push_str("THROW\n");
             print_expression(out, exception, depth + 1);

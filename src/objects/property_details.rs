@@ -350,9 +350,17 @@ impl std::fmt::Debug for PropertyDetails {
 }
 
 pub fn default_data_field(field_index: u32, representation: Representation) -> PropertyDetails {
+    data_field_with_attributes(field_index, representation, NONE)
+}
+
+pub fn data_field_with_attributes(
+    field_index: u32,
+    representation: Representation,
+    attributes: PropertyAttributes,
+) -> PropertyDetails {
     PropertyDetails::new_field(
         PropertyKind::Data,
-        NONE,
+        attributes,
         PropertyConstness::Mutable,
         representation,
         field_index,

@@ -23,6 +23,7 @@ pub enum FeedbackSlotKind {
     Literal,
     TypeOf,
     InstanceOf,
+    ForIn,
     JumpLoop,
 }
 
@@ -44,7 +45,8 @@ impl FeedbackSlotKind {
             12 => Literal,
             13 => TypeOf,
             14 => InstanceOf,
-            15 => JumpLoop,
+            15 => ForIn,
+            16 => JumpLoop,
             _ => Invalid,
         }
     }
@@ -52,7 +54,7 @@ impl FeedbackSlotKind {
     pub fn slot_size(self) -> i32 {
         use FeedbackSlotKind::*;
         match self {
-            BinaryOp | CompareOp | Literal | TypeOf | InstanceOf | JumpLoop => 1,
+            BinaryOp | CompareOp | Literal | TypeOf | InstanceOf | ForIn | JumpLoop => 1,
             Call
             | LoadProperty
             | LoadGlobalNotInsideTypeof
@@ -110,6 +112,7 @@ impl FeedbackSlotKind {
             Literal => "Literal",
             TypeOf => "TypeOf",
             InstanceOf => "InstanceOf",
+            ForIn => "ForIn",
             JumpLoop => "JumpLoop",
         }
     }

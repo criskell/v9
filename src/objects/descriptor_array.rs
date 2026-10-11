@@ -177,6 +177,49 @@ impl DescriptorArray {
     }
 }
 
+object_type!(
+    /// `EnumCache`
+    EnumCache
+);
+
+impl EnumCache {
+    pub const K_KEYS_OFFSET: i32 = crate::common::globals::K_TAGGED_SIZE;
+    pub const K_INDICES_OFFSET: i32 = Self::K_KEYS_OFFSET + crate::common::globals::K_TAGGED_SIZE;
+    pub const K_SIZE: i32 = Self::K_INDICES_OFFSET + crate::common::globals::K_TAGGED_SIZE;
+
+    /// `EnumCache::keys`
+    #[inline]
+    pub fn keys(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_KEYS_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_keys(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_KEYS_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn keys_address(self) -> crate::objects::tagged::Address {
+        self.field(Self::K_KEYS_OFFSET)
+    }
+
+    /// `EnumCache::indices`
+    #[inline]
+    pub fn indices(self, heap: &Heap) -> Tagged {
+        heap.read_tagged(self.field(Self::K_INDICES_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_indices(self, heap: &mut Heap, value: Tagged) {
+        heap.write_tagged(self.field(Self::K_INDICES_OFFSET), value);
+    }
+
+    #[inline]
+    pub fn indices_address(self) -> crate::objects::tagged::Address {
+        self.field(Self::K_INDICES_OFFSET)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
