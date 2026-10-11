@@ -1,6 +1,9 @@
 pub mod factory;
 pub mod heap;
 pub mod heap_visitor;
+pub mod mark_compact;
+pub mod marking;
+pub mod marking_worklist;
 pub mod new_spaces;
 pub mod paged_spaces;
 pub mod read_only_spaces;

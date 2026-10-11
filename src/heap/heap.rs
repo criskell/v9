@@ -304,6 +304,10 @@ impl Heap {
         self.memory[i..i + bytes.len()].copy_from_slice(bytes);
     }
 
+    pub fn set_old_space_top(&mut self, top: Address) {
+        self.old_space.set_top(top);
+    }
+
     pub fn copy_within(&mut self, from: Address, to: Address, length: usize) {
         let src = self.index(from, length);
         let dst = self.index(to, length);

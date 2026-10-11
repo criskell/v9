@@ -398,6 +398,35 @@ fn trace_gc() {
             isolate.new_heap_number(i as f64);
         }
     }
+
+    for i in 0..200 {
+        isolate.new_fixed_array_tenured(4);
+        isolate.new_heap_number_tenured(i as f64);
+    }
+    let old_before = isolate.heap.old_space().size();
+    let stats = isolate.collect_all_garbage();
+    println!();
+    println!("  mark-compact");
+    println!(
+        "    marked {} objects ({} bytes), swept {} objects ({} bytes)",
+        stats.marked_objects, stats.marked_bytes, stats.swept_objects, stats.swept_bytes
+    );
+    println!(
+        "    compacted {} objects, cleared {} weak references",
+        stats.moved_objects, stats.cleared_weak_references
+    );
+    println!(
+        "    old space {} -> {} bytes",
+        old_before,
+        isolate.heap.old_space().size()
+    );
+    let object = JSObject::unchecked_cast(isolate.handles[0].to_strong_heap_object().unwrap());
+    let inner = isolate.get_property_by_str(object, "inner");
+    let inner = JSObject::unchecked_cast(inner.to_strong_heap_object().unwrap());
+    println!(
+        "    its graph is intact: inner.deep == {}",
+        Smi::to_int(isolate.get_property_by_str(inner, "deep"))
+    );
 }
 
 fn print_heap() {

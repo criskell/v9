@@ -105,6 +105,11 @@ impl Space {
         Some(result)
     }
 
+    pub fn set_top(&mut self, top: Address) {
+        debug_assert!(top >= self.start() && top <= self.limit());
+        self.top = top;
+    }
+
     pub fn reset(&mut self) {
         self.top = self.start;
         self.allocated_since_reset = 0;

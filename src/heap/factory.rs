@@ -539,7 +539,7 @@ impl Isolate {
         function
     }
 
-    fn new_fixed_array_tenured(&mut self, length: i32) -> FixedArray {
+    pub fn new_fixed_array_tenured(&mut self, length: i32) -> FixedArray {
         if length == 0 {
             return self.empty_fixed_array();
         }
@@ -557,7 +557,7 @@ impl Isolate {
         array
     }
 
-    fn new_heap_number_tenured(&mut self, value: f64) -> HeapNumber {
+    pub fn new_heap_number_tenured(&mut self, value: f64) -> HeapNumber {
         let map = self.roots.heap_number_map.to_strong_heap_object().unwrap();
         let object = self
             .heap

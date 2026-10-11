@@ -160,6 +160,9 @@ which is the argument for reading it.
 | `src/heap/factory.h`, `factory.cc` | `src/heap/factory.rs` | [A] the objects `vx` can build |
 | `src/heap/heap-visitor.h` | `src/heap/heap_visitor.rs` | [A] switches on instance type, not `visitor_id` |
 | `src/heap/scavenger.h`, `scavenger.cc` | `src/heap/scavenger.rs` | [A] Cheney copying collector with `age_mark` promotion |
+| `src/heap/marking.h` | `src/heap/marking.rs` | [T] `MarkingBitmap`: one bit per tagged word |
+| `src/heap/marking-worklist.h` | `src/heap/marking_worklist.rs` | [A] a `Vec`, not a segmented worklist |
+| `src/heap/mark-compact.h`, `.cc` | `src/heap/mark_compact.rs` | [A] mark, clear weak references, compact old space |
 | `src/numbers/conversions.cc` | `src/numbers/conversions.rs` | [A] `Number::toString` per ECMA-262 §6.1.6.1.20 |
 | `src/objects/objects.h`, `objects.cc` | `src/objects/objects.rs` | [A] the abstract operations: `ToNumber`, `Add`, the comparisons |
 | `src/objects/bytecode-array.h` | `src/objects/bytecode_array.rs` | [T] layout; no handler table |
@@ -196,7 +199,7 @@ which is the argument for reading it.
 | V8 | Would become | Notes |
 | --- | --- | --- |
 | `src/objects/scope-info.h` (the rest) | `src/objects/scope_info.rs` | `with`, `catch`, block and module scopes |
-| `src/heap/mark-compact.cc` | `src/heap/` | old-generation collection |
+| `src/heap/incremental-marking.cc` | `src/heap/` | marking off the main thread, write barriers |
 | `src/objects/swiss-name-dictionary.h` | — | V8's newer open-addressed property dictionary |
 | `src/compiler/`, `src/maglev/`, `src/baseline/` | — | optimizing tiers; not planned |
 
@@ -328,7 +331,9 @@ maps to.
 | `ast/scopes.rs` | Function scopes only. V8 also has block, eval, with, catch, class and module scopes, which is what makes `let` block-scoped and gives it a temporal dead zone; `vx` gives `let`/`const` function scope, so neither is enforced. No `eval`, so no `VariableLocation::LOOKUP`. |
 | `heap/paged_spaces.rs` | V8 grows a paged space by committing another `MemoryChunk`. `vx` has no pages, so growth raises the space's limit and the arena extends — sound only because an address is an offset, so extending cannot invalidate one. |
 | `heap/read_only_spaces.rs` | V8 serialises this space into a snapshot and maps it read-only at startup, which is most of why it is a separate space. `vx` builds it every time. |
-| `heap/scavenger.rs` | No remembered set: V8's write barrier records old-to-young references so a scavenge touches only those, while `vx` walks old and read-only space linearly — correct, but O(old space) per collection. Single threaded. Weak references are treated as strong, so they survive one cycle longer. No old-generation collection. |
+| `heap/scavenger.rs` | No remembered set: V8's write barrier records old-to-young references so a scavenge touches only those, while `vx` walks old and read-only space linearly — correct, but O(old space) per collection. Single threaded. Weak references are treated as strong, so a weak slot survives one extra cycle; `mark_compact.rs` is what actually clears them. |
+| `heap/mark_compact.rs` | V8 sweeps most pages into free lists and evacuates only the fragmented ones. `vx` has no pages, so every live old-space object slides down over the dead ones and the whole space is compacted — simpler, and it cannot fragment, but it moves more than V8 would. The forwarding addresses go in a side table rather than in the objects' map words, because the update pass still needs to read each object's size, and the size comes from the map the forwarding address would overwrite. Marking is single-threaded and non-incremental: no `IncrementalMarking`, no marking barrier, no black allocation, and no ephemeron (weak map) fixpoint — the only weak references in `vx` are transition targets. Read-only and new-space objects are treated as always live, so a major collection reclaims old space only. |
+| **No collector runs by itself.** | `Heap::AllocateRaw` in V8 calls `CollectGarbage` when a space is full; `vx`'s grows the arena instead, so both collectors only run when something calls them. Wiring V8's `AllocateRawWithRetryOrFail` in is the next step, and it is not a small one: a collection during allocation moves objects, so every allocation site that holds a `Tagged` across one has to park it in `isolate.handles` first. The audit is the work, not the retry loop. |
 | `heap/setup_heap_internal.rs` | V8 skips almost all of this by deserialising a snapshot. |
 | `heap/spaces.rs` | No pages: a space is one run of bytes, not a list of `MemoryChunk`s. Pages buy incremental sweeping, per-page remembered sets and growth without reservation games, none of which is needed before mark-compact. |
 | `ic/handler_configuration.rs` | Only the Smi handler form. V8 also has `DataHandler` objects for what a Smi cannot describe — accessors, proxies, a load from a prototype needing the holder and a validity cell — so a property found on a prototype is not cached. |

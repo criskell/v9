@@ -33,6 +33,11 @@ impl PagedSpace {
     pub fn top(&self) -> Address {
         self.space.top()
     }
+
+    pub fn set_top(&mut self, top: Address) {
+        self.space.set_top(top);
+    }
+
     #[inline]
     pub fn limit(&self) -> Address {
         self.space.limit()
