@@ -1967,6 +1967,55 @@ impl Assembler {
         self.constpool.is_empty()
     }
 
+    pub fn add_sub_for_macro(
+        &mut self,
+        rd: Register,
+        rn: Register,
+        operand: Operand,
+        s: FlagsUpdate,
+        op: Instr,
+    ) {
+        self.add_sub(rd, rn, operand, s, op);
+    }
+
+    pub fn logical_for_macro(
+        &mut self,
+        rd: Register,
+        rn: Register,
+        operand: Operand,
+        op: Instr,
+    ) {
+        self.logical(rd, rn, operand, op);
+    }
+
+    pub fn logical_immediate_for_macro(
+        &mut self,
+        rd: Register,
+        rn: Register,
+        n: u32,
+        imm_s: u32,
+        imm_r: u32,
+        op: Instr,
+    ) {
+        self.logical_immediate(rd, rn, n, imm_s, imm_r, op);
+    }
+
+    pub fn load_store_for_macro(&mut self, rt: CPURegister, addr: MemOperand, op: Instr) {
+        self.load_store(rt, addr, op);
+    }
+
+    pub fn load_op_for_macro(rt: CPURegister) -> Instr {
+        Assembler::load_op_for(rt)
+    }
+
+    pub fn store_op_for_macro(rt: CPURegister) -> Instr {
+        Assembler::store_op_for(rt)
+    }
+
+    pub fn calc_ls_data_size_log2_for_macro(op: Instr) -> u32 {
+        Assembler::calc_ls_data_size_log2(op)
+    }
+
     fn add_sub(
         &mut self,
         rd: Register,

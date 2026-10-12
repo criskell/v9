@@ -1,7 +1,9 @@
 pub mod assembler_arm64;
 pub mod constants_arm64;
 pub mod instructions_arm64;
+pub mod macro_assembler_arm64;
 pub mod register_arm64;
+pub mod reglist_arm64;
 pub mod utils_arm64;
 pub mod constant_pool_arm64;
 pub mod decoder_arm64;
