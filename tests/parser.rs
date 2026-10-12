@@ -590,7 +590,7 @@ fn lexical_errors_are_reported_and_not_swallowed() {
 fn unimplemented_syntax_fails_loudly_rather_than_silently() {
     // Each of these would be a wrong parse if it were accepted.
     for (source, expected) in [
-        ("class A { [k] = 1; }", "computed class fields"),
+        ("class A { static prototype() {} }", "static property named 'prototype'"),
         ("class A { get x; }", "an accessor needs a body"),
         ("for (var x of y) {}", "for...of"),
         ("for (var a, b in y) {}", "single variable"),

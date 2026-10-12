@@ -475,6 +475,17 @@ impl BytecodeGenerator {
     }
 
     fn build_class_property(&mut self, field: &ClassLiteralField) -> Result<()> {
+        if field.is_computed_name {
+            let mark = self.builder.register_allocator().next_register_index();
+            let key = self.builder.register_allocator().new_register();
+            self.build_variable_load(&field.name);
+            self.builder.store_accumulator_in_register(key);
+            self.visit_for_accumulator_value(&field.value)?;
+            self.builder
+                .define_keyed_own_property(Register::receiver(), key);
+            self.builder.register_allocator().release_registers(mark);
+            return Ok(());
+        }
         self.visit_for_accumulator_value(&field.value)?;
         self.builder
             .define_named_own_property(Register::receiver(), &field.name);
@@ -1517,6 +1528,9 @@ impl BytecodeGenerator {
 
         let mut members = Vec::with_capacity(class.public_members.len());
         for property in &class.public_members {
+            if property.kind == ClassLiteralPropertyKind::Field {
+                continue;
+            }
             let value_kind = match property.kind {
                 ClassLiteralPropertyKind::Method => ValueKind::ConstantKind,
                 ClassLiteralPropertyKind::Getter => ValueKind::GetterKind,
@@ -1583,22 +1597,59 @@ impl BytecodeGenerator {
             .store_accumulator_in_register(class_boilerplate);
 
         for property in &class.public_members {
-            let value = self.builder.register_allocator().grow_register_list(&mut args);
-            let index = self.compile_function(&property.value)?;
+            let Some(value) = &property.value else {
+                continue;
+            };
+            let register = self.builder.register_allocator().grow_register_list(&mut args);
+            let index = self.compile_function(value)?;
             self.builder
                 .create_closure(index)
-                .store_accumulator_in_register(value);
+                .store_accumulator_in_register(register);
         }
 
+        let mut key_registers = Vec::new();
+        for property in &class.public_members {
+            if property.value.is_none() || !matches!(property.key, PropertyKey::Computed(_)) {
+                continue;
+            }
+            key_registers.push(self.builder.register_allocator().grow_register_list(&mut args));
+        }
+
+        let mut next_key_register = 0;
         for property in &class.public_members {
             let PropertyKey::Computed(key) = &property.key else {
                 continue;
             };
-            let register = self.builder.register_allocator().grow_register_list(&mut args);
             self.visit_for_accumulator_value(key)?;
-            self.builder
-                .to_name()
-                .store_accumulator_in_register(register);
+            self.builder.to_name();
+            if property.is_static {
+                let mark = self.builder.register_allocator().next_register_index();
+                let key = self.builder.register_allocator().new_register();
+                let mut done = crate::interpreter::bytecode_label::BytecodeLabel::new();
+                self.builder
+                    .store_accumulator_in_register(key)
+                    .load_literal_string("prototype")
+                    .compare_operation(Token::EqStrict, key)
+                    .jump_if_false(&mut done)
+                    .call_runtime(
+                        crate::runtime::runtime::FunctionId::ThrowStaticPrototypeError,
+                        crate::interpreter::bytecode_register::RegisterList::empty(),
+                    )
+                    .bind(&mut done);
+                self.builder.load_accumulator_with_register(key);
+                self.builder.register_allocator().release_registers(mark);
+            }
+            match &property.computed_name_var {
+                Some(name) => {
+                    let name = name.clone();
+                    self.build_variable_assignment(&name);
+                }
+                None => {
+                    self.builder
+                        .store_accumulator_in_register(key_registers[next_key_register]);
+                    next_key_register += 1;
+                }
+            }
         }
 
         self.builder

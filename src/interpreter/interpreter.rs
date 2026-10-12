@@ -457,6 +457,13 @@ impl Isolate {
                     let value = self.undefined_value();
                     self.set_accumulator(frame, value);
                 }
+                Bytecode::DefineKeyedOwnProperty => {
+                    let object = self.read_register(frame, register_operand(self, 0));
+                    let key = self.read_register(frame, register_operand(self, 1));
+                    self.define_keyed_own_property(object, key, self.accumulator(frame))?;
+                    let value = self.undefined_value();
+                    self.set_accumulator(frame, value);
+                }
                 Bytecode::SetKeyedProperty => {
                     let object = self.read_register(frame, register_operand(self, 0));
                     let key = self.read_register(frame, register_operand(self, 1));
@@ -963,6 +970,45 @@ impl Isolate {
         let object = object_handle.get(self);
         let value = value_handle.get(self);
         let result = self.store_property_with_origin(object, name, value, StoreOrigin::MaybeKeyed);
+        self.close_handle_scope(scope);
+        result
+    }
+
+    fn define_keyed_own_property(
+        &mut self,
+        object: Tagged,
+        key: Tagged,
+        value: Tagged,
+    ) -> ExecutionResult {
+        let scope = self.handle_scope();
+        let object_handle = self.create_handle(object);
+        let key_handle = self.create_handle(key);
+        let value_handle = self.create_handle(value);
+        let index = self
+            .to_array_index(key)
+            .or_else(|| self.string_as_array_index(key));
+        if let Some(index) = index {
+            if self.store_element(object, index, value)? {
+                self.close_handle_scope(scope);
+                return Ok(value);
+            }
+        }
+        let key = key_handle.get(self);
+        let name = match self.key_to_name(key) {
+            Ok(name) => name,
+            Err(error) => {
+                self.close_handle_scope(scope);
+                return Err(error);
+            }
+        };
+        let object = object_handle.get(self);
+        let value = value_handle.get(self);
+        let result = if let Some(receiver) = object.to_strong_heap_object() {
+            self.define_own_property(JSObject::unchecked_cast(receiver), name, value);
+            Ok(value)
+        } else {
+            Ok(value)
+        };
         self.close_handle_scope(scope);
         result
     }

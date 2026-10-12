@@ -4,6 +4,7 @@ pub enum FunctionId {
     DefineAccessorPropertyUnchecked,
     DefineClass,
     ToFastProperties,
+    ThrowStaticPrototypeError,
 }
 
 pub struct Function {
@@ -30,6 +31,12 @@ const K_INTRINSIC_FUNCTIONS: &[Function] = &[
         function_id: FunctionId::ToFastProperties,
         name: "ToFastProperties",
         nargs: 1,
+        result_size: 1,
+    },
+    Function {
+        function_id: FunctionId::ThrowStaticPrototypeError,
+        name: "ThrowStaticPrototypeError",
+        nargs: 0,
         result_size: 1,
     },
 ];
@@ -67,6 +74,7 @@ impl crate::execution::isolate::Isolate {
             }
             FunctionId::DefineClass => self.runtime_define_class(args),
             FunctionId::ToFastProperties => self.runtime_to_fast_properties(args),
+            FunctionId::ThrowStaticPrototypeError => self.runtime_throw_static_prototype_error(),
         }
     }
 }

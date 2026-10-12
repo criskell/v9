@@ -74,9 +74,10 @@ pub struct CaseClause {
 #[derive(Clone, Debug)]
 pub struct ClassLiteralProperty {
     pub key: PropertyKey,
-    pub value: FunctionLiteral,
+    pub value: Option<FunctionLiteral>,
     pub kind: ClassLiteralPropertyKind,
     pub is_static: bool,
+    pub computed_name_var: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -84,6 +85,7 @@ pub struct ClassLiteralField {
     pub name: String,
     pub value: Expression,
     pub is_static: bool,
+    pub is_computed_name: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

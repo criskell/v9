@@ -304,6 +304,14 @@ impl BytecodeArrayBuilder {
         )
     }
 
+    pub fn define_keyed_own_property(&mut self, object: Register, key: Register) -> &mut Self {
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::DefineKeyedOwn);
+        self.output(
+            Bytecode::DefineKeyedOwnProperty,
+            &[object.to_operand(), key.to_operand(), 0, slot],
+        )
+    }
+
     pub fn set_keyed_property(&mut self, object: Register, key: Register) -> &mut Self {
         let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetKeyedStrict);
         self.output(

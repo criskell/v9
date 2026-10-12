@@ -398,7 +398,9 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
                 };
                 let is_static = if property.is_static { "STATIC " } else { "" };
                 out.push_str(&format!("{is_static}{kind}\n"));
-                print_function(out, &property.value, depth + 2);
+                if let Some(value) = &property.value {
+                    print_function(out, value, depth + 2);
+                }
             }
         }
         Expression::Sequence { expressions, .. } => {

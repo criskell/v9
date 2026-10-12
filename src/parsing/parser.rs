@@ -42,12 +42,14 @@ type Result<T> = std::result::Result<T, ParserError>;
 struct ClassInfo {
     instance_members_scope: Option<crate::ast::scopes::Scope>,
     static_members_scope: Option<crate::ast::scopes::Scope>,
+    computed_field_count: usize,
 }
 
 enum ClassMember {
     Constructor(FunctionLiteral),
     Property(ClassLiteralProperty),
     Field(ClassLiteralField),
+    ComputedField(ClassLiteralProperty, ClassLiteralField),
 }
 
 #[derive(Default)]
@@ -1280,6 +1282,7 @@ impl Parser {
         let mut class_info = ClassInfo {
             instance_members_scope: self.new_field_initializer_scope(),
             static_members_scope: self.new_field_initializer_scope(),
+            computed_field_count: 0,
         };
 
         self.expect(Token::LeftBrace)?;
@@ -1302,6 +1305,14 @@ impl Parser {
                 }
                 ClassMember::Property(property) => public_members.push(property),
                 ClassMember::Field(field) => {
+                    if field.is_static {
+                        static_fields.push(field);
+                    } else {
+                        instance_fields.push(field);
+                    }
+                }
+                ClassMember::ComputedField(property, field) => {
+                    public_members.push(property);
                     if field.is_static {
                         static_fields.push(field);
                     } else {
@@ -1391,18 +1402,28 @@ impl Parser {
             let key = key?;
             self.expect(Token::RightBracket)?;
             if self.peek() != Token::LeftParen {
-                return Err(self
-                    .unexpected_token_with_hint("computed class fields are not implemented"));
+                if kind != ClassLiteralPropertyKind::Method {
+                    return Err(self.unexpected_token_with_hint("an accessor needs a body"));
+                }
+                return self.parse_computed_class_field_initializer(
+                    class_info, key, is_static, position,
+                );
             }
             let value = self.parse_method_literal(None, is_static, position)?;
             return Ok(ClassMember::Property(ClassLiteralProperty {
                 key: PropertyKey::Computed(key),
-                value,
+                value: Some(value),
                 kind,
                 is_static,
+                computed_name_var: None,
             }));
         }
         let name = self.parse_property_name()?;
+        if is_static && name == "prototype" {
+            return Err(self.unexpected_token_with_hint(
+                "Classes may not have a static property named 'prototype'",
+            ));
+        }
         if self.peek() != Token::LeftParen {
             if kind != ClassLiteralPropertyKind::Method {
                 return Err(self.unexpected_token_with_hint("an accessor needs a body"));
@@ -1416,19 +1437,56 @@ impl Parser {
         }
         Ok(ClassMember::Property(ClassLiteralProperty {
             key: PropertyKey::Name(name),
-            value,
+            value: Some(value),
             kind,
             is_static,
+            computed_name_var: None,
         }))
     }
 
-    fn parse_class_field_initializer(
+    fn class_field_variable_name(index: usize) -> String {
+        format!(".class-field-{index}")
+    }
+
+    fn parse_computed_class_field_initializer(
         &mut self,
         class_info: &mut ClassInfo,
-        name: String,
+        key: Expression,
         is_static: bool,
         position: Position,
     ) -> Result<ClassMember> {
+        let name = Self::class_field_variable_name(class_info.computed_field_count);
+        class_info.computed_field_count += 1;
+        self.scope_chain
+            .current()
+            .declare(&name, VariableMode::Const);
+
+        let value = self.parse_field_initializer_value(class_info, is_static, position, &name)?;
+        self.expect_semicolon()?;
+        Ok(ClassMember::ComputedField(
+            ClassLiteralProperty {
+                key: PropertyKey::Computed(key),
+                value: None,
+                kind: ClassLiteralPropertyKind::Field,
+                is_static,
+                computed_name_var: Some(name.clone()),
+            },
+            ClassLiteralField {
+                name,
+                value,
+                is_static,
+                is_computed_name: true,
+            },
+        ))
+    }
+
+    fn parse_field_initializer_value(
+        &mut self,
+        class_info: &mut ClassInfo,
+        is_static: bool,
+        position: Position,
+        computed_name_var: &str,
+    ) -> Result<Expression> {
         let slot = if is_static {
             &mut class_info.static_members_scope
         } else {
@@ -1436,6 +1494,9 @@ impl Parser {
         };
         self.scope_chain
             .push_scope(slot.take().expect("the field initializer scope"));
+        if !computed_name_var.is_empty() {
+            self.record_reference(computed_name_var);
+        }
 
         let value = if self.check(Token::Assign) {
             self.parse_assignment_expression()
@@ -1452,13 +1513,23 @@ impl Parser {
         } else {
             class_info.instance_members_scope = Some(detached);
         }
+        value
+    }
 
-        let value = value?;
+    fn parse_class_field_initializer(
+        &mut self,
+        class_info: &mut ClassInfo,
+        name: String,
+        is_static: bool,
+        position: Position,
+    ) -> Result<ClassMember> {
+        let value = self.parse_field_initializer_value(class_info, is_static, position, "")?;
         self.expect_semicolon()?;
         Ok(ClassMember::Field(ClassLiteralField {
             name,
             value,
             is_static,
+            is_computed_name: false,
         }))
     }
 

@@ -25,6 +25,7 @@ pub enum FeedbackSlotKind {
     InstanceOf,
     ForIn,
     JumpLoop,
+    DefineKeyedOwn,
 }
 
 impl FeedbackSlotKind {
@@ -47,6 +48,7 @@ impl FeedbackSlotKind {
             14 => InstanceOf,
             15 => ForIn,
             16 => JumpLoop,
+            17 => DefineKeyedOwn,
             _ => Invalid,
         }
     }
@@ -63,6 +65,7 @@ impl FeedbackSlotKind {
             | SetNamedStrict
             | DefineNamedOwn
             | SetKeyedStrict
+            | DefineKeyedOwn
             | StoreGlobalStrict => 2,
             Invalid => unreachable!("an invalid slot has no size"),
         }
@@ -112,6 +115,7 @@ impl FeedbackSlotKind {
             InstanceOf => "InstanceOf",
             ForIn => "ForIn",
             JumpLoop => "JumpLoop",
+            DefineKeyedOwn => "DefineKeyedOwn",
         }
     }
 }
@@ -152,6 +156,10 @@ impl FeedbackVectorSpec {
 
     pub fn add_keyed_store_ic_slot(&mut self) -> i32 {
         self.add_slot(FeedbackSlotKind::SetKeyedStrict)
+    }
+
+    pub fn add_define_keyed_own_ic_slot(&mut self) -> i32 {
+        self.add_slot(FeedbackSlotKind::DefineKeyedOwn)
     }
 
     pub fn add_load_global_ic_slot(&mut self, inside_typeof: bool) -> i32 {

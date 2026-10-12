@@ -142,6 +142,13 @@ impl Isolate {
         self.add_descriptors_by_template(args, prototype, false)
     }
 
+    pub(crate) fn runtime_throw_static_prototype_error(&mut self) -> ExecutionResult {
+        let message = self
+            .new_string("Classes may not have a static property named 'prototype'")
+            .tagged();
+        Err(Thrown(message))
+    }
+
     fn add_descriptors_by_template(
         &mut self,
         args: &[Handle],

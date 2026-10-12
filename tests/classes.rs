@@ -897,3 +897,163 @@ fn a_class_expression_takes_computed_names_too() {
         "1"
     );
 }
+
+#[test]
+fn a_computed_name_becomes_a_field() {
+    assert_eq!(evaluate("var k = 'x'; class A { [k] = 1; } (new A()).x"), "1");
+    assert_eq!(
+        evaluate("var k = 'x'; class A { static [k] = 2; } A.x"),
+        "2"
+    );
+    assert_eq!(
+        evaluate(
+            "var k = 'x';
+             class A { [k]; }
+             var a = new A();
+             (a.x === undefined) + ',' + Object.keys(a).join('')"
+        ),
+        "true,x"
+    );
+}
+
+#[test]
+fn a_computed_field_is_enumerable_and_owned_by_the_instance() {
+    assert_eq!(
+        evaluate(
+            "var k = 'x';
+             class A { [k] = 1; y = 2; }
+             var a = new A();
+             a.x + ',' + a.y + ',' + Object.keys(a).join('')"
+        ),
+        "1,2,xy"
+    );
+    assert_eq!(
+        evaluate("var k = 'x'; class A { [k] = 1; } A.prototype.x === undefined"),
+        "true"
+    );
+}
+
+#[test]
+fn a_computed_field_name_is_evaluated_once_at_class_definition() {
+    assert_eq!(
+        evaluate(
+            "var i = 0;
+             function f() { i = i + 1; return 'k'; }
+             class A { [f()] = 1; }
+             var a = new A();
+             var b = new A();
+             a.k + ',' + b.k + ',' + i"
+        ),
+        "1,1,1"
+    );
+}
+
+#[test]
+fn computed_field_and_method_names_share_one_source_order() {
+    assert_eq!(
+        evaluate(
+            "var order = '';
+             function n(s) { order = order + s; return s; }
+             class A { [n('a')]() { return 1; } [n('b')] = 2; [n('c')]() { return 3; } [n('d')] = 4; }
+             var a = new A();
+             order + '|' + a.a() + ',' + a.b + ',' + a.c() + ',' + a.d"
+        ),
+        "abcd|1,2,3,4"
+    );
+    assert_eq!(
+        evaluate(
+            "var order = '';
+             function a() { order = order + 'a'; return 'p'; }
+             function b() { order = order + 'b'; return 'q'; }
+             class A { [b]() {} [a] = 1; }
+             class B { [a()] = 1; [b()]() {} }
+             class C { [b()]() {} [a()] = 1; }
+             order"
+        ),
+        "abba"
+    );
+}
+
+#[test]
+fn a_computed_field_initializer_runs_before_the_constructor_body() {
+    assert_eq!(
+        evaluate(
+            "var k = 'x';
+             class A { [k] = this.v; constructor() { this.v = 7; } }
+             (new A()).x === undefined"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn a_computed_field_initializer_sees_this_and_the_class_scope() {
+    assert_eq!(
+        evaluate(
+            "var k = 'x';
+             class A { [k] = () => this.v; constructor() { this.v = 3; } }
+             (new A()).x()"
+        ),
+        "3"
+    );
+    assert_eq!(
+        evaluate("var k = 'x'; class A { [k] = 1; m() { return this[k]; } } (new A()).m()"),
+        "1"
+    );
+}
+
+#[test]
+fn a_computed_field_name_can_be_an_index() {
+    assert_eq!(
+        evaluate("class A { [0] = 'zero'; } var a = new A(); a[0] + ',' + a['0']"),
+        "zero,zero"
+    );
+}
+
+#[test]
+fn a_computed_field_is_inherited_through_the_constructor() {
+    assert_eq!(
+        evaluate("var k = 'x'; class A { [k] = 1; } class B extends A {} (new B()).x"),
+        "1"
+    );
+}
+
+#[test]
+fn a_static_member_may_not_be_named_prototype() {
+    assert!(error("var k = 'prototype'; class A { static [k] = 1; }")
+        .contains("static property named 'prototype'"));
+    assert!(error("var k = 'prototype'; class A { static [k]() {} }")
+        .contains("static property named 'prototype'"));
+    assert_eq!(
+        evaluate("var k = 'prototype'; class A { [k] = 1; } (new A()).prototype"),
+        "1"
+    );
+}
+
+#[test]
+fn each_class_keeps_its_own_computed_field_name() {
+    assert_eq!(
+        evaluate(
+            "var k1 = 'a';
+             var k2 = 'b';
+             class A { [k1] = 1; }
+             class B { [k2] = 2; }
+             var x = new A();
+             var y = new B();
+             (x.a === 1) + ',' + (x.b === undefined) + ',' + (y.b === 2) + ',' + (y.a === undefined)"
+        ),
+        "true,true,true,true"
+    );
+    assert_eq!(
+        evaluate(
+            "var k = 'a';
+             class A {
+                 [k] = 1;
+                 m() { var k2 = 'b'; class B { [k2] = 2; } return (new B()).b; }
+             }
+             var x = new A();
+             x.a + ',' + x.m()"
+        ),
+        "1,2"
+    );
+}
