@@ -83,6 +83,12 @@ impl Isolate {
             Builtin::ObjectPrototypeToString,
             0,
         );
+        self.install_builtin(
+            object_prototype,
+            "valueOf",
+            Builtin::ObjectPrototypeValueOf,
+            0,
+        );
 
         let array_prototype = self.new_js_object();
         let array_prototype = self.create_object_handle(array_prototype.object());

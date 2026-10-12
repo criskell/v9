@@ -30,6 +30,7 @@ pub enum Builtin {
     ObjectKeys = 20,
     FunctionPrototypeCall = 21,
     ObjectDefineProperty = 22,
+    ObjectPrototypeValueOf = 23,
 }
 
 impl Builtin {
@@ -59,6 +60,7 @@ impl Builtin {
             20 => ObjectKeys,
             22 => ObjectDefineProperty,
             21 => FunctionPrototypeCall,
+            23 => ObjectPrototypeValueOf,
             _ => return None,
         })
     }
@@ -213,6 +215,7 @@ impl Isolate {
                 let text = self.to_string(receiver);
                 Ok(self.new_string(&text).tagged())
             }
+            Builtin::ObjectPrototypeValueOf => Ok(receiver),
             Builtin::ObjectKeys => self.object_keys(argument(0)),
             Builtin::ObjectDefineProperty => {
                 self.object_define_property(argument(0), argument(1), argument(2))

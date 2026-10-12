@@ -340,7 +340,70 @@ mod tests {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum OrdinaryToPrimitiveHint {
+    Number,
+    String,
+}
+
 impl crate::execution::isolate::Isolate {
+    pub(crate) fn js_receiver_to_primitive(
+        &mut self,
+        receiver: JSObject,
+        hint: crate::objects::objects::ToPrimitiveHint,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::objects::objects::ToPrimitiveHint;
+
+        self.ordinary_to_primitive(
+            receiver,
+            if hint == ToPrimitiveHint::String {
+                OrdinaryToPrimitiveHint::String
+            } else {
+                OrdinaryToPrimitiveHint::Number
+            },
+        )
+    }
+
+    pub(crate) fn ordinary_to_primitive(
+        &mut self,
+        receiver: JSObject,
+        hint: OrdinaryToPrimitiveHint,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
+
+        let method_names = match hint {
+            OrdinaryToPrimitiveHint::Number => ["valueOf", "toString"],
+            OrdinaryToPrimitiveHint::String => ["toString", "valueOf"],
+        };
+
+        let scope = self.handle_scope();
+        let receiver_handle = self.create_object_handle(receiver.object());
+        for name in method_names {
+            let name = self.internalize_string(name).tagged();
+            let name = self.create_handle(name);
+            let holder = JSObject::unchecked_cast(receiver_handle.object(self));
+            let name = name.get(self);
+            let method = self.get_property_with_accessors(holder, name)?;
+            if self.is_callable_value(method) {
+                let method = self.create_handle(method);
+                let receiver = receiver_handle.get(self);
+                let function = crate::objects::js_function::JSFunction::unchecked_cast(
+                    method.object(self),
+                );
+                let result = self.execute(function, receiver, &[])?;
+                if self.is_primitive(result) {
+                    self.close_handle_scope(scope);
+                    return Ok(result);
+                }
+            }
+        }
+        self.close_handle_scope(scope);
+        let message = self
+            .new_string("Cannot convert object to primitive value")
+            .tagged();
+        Err(Thrown(message))
+    }
+
     pub(crate) fn set_normalized_property(
         &mut self,
         object: JSObject,

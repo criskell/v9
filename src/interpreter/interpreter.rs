@@ -478,7 +478,7 @@ impl Isolate {
                 | Bytecode::ShiftRight
                 | Bytecode::ShiftRightLogical => {
                     let left = self.read_register(frame, register_operand(self, 0));
-                    let value = self.apply_binary_op(bytecode, left, self.accumulator(frame));
+                    let value = self.apply_binary_op(bytecode, left, self.accumulator(frame))?;
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::AddSmi
@@ -487,27 +487,27 @@ impl Isolate {
                 | Bytecode::DivSmi
                 | Bytecode::ModSmi => {
                     let right = Smi::from_int(operand(self, 0));
-                    let value = self.apply_binary_op(bytecode, self.accumulator(frame), right);
+                    let value = self.apply_binary_op(bytecode, self.accumulator(frame), right)?;
                     self.set_accumulator(frame, value);
                 }
 
                 Bytecode::Inc => {
                     let one = Smi::from_int(1);
-                    let value = self.add(self.accumulator(frame), one);
+                    let value = self.add(self.accumulator(frame), one)?;
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::Dec => {
                     let one = Smi::from_int(1);
-                    let value = self.subtract(self.accumulator(frame), one);
+                    let value = self.subtract(self.accumulator(frame), one)?;
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::Negate => {
-                    let value = self.to_number(self.accumulator(frame));
+                    let value = self.convert_to_number(self.accumulator(frame))?;
                     let value = self.new_number(-value);
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::BitwiseNot => {
-                    let value = self.bitwise_not(self.accumulator(frame));
+                    let value = self.bitwise_not(self.accumulator(frame))?;
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::ToBooleanLogicalNot => {
@@ -526,7 +526,7 @@ impl Isolate {
 
                 Bytecode::DeletePropertyStrict | Bytecode::DeletePropertySloppy => {
                     let object = self.read_register(frame, register_operand(self, 0));
-                    let key = self.key_to_name(self.accumulator(frame));
+                    let key = self.key_to_name(self.accumulator(frame))?;
                     let deleted = self.delete_property_or_element(object, key)?;
                     let value = self.boolean_value(deleted);
                     self.set_accumulator(frame, value);
@@ -538,17 +538,17 @@ impl Isolate {
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::ToNumber => {
-                    let value = self.to_number(self.accumulator(frame));
+                    let value = self.convert_to_number(self.accumulator(frame))?;
                     let value = self.new_number(value);
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::ToString => {
-                    let text = self.to_string(self.accumulator(frame));
+                    let text = self.convert_to_string(self.accumulator(frame))?;
                     let value = self.new_string(&text).tagged();
                     self.set_accumulator(frame, value);
                 }
                 Bytecode::ToName => {
-                    let value = self.key_to_name(self.accumulator(frame));
+                    let value = self.key_to_name(self.accumulator(frame))?;
                     self.set_accumulator(frame, value);
                 }
 
@@ -560,7 +560,7 @@ impl Isolate {
                 | Bytecode::TestGreaterThanOrEqual
                 | Bytecode::TestIn => {
                     let left = self.read_register(frame, register_operand(self, 0));
-                    let result = self.apply_comparison(bytecode, left, self.accumulator(frame));
+                    let result = self.apply_comparison(bytecode, left, self.accumulator(frame))?;
                     let value = self.boolean_value(result);
                     self.set_accumulator(frame, value);
                 }
@@ -818,7 +818,12 @@ impl Isolate {
         }
     }
 
-    fn apply_binary_op(&mut self, bytecode: Bytecode, left: Tagged, right: Tagged) -> Tagged {
+    fn apply_binary_op(
+        &mut self,
+        bytecode: Bytecode,
+        left: Tagged,
+        right: Tagged,
+    ) -> ExecutionResult {
         use Bytecode::*;
         match bytecode {
             Add => self.add(left, right),
@@ -838,16 +843,21 @@ impl Isolate {
         }
     }
 
-    fn apply_comparison(&mut self, bytecode: Bytecode, left: Tagged, right: Tagged) -> bool {
+    fn apply_comparison(
+        &mut self,
+        bytecode: Bytecode,
+        left: Tagged,
+        right: Tagged,
+    ) -> Result<bool, Thrown> {
         use Bytecode::*;
         match bytecode {
             TestEqual => self.loose_equals(left, right),
-            TestEqualStrict => self.strict_equals(left, right),
+            TestEqualStrict => Ok(self.strict_equals(left, right)),
             TestLessThan => self.less_than(left, right),
             TestGreaterThan => self.greater_than(left, right),
             TestLessThanOrEqual => self.less_than_or_equal(left, right),
             TestGreaterThanOrEqual => self.greater_than_or_equal(left, right),
-            TestIn => self.has_property(right, left),
+            TestIn => Ok(self.has_property(right, left)),
             other => unreachable!("{other} is not a comparison"),
         }
     }
@@ -906,14 +916,8 @@ impl Isolate {
             .get(&self.heap, index)
     }
 
-    fn key_to_name(&mut self, key: Tagged) -> Tagged {
-        if let Some(string) = crate::objects::string::String::try_cast(&self.heap, key) {
-            if string.is_internalized(&self.heap) {
-                return key;
-            }
-        }
-        let text = self.to_string(key);
-        self.internalize_string(&text).tagged()
+    fn key_to_name(&mut self, key: Tagged) -> ExecutionResult {
+        self.convert_to_name(key)
     }
 
     fn get_keyed_property(&mut self, object: Tagged, key: Tagged) -> ExecutionResult {
@@ -925,7 +929,7 @@ impl Isolate {
                 return Ok(value);
             }
         }
-        let name = self.key_to_name(key);
+        let name = self.key_to_name(key)?;
         self.load_property(object, name)
     }
 
@@ -949,7 +953,13 @@ impl Isolate {
             }
         }
         let key = key_handle.get(self);
-        let name = self.key_to_name(key);
+        let name = match self.key_to_name(key) {
+            Ok(name) => name,
+            Err(error) => {
+                self.close_handle_scope(scope);
+                return Err(error);
+            }
+        };
         let object = object_handle.get(self);
         let value = value_handle.get(self);
         let result = self.store_property_with_origin(object, name, value, StoreOrigin::MaybeKeyed);

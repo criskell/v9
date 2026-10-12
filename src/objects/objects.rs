@@ -6,7 +6,15 @@ use crate::objects::js_objects::JSObject;
 use crate::objects::oddball::{Oddball, OddballKind};
 use crate::objects::smi::Smi;
 use crate::objects::string::String as VxString;
+use crate::interpreter::interpreter::Thrown;
 use crate::objects::tagged::Tagged;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ToPrimitiveHint {
+    Default,
+    Number,
+    String,
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ValueKind {
@@ -67,6 +75,64 @@ impl Isolate {
         }
     }
 
+    pub fn is_primitive(&self, value: Tagged) -> bool {
+        !matches!(
+            self.value_kind(value),
+            ValueKind::Object | ValueKind::Function
+        )
+    }
+
+    pub fn to_primitive(
+        &mut self,
+        input: Tagged,
+        hint: ToPrimitiveHint,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        if self.is_primitive(input) {
+            return Ok(input);
+        }
+        let receiver = JSObject::unchecked_cast(input.to_strong_heap_object().expect("a receiver"));
+        self.js_receiver_to_primitive(receiver, hint)
+    }
+
+    pub fn convert_to_number(&mut self, input: Tagged) -> Result<f64, Thrown> {
+        let mut input = input;
+        loop {
+            if self.is_primitive(input) {
+                return Ok(self.to_number(input));
+            }
+            input = self.to_primitive(input, ToPrimitiveHint::Number)?;
+        }
+    }
+
+    pub fn convert_to_name(
+        &mut self,
+        input: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let input = self.to_primitive(input, ToPrimitiveHint::String)?;
+        if let Some(string) = VxString::try_cast(&self.heap, input) {
+            if string.is_internalized(&self.heap) {
+                return Ok(input);
+            }
+        }
+        let text = self.to_string(input);
+        Ok(self.internalize_string(&text).tagged())
+    }
+
+    pub fn convert_to_int32(&mut self, input: Tagged) -> Result<i32, Thrown> {
+        let input = self.to_primitive(input, ToPrimitiveHint::Number)?;
+        Ok(self.to_int32(input))
+    }
+
+    pub fn convert_to_uint32(&mut self, input: Tagged) -> Result<u32, Thrown> {
+        let input = self.to_primitive(input, ToPrimitiveHint::Number)?;
+        Ok(self.to_uint32(input))
+    }
+
+    pub fn convert_to_string(&mut self, input: Tagged) -> Result<std::string::String, Thrown> {
+        let input = self.to_primitive(input, ToPrimitiveHint::String)?;
+        Ok(self.to_string(input))
+    }
+
     pub fn to_number(&self, value: Tagged) -> f64 {
         match self.value_kind(value) {
             ValueKind::Smi => Smi::to_int(value) as f64,
@@ -122,90 +188,165 @@ impl Isolate {
         self.internalize_string(name).tagged()
     }
 
-    pub fn add(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let left_is_string = self.value_kind(left) == ValueKind::String;
-        let right_is_string = self.value_kind(right) == ValueKind::String;
-        if left_is_string || right_is_string {
-            let text = format!("{}{}", self.to_string(left), self.to_string(right));
-            return self.new_string(&text).tagged();
-        }
+    pub fn add(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
         if left.is_smi() && right.is_smi() {
             let sum = Smi::to_int(left) as i64 + Smi::to_int(right) as i64;
-            return self.new_number_from_i64(sum);
+            return Ok(self.new_number_from_i64(sum));
         }
-        let sum = self.to_number(left) + self.to_number(right);
-        self.new_number(sum)
+        let scope = self.handle_scope();
+        let right_handle = self.create_handle(right);
+        let left = self.to_primitive(left, ToPrimitiveHint::Default)?;
+        let left_handle = self.create_handle(left);
+        let right = right_handle.get(self);
+        let right = self.to_primitive(right, ToPrimitiveHint::Default)?;
+        let right_handle = self.create_handle(right);
+        let left = left_handle.get(self);
+        let left_is_string = self.value_kind(left) == ValueKind::String;
+        let right_is_string = self.value_kind(right) == ValueKind::String;
+        let result = if left_is_string || right_is_string {
+            let right = right_handle.get(self);
+            let text = format!("{}{}", self.to_string(left), self.to_string(right));
+            self.new_string(&text).tagged()
+        } else {
+            let right = right_handle.get(self);
+            let sum = self.to_number(left) + self.to_number(right);
+            self.new_number(sum)
+        };
+        self.close_handle_scope(scope);
+        Ok(result)
     }
 
-    pub fn subtract(&mut self, left: Tagged, right: Tagged) -> Tagged {
+    pub fn subtract(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
         if left.is_smi() && right.is_smi() {
             let result = Smi::to_int(left) as i64 - Smi::to_int(right) as i64;
-            return self.new_number_from_i64(result);
+            return Ok(self.new_number_from_i64(result));
         }
-        let result = self.to_number(left) - self.to_number(right);
-        self.new_number(result)
+        let left = self.convert_to_number(left)?;
+        let right = self.convert_to_number(right)?;
+        Ok(self.new_number(left - right))
     }
 
-    pub fn multiply(&mut self, left: Tagged, right: Tagged) -> Tagged {
+    pub fn multiply(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
         if left.is_smi() && right.is_smi() {
             let result = Smi::to_int(left) as i64 * Smi::to_int(right) as i64;
-            return self.new_number_from_i64(result);
+            return Ok(self.new_number_from_i64(result));
         }
-        let result = self.to_number(left) * self.to_number(right);
-        self.new_number(result)
+        let left = self.convert_to_number(left)?;
+        let right = self.convert_to_number(right)?;
+        Ok(self.new_number(left * right))
     }
 
-    pub fn divide(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let result = self.to_number(left) / self.to_number(right);
-        self.new_number(result)
+    pub fn divide(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let left = self.convert_to_number(left)?;
+        let right = self.convert_to_number(right)?;
+        Ok(self.new_number(left / right))
     }
 
-    pub fn modulus(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let result = self.to_number(left) % self.to_number(right);
-        self.new_number(result)
+    pub fn modulus(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let left = self.convert_to_number(left)?;
+        let right = self.convert_to_number(right)?;
+        Ok(self.new_number(left % right))
     }
 
-    pub fn exponentiate(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let result = self.to_number(left).powf(self.to_number(right));
-        self.new_number(result)
+    pub fn exponentiate(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let left = self.convert_to_number(left)?;
+        let right = self.convert_to_number(right)?;
+        Ok(self.new_number(left.powf(right)))
     }
 
-    pub fn bitwise_and(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let result = self.to_int32(left) & self.to_int32(right);
-        Smi::from_int(result)
+    pub fn bitwise_and(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let left = self.convert_to_int32(left)?;
+        let right = self.convert_to_int32(right)?;
+        Ok(Smi::from_int(left & right))
     }
 
-    pub fn bitwise_or(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let result = self.to_int32(left) | self.to_int32(right);
-        Smi::from_int(result)
+    pub fn bitwise_or(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let left = self.convert_to_int32(left)?;
+        let right = self.convert_to_int32(right)?;
+        Ok(Smi::from_int(left | right))
     }
 
-    pub fn bitwise_xor(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let result = self.to_int32(left) ^ self.to_int32(right);
-        Smi::from_int(result)
+    pub fn bitwise_xor(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let left = self.convert_to_int32(left)?;
+        let right = self.convert_to_int32(right)?;
+        Ok(Smi::from_int(left ^ right))
     }
 
-    pub fn bitwise_not(&mut self, value: Tagged) -> Tagged {
-        Smi::from_int(!self.to_int32(value))
+    pub fn bitwise_not(
+        &mut self,
+        value: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let value = self.convert_to_int32(value)?;
+        Ok(Smi::from_int(!value))
     }
 
-    pub fn shift_left(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let count = (self.to_uint32(right) & 31) as u32;
-        Smi::from_int(self.to_int32(left) << count)
+    pub fn shift_left(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let count = self.convert_to_uint32(right)? & 31;
+        let left = self.convert_to_int32(left)?;
+        Ok(Smi::from_int(left << count))
     }
 
-    pub fn shift_right(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let count = (self.to_uint32(right) & 31) as u32;
-        Smi::from_int(self.to_int32(left) >> count)
+    pub fn shift_right(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let count = self.convert_to_uint32(right)? & 31;
+        let left = self.convert_to_int32(left)?;
+        Ok(Smi::from_int(left >> count))
     }
 
-    pub fn shift_right_logical(&mut self, left: Tagged, right: Tagged) -> Tagged {
-        let count = (self.to_uint32(right) & 31) as u32;
-        let result = self.to_uint32(left) >> count;
-        self.new_number(result as f64)
+    pub fn shift_right_logical(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        let count = self.convert_to_uint32(right)? & 31;
+        let left = self.convert_to_uint32(left)?;
+        let result = left >> count;
+        Ok(self.new_number(result as f64))
     }
 
-    ///
     pub fn get_prototype_chain_root(&self, value: Tagged) -> Option<Tagged> {
         use crate::objects::contexts::NativeContext;
         use crate::objects::instance_type as it;
@@ -299,62 +440,122 @@ impl Isolate {
         }
     }
 
-    pub fn loose_equals(&mut self, left: Tagged, right: Tagged) -> bool {
-        let left_kind = self.value_kind(left);
-        let right_kind = self.value_kind(right);
+    pub fn loose_equals(&mut self, left: Tagged, right: Tagged) -> Result<bool, Thrown> {
+        let mut left = left;
+        let mut right = right;
+        loop {
+            let left_kind = self.value_kind(left);
+            let right_kind = self.value_kind(right);
 
-        let nullish = |kind| matches!(kind, ValueKind::Null | ValueKind::Undefined);
-        if nullish(left_kind) || nullish(right_kind) {
-            return nullish(left_kind) && nullish(right_kind);
+            let nullish = |kind| matches!(kind, ValueKind::Null | ValueKind::Undefined);
+            if nullish(left_kind) || nullish(right_kind) {
+                return Ok(nullish(left_kind) && nullish(right_kind));
+            }
+
+            if left_kind == right_kind
+                || (matches!(left_kind, ValueKind::Smi | ValueKind::HeapNumber)
+                    && matches!(right_kind, ValueKind::Smi | ValueKind::HeapNumber))
+            {
+                return Ok(self.strict_equals(left, right));
+            }
+
+            if !self.is_primitive(left) {
+                let scope = self.handle_scope();
+                let right_handle = self.create_handle(right);
+                left = self.to_primitive(left, ToPrimitiveHint::Default)?;
+                let left_handle = self.create_handle(left);
+                right = right_handle.get(self);
+                left = left_handle.get(self);
+                self.close_handle_scope(scope);
+                continue;
+            }
+            if !self.is_primitive(right) {
+                let scope = self.handle_scope();
+                let left_handle = self.create_handle(left);
+                right = self.to_primitive(right, ToPrimitiveHint::Default)?;
+                let right_handle = self.create_handle(right);
+                left = left_handle.get(self);
+                right = right_handle.get(self);
+                self.close_handle_scope(scope);
+                continue;
+            }
+
+            let a = self.to_number(left);
+            let b = self.to_number(right);
+            return Ok(a == b);
         }
-
-        if left_kind == right_kind
-            || (matches!(left_kind, ValueKind::Smi | ValueKind::HeapNumber)
-                && matches!(right_kind, ValueKind::Smi | ValueKind::HeapNumber))
-        {
-            return self.strict_equals(left, right);
-        }
-
-        let a = self.to_number(left);
-        let b = self.to_number(right);
-        a == b
     }
 
-    pub fn less_than(&mut self, left: Tagged, right: Tagged) -> bool {
-        match self.compare(left, right) {
-            Some(std::cmp::Ordering::Less) => true,
-            _ => false,
-        }
+    pub fn less_than(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> Result<bool, Thrown> {
+        let ordering = self.compare(left, right)?;
+        Ok(matches!(ordering, Some(std::cmp::Ordering::Less)))
     }
 
-    pub fn greater_than(&mut self, left: Tagged, right: Tagged) -> bool {
-        matches!(self.compare(left, right), Some(std::cmp::Ordering::Greater))
+    pub fn greater_than(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> Result<bool, Thrown> {
+        let ordering = self.compare(left, right)?;
+        Ok(matches!(ordering, Some(std::cmp::Ordering::Greater)))
     }
 
-    pub fn less_than_or_equal(&mut self, left: Tagged, right: Tagged) -> bool {
-        matches!(
-            self.compare(left, right),
+    pub fn less_than_or_equal(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> Result<bool, Thrown> {
+        let ordering = self.compare(left, right)?;
+        Ok(matches!(
+            ordering,
             Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
-        )
+        ))
     }
 
-    pub fn greater_than_or_equal(&mut self, left: Tagged, right: Tagged) -> bool {
-        matches!(
-            self.compare(left, right),
+    pub fn greater_than_or_equal(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> Result<bool, Thrown> {
+        let ordering = self.compare(left, right)?;
+        Ok(matches!(
+            ordering,
             Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
-        )
+        ))
     }
 
-    fn compare(&mut self, left: Tagged, right: Tagged) -> Option<std::cmp::Ordering> {
-        if self.value_kind(left) == ValueKind::String && self.value_kind(right) == ValueKind::String
+    fn compare(
+        &mut self,
+        left: Tagged,
+        right: Tagged,
+    ) -> Result<Option<std::cmp::Ordering>, Thrown> {
+        let scope = self.handle_scope();
+        let right_handle = self.create_handle(right);
+        let left = self.to_primitive(left, ToPrimitiveHint::Number)?;
+        let left_handle = self.create_handle(left);
+        let right = right_handle.get(self);
+        let right = self.to_primitive(right, ToPrimitiveHint::Number)?;
+        let right_handle = self.create_handle(right);
+        let left = left_handle.get(self);
+        let ordering = if self.value_kind(left) == ValueKind::String
+            && self.value_kind(right) == ValueKind::String
         {
+            let right = right_handle.get(self);
             let a = self.to_string(left);
             let b = self.to_string(right);
-            return Some(a.cmp(&b));
-        }
-        let a = self.to_number(left);
-        let b = self.to_number(right);
-        a.partial_cmp(&b)
+            Some(a.cmp(&b))
+        } else {
+            let right = right_handle.get(self);
+            let a = self.to_number(left);
+            let b = self.to_number(right);
+            a.partial_cmp(&b)
+        };
+        self.close_handle_scope(scope);
+        Ok(ordering)
     }
 
     pub fn has_property(&mut self, object: Tagged, key: Tagged) -> bool {
@@ -443,13 +644,16 @@ mod tests {
         let mut isolate = Isolate::new();
         let one = Smi::from_int(1);
         let text = isolate.new_string("1").tagged();
+        let text = isolate.create_handle(text);
 
-        let sum = isolate.add(one, one);
+        let sum = isolate.add(one, one).unwrap();
         assert_eq!(Smi::to_int(sum), 2);
 
-        let concatenated = isolate.add(one, text);
+        let value = text.get(&isolate);
+        let concatenated = isolate.add(one, value).unwrap();
         assert_eq!(isolate.to_string(concatenated), "11");
-        let other_way = isolate.add(text, one);
+        let value = text.get(&isolate);
+        let other_way = isolate.add(value, one).unwrap();
         assert_eq!(isolate.to_string(other_way), "11");
     }
 
@@ -457,7 +661,7 @@ mod tests {
     fn arithmetic_overflows_out_of_smi_range_into_a_heap_number() {
         let mut isolate = Isolate::new();
         let big = Smi::from_int(i32::MAX);
-        let sum = isolate.add(big, Smi::from_int(1));
+        let sum = isolate.add(big, Smi::from_int(1)).unwrap();
         assert!(!sum.is_smi(), "the result no longer fits in a Smi");
         assert_eq!(isolate.to_number(sum), i32::MAX as f64 + 1.0);
     }
@@ -465,16 +669,16 @@ mod tests {
     #[test]
     fn division_is_not_integer_division() {
         let mut isolate = Isolate::new();
-        let result = isolate.divide(Smi::from_int(1), Smi::from_int(2));
+        let result = isolate.divide(Smi::from_int(1), Smi::from_int(2)).unwrap();
         assert_eq!(isolate.to_number(result), 0.5);
-        let infinity = isolate.divide(Smi::from_int(1), Smi::from_int(0));
+        let infinity = isolate.divide(Smi::from_int(1), Smi::from_int(0)).unwrap();
         assert_eq!(isolate.to_number(infinity), f64::INFINITY);
     }
 
     #[test]
     fn modulus_keeps_the_sign_of_the_dividend() {
         let mut isolate = Isolate::new();
-        let result = isolate.modulus(Smi::from_int(-7), Smi::from_int(3));
+        let result = isolate.modulus(Smi::from_int(-7), Smi::from_int(3)).unwrap();
         assert_eq!(
             isolate.to_number(result),
             -1.0,
@@ -526,7 +730,7 @@ mod tests {
         let one = Smi::from_int(1);
         let text = isolate.new_string("1").tagged();
         assert!(!isolate.strict_equals(one, text));
-        assert!(isolate.loose_equals(one, text), "but == does");
+        assert!(isolate.loose_equals(one, text).unwrap(), "but == does");
     }
 
     #[test]
@@ -534,18 +738,18 @@ mod tests {
         let mut isolate = Isolate::new();
         let null = isolate.null_value();
         let undefined = isolate.undefined_value();
-        assert!(isolate.loose_equals(null, undefined));
-        assert!(isolate.loose_equals(null, null));
-        assert!(!isolate.loose_equals(null, Smi::from_int(0)));
-        assert!(!isolate.loose_equals(undefined, Smi::from_int(0)));
-        assert!(!isolate.loose_equals(null, isolate.false_value()));
+        assert!(isolate.loose_equals(null, undefined).unwrap());
+        assert!(isolate.loose_equals(null, null).unwrap());
+        assert!(!isolate.loose_equals(null, Smi::from_int(0)).unwrap());
+        assert!(!isolate.loose_equals(undefined, Smi::from_int(0)).unwrap());
+        assert!(!isolate.loose_equals(null, isolate.false_value()).unwrap());
     }
 
     #[test]
     fn the_empty_string_loosely_equals_zero() {
         let mut isolate = Isolate::new();
         let empty = isolate.new_string("").tagged();
-        assert!(isolate.loose_equals(empty, Smi::from_int(0)));
+        assert!(isolate.loose_equals(empty, Smi::from_int(0)).unwrap());
         assert!(!isolate.strict_equals(empty, Smi::from_int(0)));
     }
 
@@ -554,9 +758,9 @@ mod tests {
         let mut isolate = Isolate::new();
         let ten = isolate.new_string("10").tagged();
         let nine = isolate.new_string("9").tagged();
-        assert!(isolate.less_than(ten, nine), "\"10\" < \"9\" as strings");
-        assert!(!isolate.less_than(Smi::from_int(10), Smi::from_int(9)));
-        assert!(isolate.less_than(ten, Smi::from_int(11)));
+        assert!(isolate.less_than(ten, nine).unwrap(), "\"10\" < \"9\" as strings");
+        assert!(!isolate.less_than(Smi::from_int(10), Smi::from_int(9)).unwrap());
+        assert!(isolate.less_than(ten, Smi::from_int(11)).unwrap());
     }
 
     #[test]
@@ -564,19 +768,19 @@ mod tests {
         let mut isolate = Isolate::new();
         let nan = isolate.new_heap_number(f64::NAN).tagged();
         let one = Smi::from_int(1);
-        assert!(!isolate.less_than(nan, one));
-        assert!(!isolate.greater_than(nan, one));
-        assert!(!isolate.less_than_or_equal(nan, one));
-        assert!(!isolate.greater_than_or_equal(nan, one));
+        assert!(!isolate.less_than(nan, one).unwrap());
+        assert!(!isolate.greater_than(nan, one).unwrap());
+        assert!(!isolate.less_than_or_equal(nan, one).unwrap());
+        assert!(!isolate.greater_than_or_equal(nan, one).unwrap());
     }
 
     #[test]
     fn shifts_take_their_count_modulo_32() {
         let mut isolate = Isolate::new();
         let one = Smi::from_int(1);
-        let shifted = isolate.shift_left(one, Smi::from_int(32));
+        let shifted = isolate.shift_left(one, Smi::from_int(32)).unwrap();
         assert_eq!(Smi::to_int(shifted), 1, "1 << 32 is 1, not 0");
-        let shifted = isolate.shift_left(one, Smi::from_int(3));
+        let shifted = isolate.shift_left(one, Smi::from_int(3)).unwrap();
         assert_eq!(Smi::to_int(shifted), 8);
     }
 
@@ -584,9 +788,9 @@ mod tests {
     fn logical_shift_right_is_unsigned() {
         let mut isolate = Isolate::new();
         let negative = Smi::from_int(-1);
-        let arithmetic = isolate.shift_right(negative, Smi::from_int(1));
+        let arithmetic = isolate.shift_right(negative, Smi::from_int(1)).unwrap();
         assert_eq!(Smi::to_int(arithmetic), -1, ">> propagates the sign");
-        let logical = isolate.shift_right_logical(negative, Smi::from_int(1));
+        let logical = isolate.shift_right_logical(negative, Smi::from_int(1)).unwrap();
         assert_eq!(
             isolate.to_number(logical),
             2147483647.0,
@@ -724,7 +928,7 @@ impl crate::execution::isolate::Isolate {
         }
     }
 
-    fn is_callable_value(&self, value: Tagged) -> bool {
+    pub(crate) fn is_callable_value(&self, value: Tagged) -> bool {
         match value.to_strong_heap_object() {
             Some(object) => {
                 crate::objects::instance_type::is_callable(self.heap.instance_type(object))
