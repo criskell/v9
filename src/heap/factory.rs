@@ -220,23 +220,6 @@ impl Isolate {
         map
     }
 
-    pub fn copy_map_shell(&mut self, source: Map) -> Map {
-        let instance_type = source.instance_type(&self.heap);
-        let instance_size = source.instance_size(&self.heap);
-        let start = source.inobject_properties_start_in_words(&self.heap);
-        let map = self.new_map(instance_type, instance_size, start);
-
-        let prototype = source.prototype(&self.heap);
-        map.set_prototype(&mut self.heap, prototype);
-        let bit_field = self.heap.read_u8(source.field(Map::K_BIT_FIELD_OFFSET));
-        self.heap
-            .write_u8(map.field(Map::K_BIT_FIELD_OFFSET), bit_field);
-        let is_extensible = source.is_extensible(&self.heap);
-        map.set_is_extensible(&mut self.heap, is_extensible);
-        map
-    }
-
-
     pub fn new_js_object_from_map(&mut self, map: Map) -> JSObject {
         let instance_size = map.instance_size(&self.heap);
         let object =
@@ -948,10 +931,10 @@ mod tests {
     }
 
     #[test]
-    fn copy_map_shell_keeps_the_shape_but_not_the_properties() {
+    fn copy_drop_descriptors_keeps_the_shape_but_not_the_properties() {
         let mut isolate = Isolate::new();
         let source = isolate.roots.js_object_map();
-        let copy = isolate.copy_map_shell(source);
+        let copy = isolate.copy_drop_descriptors(source);
 
         assert_ne!(copy, source);
         assert_eq!(

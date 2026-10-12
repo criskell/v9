@@ -124,8 +124,13 @@ impl Map {
 
 
     #[inline]
-    fn bit_field(self, heap: &Heap) -> u8 {
+    pub fn bit_field(self, heap: &Heap) -> u8 {
         heap.read_u8(self.field(Self::K_BIT_FIELD_OFFSET))
+    }
+
+    #[inline]
+    pub fn set_bit_field(self, heap: &mut Heap, value: u8) {
+        heap.write_u8(self.field(Self::K_BIT_FIELD_OFFSET), value);
     }
 
     #[inline]
@@ -551,7 +556,7 @@ impl Isolate {
         }
 
         let map = Map::unchecked_cast(map_handle.object(self));
-        let new_map = self.copy_map_shell(map);
+        let new_map = self.copy_drop_descriptors(map);
         let fresh = fresh_handle.get(self);
         new_map.set_instance_descriptors(&mut self.heap, fresh);
         let fresh = DescriptorArray::unchecked_cast(fresh_handle.object(self));
@@ -577,11 +582,55 @@ impl Isolate {
         external > limit
     }
 
+    pub(crate) fn raw_copy(
+        &mut self,
+        src: Map,
+        instance_size: i32,
+        inobject_properties: i32,
+    ) -> Map {
+        let instance_type = src.instance_type(&self.heap);
+        let start = instance_size / K_TAGGED_SIZE - inobject_properties;
+        let scope = self.handle_scope();
+        let src_handle = self.create_object_handle(src.object());
+        let result = self.new_map(instance_type, instance_size, start);
+
+        let src = Map::unchecked_cast(src_handle.object(self));
+        let constructor_or_back_pointer = src.constructor_or_back_pointer(&self.heap);
+        result.set_constructor_or_back_pointer(&mut self.heap, constructor_or_back_pointer);
+        let bit_field = src.bit_field(&self.heap);
+        result.set_bit_field(&mut self.heap, bit_field);
+        let bit_field2 = src.bit_field2(&self.heap);
+        result.set_bit_field2(&mut self.heap, bit_field2);
+        let bit_field3 = src.bit_field3(&self.heap);
+        result.set_bit_field3(&mut self.heap, bit_field3);
+        result.set_owns_descriptors(&mut self.heap, true);
+        result.set_number_of_own_descriptors(&mut self.heap, 0);
+        result.set_enum_length(&mut self.heap, K_INVALID_ENUM_CACHE_SENTINEL);
+        result.set_is_deprecated(&mut self.heap, false);
+        if !result.is_dictionary_map(&self.heap) {
+            result.set_is_unstable(&mut self.heap, false);
+        }
+        let prototype = src.prototype(&self.heap);
+        result.set_prototype(&mut self.heap, prototype);
+        self.close_handle_scope(scope);
+        result
+    }
+
+    pub(crate) fn copy_drop_descriptors(&mut self, map: Map) -> Map {
+        let instance_size = map.instance_size(&self.heap);
+        let inobject_properties = if instance_type::is_js_object(map.instance_type(&self.heap)) {
+            map.inobject_properties(&self.heap)
+        } else {
+            0
+        };
+        self.raw_copy(map, instance_size, inobject_properties)
+    }
+
     pub(crate) fn copy_normalized(&mut self, map: Map) -> Map {
-        let result = self.copy_map_shell(map);
+        let instance_size = map.instance_size(&self.heap);
+        let inobject_properties = map.inobject_properties(&self.heap);
+        let result = self.raw_copy(map, instance_size, inobject_properties);
         result.set_is_dictionary_map(&mut self.heap, true);
-        let kind = map.elements_kind(&self.heap);
-        result.set_elements_kind(&mut self.heap, kind);
         result
     }
 
@@ -638,7 +687,7 @@ impl Isolate {
 
         let scope = self.handle_scope();
         let descriptors_handle = self.create_object_handle(new_descriptors.object());
-        let new_map = self.copy_map_shell(map);
+        let new_map = self.copy_drop_descriptors(map);
         let new_descriptors = descriptors_handle.get(self);
         self.close_handle_scope(scope);
         new_map.set_instance_descriptors(&mut self.heap, new_descriptors);

@@ -388,3 +388,13 @@ fn every_array_of_one_kind_shares_a_map() {
     assert_ne!(smis, doubles);
     assert_ne!(doubles, tagged);
 }
+
+#[test]
+fn a_named_property_on_a_dictionary_elements_array_keeps_the_elements_kind() {
+    let source = "var a = []; a[0] = 1; a[100000] = 2; a.x = 3; a";
+    assert_eq!(kind_of(source), DictionaryElements);
+    assert_eq!(
+        evaluate("var a = []; a[0] = 1; a[100000] = 2; a.x = 3; a[0] + ',' + a[100000] + ',' + a.x + ',' + a.length"),
+        "1,2,3,100001"
+    );
+}

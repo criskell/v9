@@ -95,7 +95,7 @@ impl Isolate {
 
         let function = JSFunction::unchecked_cast(constructor.object(self));
         let map = crate::objects::map::Map::unchecked_cast(self.heap.map(function.object()));
-        let map = self.copy_map_shell(map);
+        let map = self.copy_drop_descriptors(map);
         let map = self.create_object_handle(map.object());
         if let Some(parent) = constructor_parent {
             let parent_value = parent.get(self);
@@ -125,7 +125,7 @@ impl Isolate {
         };
         let holder = JSObject::unchecked_cast(prototype.object(self));
         let map = crate::objects::map::Map::unchecked_cast(self.heap.map(holder.object()));
-        let map = self.copy_map_shell(map);
+        let map = self.copy_drop_descriptors(map);
         let map = self.create_object_handle(map.object());
         let map_object = crate::objects::map::Map::unchecked_cast(map.object(self));
         map_object.set_prototype(&mut self.heap, parent_value);
