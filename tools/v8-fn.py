@@ -105,7 +105,10 @@ def main():
     elif "::" in name:
         pattern = re.compile(re.escape(name) + r"\s*\(")
     else:
-        pattern = re.compile(r"\b" + re.escape(name) + r"\s*\(")
+        # A definition at namespace scope, not a call: the signature starts at
+        # column zero. An inline body inside a class needs Class::Method or
+        # --class instead.
+        pattern = re.compile(r"^\S.*?\b" + re.escape(name) + r"\s*\(")
 
     if find(arguments.v8, pattern) == 0:
         sys.exit(f"no definition of {name} found in {arguments.v8}/src")
