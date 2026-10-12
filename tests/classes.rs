@@ -1201,3 +1201,129 @@ fn an_undeclared_private_name_is_a_syntax_error() {
         .contains("Private field '#z' must be declared in an enclosing class"));
     assert!(error("class A { #x = 1; #x = 2; }").contains("already declared"));
 }
+
+#[test]
+fn a_private_method_is_callable_from_inside_the_class() {
+    assert_eq!(
+        evaluate("class A { #m() { return 1; } run() { return this.#m(); } } (new A()).run()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate(
+            "class A {
+                 #m() { return this.v; }
+                 constructor() { this.v = 7; }
+                 run() { return this.#m(); }
+             }
+             (new A()).run()"
+        ),
+        "7"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { #m() { return 1; } #n() { return 2; } run() { return this.#m() + this.#n(); } }
+             (new A()).run()"
+        ),
+        "3"
+    );
+}
+
+#[test]
+fn a_private_method_can_be_used_before_it_is_declared() {
+    assert_eq!(
+        evaluate("class A { run() { return this.#m(); } #m() { return 1; } } (new A()).run()"),
+        "1"
+    );
+}
+
+#[test]
+fn a_private_method_is_not_a_visible_property() {
+    assert_eq!(
+        evaluate("class A { #m() { return 1; } y = 2; } var a = new A(); Object.keys(a).join('')"),
+        "y"
+    );
+}
+
+#[test]
+fn a_private_method_is_reached_through_the_class_scope_not_the_instance() {
+    assert_eq!(
+        evaluate("class A { #m() { return 1; } get() { return typeof this.#m; } } (new A()).get()"),
+        "function"
+    );
+    assert_eq!(
+        evaluate("class A { #m() { return 1; } run() { var f = () => this.#m(); return f(); } } (new A()).run()"),
+        "1"
+    );
+}
+
+#[test]
+fn a_private_method_sees_private_fields() {
+    assert_eq!(
+        evaluate(
+            "class A { #x = 2; #m() { return this.#x * 3; } run() { return this.#m(); } }
+             (new A()).run()"
+        ),
+        "6"
+    );
+}
+
+#[test]
+fn a_private_method_needs_a_receiver_branded_by_its_own_class() {
+    assert!(
+        error("class A { #m() { return 1; } run(o) { return o.#m(); } } (new A()).run({})")
+            .contains("Receiver must be an instance of class A")
+    );
+    assert!(error(
+        "class A { #m() { return 1; } }
+         class B { #m() { return 2; } take(o) { return o.#m(); } }
+         (new B()).take(new A())"
+    )
+    .contains("Receiver must be an instance of class B"));
+    assert_eq!(
+        evaluate(
+            "class A { #m() { return 1; } run(o) { return o.#m(); } }
+             (new A()).run(new A())"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn an_anonymous_class_names_its_brand_anonymous() {
+    assert!(error(
+        "var A = class { #m() { return 1; } run(o) { return o.#m(); } };
+         (new A()).run({})"
+    )
+    .contains("Receiver must be an instance of class anonymous"));
+}
+
+#[test]
+fn a_derived_constructor_brands_the_instance_after_super() {
+    assert_eq!(
+        evaluate(
+            "class B { constructor() { this.b = 1; } }
+             class A extends B { #m() { return this.b + 1; } run() { return this.#m(); } }
+             (new A()).run()"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn a_private_method_is_not_writable() {
+    assert_eq!(
+        evaluate(
+            "class A { #m() {} run() { this.#m = 1; } }
+             var caught = 'no';
+             try { (new A()).run(); } catch (e) { caught = e; }
+             caught"
+        ),
+        "Private method '#m' is not writable"
+    );
+}
+
+#[test]
+fn a_private_name_may_not_be_declared_twice_in_one_class() {
+    assert!(error("class A { #m() {} #m() {} }").contains("already declared"));
+    assert!(error("class A { #x = 1; #x() {} }").contains("already declared"));
+}

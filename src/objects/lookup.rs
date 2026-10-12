@@ -83,7 +83,7 @@ impl Isolate {
         }
     }
 
-    fn private_name_description(&self, name: Tagged) -> Option<std::string::String> {
+    fn private_name_description(&self, name: Tagged) -> Option<(std::string::String, bool)> {
         use crate::objects::name::Symbol;
         let object = name.to_strong_heap_object()?;
         if self.heap.instance_type(object) != crate::objects::instance_type::SYMBOL_TYPE {
@@ -94,10 +94,11 @@ impl Isolate {
             return None;
         }
         let description = symbol.description(&self.heap);
-        match crate::objects::string::String::try_cast(&self.heap, description) {
-            Some(string) => Some(string.to_rust_string(&self.heap)),
-            None => Some(std::string::String::new()),
-        }
+        let text = match crate::objects::string::String::try_cast(&self.heap, description) {
+            Some(string) => string.to_rust_string(&self.heap),
+            None => std::string::String::new(),
+        };
+        Some((text, symbol.is_private_brand(&self.heap)))
     }
 
     pub(crate) fn get_property_with_accessors(
@@ -108,14 +109,21 @@ impl Isolate {
         use crate::interpreter::interpreter::Thrown;
         use crate::objects::property_details::PropertyKind;
         let Some(found) = self.lookup_property(object, name) else {
-            if let Some(description) = self.private_name_description(name) {
-                let message = self
-                    .new_string(&format!(
+            if let Some((description, is_private_brand)) = self.private_name_description(name) {
+                let message = if is_private_brand {
+                    let class_name = if description.is_empty() {
+                        "anonymous".to_string()
+                    } else {
+                        description
+                    };
+                    self.new_string(&format!("Receiver must be an instance of class {class_name}"))
+                } else {
+                    self.new_string(&format!(
                         "Cannot read private member {description} from an object whose class did \
                          not declare it"
                     ))
-                    .tagged();
-                return Err(Thrown(message));
+                };
+                return Err(Thrown(message.tagged()));
             }
             return Ok(self.undefined_value());
         };
@@ -138,7 +146,7 @@ impl Isolate {
         use crate::interpreter::interpreter::Thrown;
         use crate::objects::property_details::PropertyKind;
         if self.lookup_property(object, name).is_none() {
-            if let Some(description) = self.private_name_description(name) {
+            if let Some((description, _)) = self.private_name_description(name) {
                 let message = self
                     .new_string(&format!(
                         "Cannot write private member {description} to an object whose class did \

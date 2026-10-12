@@ -76,6 +76,7 @@ pub struct BytecodeGenerator {
     context_registers: Vec<Option<Register>>,
     loop_stack: Vec<Breakable>,
     requires_instance_members_initializer: bool,
+    class_scope_has_private_brand: bool,
     finally_stack: Vec<FinallyScope>,
     functions: Vec<CompiledFunction>,
 }
@@ -88,6 +89,7 @@ impl BytecodeGenerator {
             context_registers: Vec::new(),
             loop_stack: Vec::new(),
             requires_instance_members_initializer: false,
+            class_scope_has_private_brand: false,
             finally_stack: Vec::new(),
             functions: Vec::new(),
         };
@@ -159,8 +161,18 @@ impl BytecodeGenerator {
             &mut self.requires_instance_members_initializer,
             function.requires_instance_members_initializer,
         );
+        let saved_brand = std::mem::replace(
+            &mut self.class_scope_has_private_brand,
+            function.class_scope_has_private_brand,
+        );
         let result = (|| -> Result<()> {
             self.build_function_context(&function.scope)?;
+
+            if function.class_scope_has_private_brand
+                && !function.kind.is_derived_constructor()
+            {
+                self.build_private_brand_initialization(Register::receiver());
+            }
 
             if function.requires_instance_members_initializer
                 && !function.kind.is_derived_constructor()
@@ -183,6 +195,7 @@ impl BytecodeGenerator {
 
         let builder = std::mem::replace(&mut self.builder, saved_builder);
         self.requires_instance_members_initializer = saved_initializer;
+        self.class_scope_has_private_brand = saved_brand;
         self.scope_chain.pop();
         self.context_registers.pop();
         self.loop_stack = saved_loops;
@@ -599,6 +612,46 @@ impl BytecodeGenerator {
         self.loop_stack
             .iter()
             .rposition(|breakable| matches!(breakable, Breakable::Loop(_)))
+    }
+
+    fn private_method_name(&self, key: &PropertyAccess) -> Option<String> {
+        let PropertyAccess::Keyed(Expression::VariableProxy { name, .. }) = key else {
+            return None;
+        };
+        if self.variable_mode(name) == Some(crate::ast::ast::VariableMode::PrivateMethod) {
+            Some(name.clone())
+        } else {
+            None
+        }
+    }
+
+    fn variable_mode(&self, name: &str) -> Option<crate::ast::ast::VariableMode> {
+        for scope in self.scope_chain.iter().rev() {
+            if let Some(variable) = scope.lookup_local(name) {
+                return Some(variable.mode);
+            }
+        }
+        None
+    }
+
+    fn build_invalid_property_access(&mut self, message: &str) {
+        self.builder.load_literal_string(message);
+        self.builder.emit_throw();
+    }
+
+    fn build_private_brand_check(&mut self, object: Register) {
+        self.build_variable_load(crate::ast::scopes::K_BRAND);
+        self.builder.load_keyed_property(object);
+    }
+
+    fn build_private_brand_initialization(&mut self, receiver: Register) {
+        let mark = self.builder.register_allocator().next_register_index();
+        let brand = self.builder.register_allocator().new_register();
+        self.build_variable_load(crate::ast::scopes::K_BRAND);
+        self.builder.store_accumulator_in_register(brand);
+        self.builder
+            .define_keyed_own_property(receiver, brand);
+        self.builder.register_allocator().release_registers(mark);
     }
 
     fn resolve(&self, name: &str) -> Resolution {
@@ -1160,6 +1213,12 @@ impl BytecodeGenerator {
             }
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
+                if let Some(name) = self.private_method_name(key) {
+                    self.build_invalid_property_access(&format!(
+                        "Private method '{name}' is not writable"
+                    ));
+                    return Ok(());
+                }
                 match key.as_ref() {
                     PropertyAccess::Named(name) => {
                         let name = name.clone();
@@ -1245,15 +1304,21 @@ impl BytecodeGenerator {
         }
         let mark = self.builder.register_allocator().next_register_index();
         let object_register = self.visit_for_register_value(object)?;
-        match key {
-            PropertyAccess::Named(name) => {
-                let name = name.clone();
-                self.builder.load_named_property(object_register, &name);
+        match self.private_method_name(key) {
+            Some(name) => {
+                self.build_private_brand_check(object_register);
+                self.build_variable_load(&name);
             }
-            PropertyAccess::Keyed(key) => {
-                self.visit_for_accumulator_value(key)?;
-                self.builder.load_keyed_property(object_register);
-            }
+            None => match key {
+                PropertyAccess::Named(name) => {
+                    let name = name.clone();
+                    self.builder.load_named_property(object_register, &name);
+                }
+                PropertyAccess::Keyed(key) => {
+                    self.visit_for_accumulator_value(key)?;
+                    self.builder.load_keyed_property(object_register);
+                }
+            },
         }
         self.builder.register_allocator().release_registers(mark);
         Ok(())
@@ -1348,15 +1413,21 @@ impl BytecodeGenerator {
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
                 let callee_register = self.builder.register_allocator().new_register();
-                match key.as_ref() {
-                    PropertyAccess::Named(name) => {
-                        let name = name.clone();
-                        self.builder.load_named_property(object_register, &name);
+                match self.private_method_name(key) {
+                    Some(name) => {
+                        self.build_private_brand_check(object_register);
+                        self.build_variable_load(&name);
                     }
-                    PropertyAccess::Keyed(key) => {
-                        self.visit_for_accumulator_value(key)?;
-                        self.builder.load_keyed_property(object_register);
-                    }
+                    None => match key.as_ref() {
+                        PropertyAccess::Named(name) => {
+                            let name = name.clone();
+                            self.builder.load_named_property(object_register, &name);
+                        }
+                        PropertyAccess::Keyed(key) => {
+                            self.visit_for_accumulator_value(key)?;
+                            self.builder.load_keyed_property(object_register);
+                        }
+                    },
                 }
                 self.builder.store_accumulator_in_register(callee_register);
 
@@ -1467,6 +1538,9 @@ impl BytecodeGenerator {
     }
 
     fn build_instance_initialization_after_super_call(&mut self) {
+        if self.class_scope_has_private_brand {
+            self.build_private_brand_initialization(Register::receiver());
+        }
         if self.requires_instance_members_initializer {
             self.build_instance_member_initialization(
                 Register::function_closure(),
@@ -1607,19 +1681,45 @@ impl BytecodeGenerator {
                 .store_accumulator_in_register(register);
         }
 
-        for name in &class.private_members {
-            let name = name.clone();
+        if class.has_private_brand {
             let mark = self.builder.register_allocator().next_register_index();
             let argument = self.builder.register_allocator().new_register_list(1);
             self.builder
-                .load_literal_string(&name)
+                .load_literal_string(class.name.as_deref().unwrap_or(""))
                 .store_accumulator_in_register(argument.first_register())
                 .call_runtime(
-                    crate::runtime::runtime::FunctionId::CreatePrivateNameSymbol,
+                    crate::runtime::runtime::FunctionId::CreatePrivateBrandSymbol,
                     argument,
                 );
-            self.build_variable_assignment(&name);
+            self.build_variable_assignment(crate::ast::scopes::K_BRAND);
             self.builder.register_allocator().release_registers(mark);
+        }
+
+        for property in &class.private_members {
+            let PropertyKey::Name(name) = &property.key else {
+                unreachable!()
+            };
+            let name = name.clone();
+            match &property.value {
+                Some(value) => {
+                    let index = self.compile_function(value)?;
+                    self.builder.create_closure(index);
+                    self.build_variable_assignment(&name);
+                }
+                None => {
+                    let mark = self.builder.register_allocator().next_register_index();
+                    let argument = self.builder.register_allocator().new_register_list(1);
+                    self.builder
+                        .load_literal_string(&name)
+                        .store_accumulator_in_register(argument.first_register())
+                        .call_runtime(
+                            crate::runtime::runtime::FunctionId::CreatePrivateNameSymbol,
+                            argument,
+                        );
+                    self.build_variable_assignment(&name);
+                    self.builder.register_allocator().release_registers(mark);
+                }
+            }
         }
 
         let mut key_registers = Vec::new();

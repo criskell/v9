@@ -30,6 +30,11 @@ pub enum VariableMode {
     Var,
     Let,
     Const,
+    PrivateMethod,
+}
+
+pub fn is_private_method_variable_mode(mode: VariableMode) -> bool {
+    mode == VariableMode::PrivateMethod
 }
 
 #[derive(Clone, Debug)]
@@ -103,7 +108,8 @@ pub struct ClassLiteral {
     pub extends: Option<Expression>,
     pub constructor: FunctionLiteral,
     pub public_members: Vec<ClassLiteralProperty>,
-    pub private_members: Vec<String>,
+    pub private_members: Vec<ClassLiteralProperty>,
+    pub has_private_brand: bool,
     pub instance_members_initializer_function: Option<FunctionLiteral>,
     pub static_initializer: Option<FunctionLiteral>,
     pub scope: crate::ast::scopes::Scope,
@@ -115,6 +121,7 @@ pub struct FunctionLiteral {
     pub name: Option<String>,
     pub kind: crate::objects::function_kind::FunctionKind,
     pub requires_instance_members_initializer: bool,
+    pub class_scope_has_private_brand: bool,
     pub parameters: Vec<String>,
     pub body: Vec<Statement>,
     pub scope: crate::ast::scopes::Scope,

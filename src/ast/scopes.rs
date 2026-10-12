@@ -56,6 +56,7 @@ pub struct Scope {
 
 pub const K_HOME_OBJECT: &str = ".home_object";
 pub const K_STATIC_HOME_OBJECT: &str = ".static_home_object";
+pub const K_BRAND: &str = ".brand";
 
 impl Scope {
     pub fn new(kind: ScopeKind) -> Scope {
@@ -76,6 +77,10 @@ impl Scope {
         }
         self.variables.push(Variable::new(name, mode));
         self.variables.len() - 1
+    }
+
+    pub fn force_context_allocation(&mut self, index: usize) {
+        self.variables[index].force_context_allocation = true;
     }
 
     pub fn declare_parameter(&mut self, name: &str, parameter_index: i32) -> usize {
@@ -182,6 +187,12 @@ impl ScopeChain {
 
         let unresolved = std::mem::take(&mut scope.unresolved);
         for name in unresolved {
+            if scope.kind == ScopeKind::Class {
+                if let Some(variable) = scope.lookup_local_mut(&name) {
+                    variable.force_context_allocation = true;
+                    continue;
+                }
+            }
             let mut found = false;
             for outer in self.scopes.iter_mut().rev() {
                 if let Some(variable) = outer.lookup_local_mut(&name) {

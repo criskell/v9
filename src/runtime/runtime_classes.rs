@@ -161,6 +161,22 @@ impl Isolate {
         Ok(value)
     }
 
+    pub(crate) fn runtime_create_private_brand_symbol(
+        &mut self,
+        args: &[Tagged],
+    ) -> ExecutionResult {
+        debug_assert_eq!(1, args.len());
+        let scope = self.handle_scope();
+        let name = self.create_handle(args[0]);
+        let symbol = self.new_private_symbol(crate::heap::heap::AllocationType::Old);
+        symbol.set_is_private_brand(&mut self.heap, true);
+        let description = name.get(self);
+        symbol.set_description(&mut self.heap, description);
+        let value = symbol.tagged();
+        self.close_handle_scope(scope);
+        Ok(value)
+    }
+
     fn add_descriptors_by_template(
         &mut self,
         args: &[Handle],

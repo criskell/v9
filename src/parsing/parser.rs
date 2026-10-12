@@ -43,10 +43,12 @@ struct ClassInfo {
     instance_members_scope: Option<crate::ast::scopes::Scope>,
     static_members_scope: Option<crate::ast::scopes::Scope>,
     computed_field_count: usize,
-    private_members: Vec<String>,
+    private_members: Vec<ClassLiteralProperty>,
+    has_private_brand: bool,
 }
 
 enum ClassMember {
+    Empty,
     Constructor(FunctionLiteral),
     Property(ClassLiteralProperty),
     Field(ClassLiteralField),
@@ -1311,6 +1313,7 @@ impl Parser {
             static_members_scope: self.new_field_initializer_scope(),
             computed_field_count: 0,
             private_members: Vec::new(),
+            has_private_brand: false,
         };
 
         self.expect(Token::LeftBrace)?;
@@ -1323,6 +1326,7 @@ impl Parser {
                 continue;
             }
             match self.parse_class_property_definition(&mut class_info)? {
+                ClassMember::Empty => {}
                 ClassMember::Constructor(value) => {
                     if constructor.is_some() {
                         return Err(
@@ -1363,6 +1367,7 @@ impl Parser {
             FunctionKind::BaseConstructor
         };
         constructor.requires_instance_members_initializer = !instance_fields.is_empty();
+        constructor.class_scope_has_private_brand = class_info.has_private_brand;
 
         let instance_members_initializer_function = if instance_fields.is_empty() {
             None
@@ -1390,6 +1395,7 @@ impl Parser {
             constructor,
             public_members,
             private_members: class_info.private_members.clone(),
+            has_private_brand: class_info.has_private_brand,
             instance_members_initializer_function,
             static_initializer,
             scope,
@@ -1431,7 +1437,12 @@ impl Parser {
                 );
             }
             if self.peek() == Token::LeftParen {
-                return Err(self.unexpected_token_with_hint("private methods are not implemented"));
+                if is_static {
+                    return Err(self.unexpected_token_with_hint(
+                        "static private methods are not implemented",
+                    ));
+                }
+                return self.parse_private_class_method(class_info, name, position);
             }
             return self.parse_private_class_field_initializer(
                 class_info, name, is_static, position,
@@ -1495,20 +1506,16 @@ impl Parser {
         is_static: bool,
         position: Position,
     ) -> Result<ClassMember> {
-        if self
-            .scope_chain
-            .current()
-            .lookup_local(&name)
-            .is_some()
-        {
-            return Err(self.unexpected_token_with_hint("a private name is already declared"));
-        }
-        self.scope_chain
-            .current()
-            .declare(&name, VariableMode::Const);
-        class_info.private_members.push(name.clone());
+        self.declare_private_name(&name, VariableMode::Const)?;
+        class_info.private_members.push(ClassLiteralProperty {
+            key: PropertyKey::Name(name.clone()),
+            value: None,
+            kind: ClassLiteralPropertyKind::Field,
+            is_static,
+            computed_name_var: None,
+        });
 
-        let value = self.parse_field_initializer_value(class_info, is_static, position, &name)?;
+        let value = self.parse_field_initializer_value(class_info, is_static, position)?;
         self.expect_semicolon()?;
         Ok(ClassMember::Field(ClassLiteralField {
             name,
@@ -1517,6 +1524,44 @@ impl Parser {
             is_computed_name: false,
             is_private: true,
         }))
+    }
+
+    fn parse_private_class_method(
+        &mut self,
+        class_info: &mut ClassInfo,
+        name: String,
+        position: Position,
+    ) -> Result<ClassMember> {
+        self.declare_private_name(&name, VariableMode::PrivateMethod)?;
+        if !class_info.has_private_brand {
+            class_info.has_private_brand = true;
+            self.create_synthetic_context_variable(
+                crate::ast::scopes::K_BRAND,
+                VariableMode::Const,
+            );
+        }
+        let value = self.parse_method_literal(Some(name.clone()), false, position)?;
+        class_info.private_members.push(ClassLiteralProperty {
+            key: PropertyKey::Name(name),
+            value: Some(value),
+            kind: ClassLiteralPropertyKind::Method,
+            is_static: false,
+            computed_name_var: None,
+        });
+        Ok(ClassMember::Empty)
+    }
+
+    fn declare_private_name(&mut self, name: &str, mode: VariableMode) -> Result<()> {
+        if self.scope_chain.current().lookup_local(name).is_some() {
+            return Err(self.unexpected_token_with_hint("a private name is already declared"));
+        }
+        self.create_synthetic_context_variable(name, mode);
+        Ok(())
+    }
+
+    fn create_synthetic_context_variable(&mut self, name: &str, mode: VariableMode) {
+        let index = self.scope_chain.current().declare(name, mode);
+        self.scope_chain.current().force_context_allocation(index);
     }
 
     fn class_field_variable_name(index: usize) -> String {
@@ -1532,11 +1577,9 @@ impl Parser {
     ) -> Result<ClassMember> {
         let name = Self::class_field_variable_name(class_info.computed_field_count);
         class_info.computed_field_count += 1;
-        self.scope_chain
-            .current()
-            .declare(&name, VariableMode::Const);
+        self.create_synthetic_context_variable(&name, VariableMode::Const);
 
-        let value = self.parse_field_initializer_value(class_info, is_static, position, &name)?;
+        let value = self.parse_field_initializer_value(class_info, is_static, position)?;
         self.expect_semicolon()?;
         Ok(ClassMember::ComputedField(
             ClassLiteralProperty {
@@ -1561,7 +1604,6 @@ impl Parser {
         class_info: &mut ClassInfo,
         is_static: bool,
         position: Position,
-        computed_name_var: &str,
     ) -> Result<Expression> {
         let slot = if is_static {
             &mut class_info.static_members_scope
@@ -1570,9 +1612,6 @@ impl Parser {
         };
         self.scope_chain
             .push_scope(slot.take().expect("the field initializer scope"));
-        if !computed_name_var.is_empty() {
-            self.record_reference(computed_name_var);
-        }
 
         let value = if self.check(Token::Assign) {
             self.parse_assignment_expression()
@@ -1599,7 +1638,7 @@ impl Parser {
         is_static: bool,
         position: Position,
     ) -> Result<ClassMember> {
-        let value = self.parse_field_initializer_value(class_info, is_static, position, "")?;
+        let value = self.parse_field_initializer_value(class_info, is_static, position)?;
         self.expect_semicolon()?;
         Ok(ClassMember::Field(ClassLiteralField {
             name,
@@ -1633,6 +1672,7 @@ impl Parser {
             name,
             kind: FunctionKind::NormalFunction,
             requires_instance_members_initializer: false,
+            class_scope_has_private_brand: false,
             parameters: Vec::new(),
             body,
             scope,
@@ -1777,6 +1817,7 @@ impl Parser {
             name: None,
             kind: FunctionKind::NormalFunction,
             requires_instance_members_initializer: false,
+            class_scope_has_private_brand: false,
             parameters: Vec::new(),
             body,
             scope,
@@ -1836,6 +1877,7 @@ impl Parser {
             name,
             kind,
             requires_instance_members_initializer: false,
+            class_scope_has_private_brand: false,
             parameters,
             body,
             scope,
@@ -2002,6 +2044,7 @@ impl Parser {
             name: None,
             kind: FunctionKind::ArrowFunction,
             requires_instance_members_initializer: false,
+            class_scope_has_private_brand: false,
             parameters,
             body: vec![Statement::Return {
                 value: Some(value),

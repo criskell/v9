@@ -6,6 +6,7 @@ pub enum FunctionId {
     ToFastProperties,
     ThrowStaticPrototypeError,
     CreatePrivateNameSymbol,
+    CreatePrivateBrandSymbol,
 }
 
 pub struct Function {
@@ -46,6 +47,12 @@ const K_INTRINSIC_FUNCTIONS: &[Function] = &[
         nargs: 1,
         result_size: 1,
     },
+    Function {
+        function_id: FunctionId::CreatePrivateBrandSymbol,
+        name: "CreatePrivateBrandSymbol",
+        nargs: 1,
+        result_size: 1,
+    },
 ];
 
 impl FunctionId {
@@ -83,6 +90,7 @@ impl crate::execution::isolate::Isolate {
             FunctionId::ToFastProperties => self.runtime_to_fast_properties(args),
             FunctionId::ThrowStaticPrototypeError => self.runtime_throw_static_prototype_error(),
             FunctionId::CreatePrivateNameSymbol => self.runtime_create_private_name_symbol(args),
+            FunctionId::CreatePrivateBrandSymbol => self.runtime_create_private_brand_symbol(args),
         }
     }
 }

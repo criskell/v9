@@ -180,6 +180,7 @@ mod tests {
 
 
 const IS_PRIVATE_BIT: u32 = 0;
+const IS_PRIVATE_BRAND_BIT: u32 = 1;
 
 impl Symbol {
     pub const K_FLAGS_OFFSET: i32 =
@@ -209,6 +210,22 @@ impl Symbol {
             flags | (1 << IS_PRIVATE_BIT)
         } else {
             flags & !(1 << IS_PRIVATE_BIT)
+        };
+        self.set_flags(heap, updated);
+    }
+
+    #[inline]
+    pub fn is_private_brand(self, heap: &Heap) -> bool {
+        self.flags(heap) & (1 << IS_PRIVATE_BRAND_BIT) != 0
+    }
+
+    #[inline]
+    pub fn set_is_private_brand(self, heap: &mut Heap, value: bool) {
+        let flags = self.flags(heap);
+        let updated = if value {
+            flags | (1 << IS_PRIVATE_BRAND_BIT)
+        } else {
+            flags & !(1 << IS_PRIVATE_BRAND_BIT)
         };
         self.set_flags(heap, updated);
     }
