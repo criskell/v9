@@ -7,7 +7,7 @@ object_type!(
     SharedFunctionInfo
 );
 
-const IS_NATIVE_BIT: u32 = 0;
+const IS_NATIVE_BIT: u32 = 5;
 
 impl SharedFunctionInfo {
     pub const K_FUNCTION_DATA_OFFSET: i32 = K_TAGGED_SIZE;
