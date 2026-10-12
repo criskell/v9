@@ -1085,20 +1085,13 @@ impl Isolate {
         let Some(vector) = self.frame_feedback_vector(frame) else {
             return self.load_property(object, name);
         };
-        if let Some(receiver) = object.to_strong_heap_object() {
-            if crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver))
-                && self.has_accessor(JSObject::unchecked_cast(receiver), name)
-            {
-                return self.load_property(object, name);
-            }
-        }
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(
                     self.heap.instance_type(receiver),
                 ) =>
             {
-                Ok(self.load_ic(JSObject::unchecked_cast(receiver), name, vector, slot))
+                self.load_ic(JSObject::unchecked_cast(receiver), name, vector, slot)
             }
             _ => self.load_property(object, name),
         }
@@ -1112,15 +1105,7 @@ impl Isolate {
         value: Tagged,
         slot: i32,
     ) -> ExecutionResult {
-        if let Some(receiver) = object.to_strong_heap_object() {
-            if crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver))
-                && self.has_accessor(JSObject::unchecked_cast(receiver), name)
-            {
-                self.define_own_property(JSObject::unchecked_cast(receiver), name, value);
-                return Ok(value);
-            }
-        }
-        self.store_named_property_ic(frame, object, name, value, slot)
+        self.store_named_property_ic_with_mode(frame, object, name, value, slot, true)
     }
 
     fn store_named_property_ic(
@@ -1131,16 +1116,21 @@ impl Isolate {
         value: Tagged,
         slot: i32,
     ) -> ExecutionResult {
+        self.store_named_property_ic_with_mode(frame, object, name, value, slot, false)
+    }
+
+    fn store_named_property_ic_with_mode(
+        &mut self,
+        frame: &InterpreterFrame,
+        object: Tagged,
+        name: Tagged,
+        value: Tagged,
+        slot: i32,
+        define_own: bool,
+    ) -> ExecutionResult {
         let Some(vector) = self.frame_feedback_vector(frame) else {
             return self.store_property(object, name, value);
         };
-        if let Some(receiver) = object.to_strong_heap_object() {
-            if crate::objects::instance_type::is_js_receiver(self.heap.instance_type(receiver))
-                && self.has_accessor(JSObject::unchecked_cast(receiver), name)
-            {
-                return self.store_property(object, name, value);
-            }
-        }
         match object.to_strong_heap_object() {
             Some(receiver)
                 if crate::objects::instance_type::is_js_receiver(
@@ -1153,7 +1143,8 @@ impl Isolate {
                     value,
                     vector,
                     slot,
-                );
+                    define_own,
+                )?;
                 Ok(value)
             }
             _ => self.store_property(object, name, value),

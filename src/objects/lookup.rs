@@ -151,7 +151,11 @@ impl LookupIterator {
         let name = self.name.get(isolate);
         if !map.is_dictionary_map(&isolate.heap) {
             let descriptors = map.instance_descriptors(&isolate.heap);
-            self.number = descriptors.search(&isolate.heap, name);
+            self.number = descriptors.search_within(
+                &isolate.heap,
+                name,
+                map.number_of_own_descriptors(&isolate.heap),
+            );
             if self.number == crate::objects::descriptor_array::K_NOT_FOUND {
                 return State::NotFound;
             }
@@ -622,7 +626,6 @@ impl Isolate {
         attributes: crate::objects::property_details::PropertyAttributes,
         store_origin: StoreOrigin,
     ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
-        let scope = self.handle_scope();
         let receiver_handle = self.create_object_handle(receiver.object());
         let value_handle = self.create_handle(value);
         it.prepare_transition_to_data_property(self, receiver, value, attributes, store_origin);
@@ -631,7 +634,6 @@ impl Isolate {
         it.apply_transition_to_data_property(self, receiver);
         let value = value_handle.get(self);
         it.write_data_value(self, value);
-        self.close_handle_scope(scope);
         Ok(true)
     }
 
@@ -675,10 +677,6 @@ impl Isolate {
         Ok(value)
     }
 
-    pub(crate) fn has_accessor(&mut self, object: JSObject, name: Tagged) -> bool {
-        let it = LookupIterator::new(self, object.tagged(), name);
-        it.state() == State::Accessor
-    }
 
     fn accessor_component(&self, pair: Tagged, getter: bool) -> Tagged {
         use crate::objects::r#struct::AccessorPair;
@@ -1032,8 +1030,14 @@ impl Isolate {
         if map.is_dictionary_map(&self.heap) {
             return;
         }
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
         let new_map = self.normalize(map);
+        let new_map_handle = self.create_object_handle(new_map.object());
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        let new_map = Map::unchecked_cast(new_map_handle.object(self));
         self.migrate_fast_to_slow(object, new_map);
+        self.close_handle_scope(scope);
     }
 
     pub(crate) fn migrate_fast_to_slow(&mut self, object: JSObject, new_map: Map) {

@@ -627,3 +627,38 @@ fn a_shared_hit_means_another_site_had_resolved_the_pair() {
     let (primary, secondary) = isolate.stub_cache_occupancy();
     assert!(primary + secondary >= 5, "{primary} + {secondary}");
 }
+
+#[test]
+fn a_descriptor_array_shared_with_a_child_map_is_searched_only_to_the_map_s_own_count() {
+    let mut isolate = Isolate::new();
+    isolate.setup_global_object();
+    let value = isolate
+        .run_script(
+            "function P(x, y) { this.x = x; this.y = y; }
+             var a = new P(1, 2);
+             var b = new P(3, 4);
+             b.x + ',' + b.y",
+        )
+        .expect("runs");
+    assert_eq!(isolate.to_string(value), "3,4");
+
+    let mut isolate = Isolate::new();
+    isolate.setup_global_object();
+    isolate
+        .run_script(
+            "function P(x, y) { this.x = x; this.y = y; }
+             var a = new P(1, 2);
+             var b = new P(3, 4);",
+        )
+        .expect("runs");
+    let global = isolate.global_object();
+    let map_of = |isolate: &mut Isolate, name: &str| {
+        let value = isolate.get_property_by_str(global, name);
+        vx::objects::js_objects::JSObject::unchecked_cast(value.to_strong_heap_object().unwrap())
+            .map(&isolate.heap)
+            .address()
+    };
+    let a = map_of(&mut isolate, "a");
+    let b = map_of(&mut isolate, "b");
+    assert_eq!(a, b, "both instances must reach the same shape");
+}

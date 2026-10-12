@@ -241,9 +241,9 @@ impl BytecodeArrayBuilder {
 
     pub fn store_class_fields_initializer(&mut self, constructor: Register) -> &mut Self {
         let index = self.class_fields_symbol_constant_pool_entry();
-        let slot = self.allocate_feedback_slot(FeedbackSlotKind::SetNamedStrict);
+        let slot = self.allocate_feedback_slot(FeedbackSlotKind::DefineNamedOwn);
         self.output(
-            Bytecode::SetNamedProperty,
+            Bytecode::DefineNamedOwnProperty,
             &[constructor.to_operand(), index, slot],
         )
     }

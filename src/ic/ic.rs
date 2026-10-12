@@ -6,6 +6,8 @@ use crate::objects::feedback_vector::{
 };
 use crate::objects::fixed_array::WeakFixedArray;
 use crate::objects::js_objects::JSObject;
+use crate::common::globals::StoreOrigin;
+use crate::objects::lookup::LookupIterator;
 use crate::objects::map::Map;
 use crate::objects::property_details::PropertyLocation;
 use crate::objects::tagged::Tagged;
@@ -97,20 +99,15 @@ impl Isolate {
         name: Tagged,
         vector: FeedbackVector,
         slot: i32,
-    ) -> Tagged {
+    ) -> crate::interpreter::interpreter::ExecutionResult {
         if self.is_global_object(receiver) {
             self.ic_statistics.property.misses += 1;
-            return self.get_property_without_accessors(receiver, name);
-        }
-
-        if !receiver.has_fast_properties(&self.heap) {
-            self.ic_statistics.property.misses += 1;
-            return self.get_property_without_accessors(receiver, name);
+            return Ok(self.get_property_without_accessors(receiver, name));
         }
 
         if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {
             self.ic_statistics.property.misses += 1;
-            return self.function_prototype_getter(function);
+            return Ok(self.function_prototype_getter(function));
         }
 
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
@@ -125,7 +122,7 @@ impl Isolate {
         ) {
             if let Some(value) = self.load_from_handler(receiver, cached) {
                 self.ic_statistics.property.hits += 1;
-                return value;
+                return Ok(value);
             }
         }
 
@@ -133,7 +130,7 @@ impl Isolate {
             if let Some(handler) = self.stub_cache_get(name, map) {
                 if let Some(value) = self.load_from_handler(receiver, handler) {
                     self.ic_statistics.property.shared_hits += 1;
-                    return value;
+                    return Ok(value);
                 }
             }
         }
@@ -143,26 +140,36 @@ impl Isolate {
         if let Some(length) = self.array_length_if_requested(receiver, name) {
             let handler = Handler::native_data_property(0);
             self.update_ic(nexus, map, handler.as_smi(), name);
-            return length;
+            return Ok(length);
         }
 
-        let found = self.lookup_property(receiver, name);
-        let value = match &found {
-            Some(found) => self.property_value_at(found),
-            None => self.undefined_value(),
-        };
-
-        if let Some(found) = found {
-            if found.holder == receiver
-                && found.dictionary_entry == crate::objects::hash_table::K_NOT_FOUND
-                && found.details.kind() == crate::objects::property_details::PropertyKind::Data
-                && found.details.location() == PropertyLocation::Field
-            {
-                let handler = self.handler_for_field(map, found.details);
-                self.update_ic(nexus, map, handler.as_smi(), name);
-            }
-        }
+        let scope = self.handle_scope();
+        let mut it = LookupIterator::new(self, receiver.tagged(), name);
+        self.update_caches(&mut it, nexus, map, name);
+        let value = self.get_property(&mut it);
+        self.close_handle_scope(scope);
         value
+    }
+
+    fn update_caches(
+        &mut self,
+        it: &mut LookupIterator,
+        nexus: FeedbackNexus,
+        map: Map,
+        name: Tagged,
+    ) {
+        use crate::objects::lookup::State;
+        if it.state() != State::Data {
+            return;
+        }
+        if !it.holder_is_receiver(self) || it.is_dictionary_holder(self) {
+            return;
+        }
+        if it.property_details().location() != PropertyLocation::Field {
+            return;
+        }
+        let handler = self.handler_for_field(map, it.property_details());
+        self.update_ic(nexus, map, handler.as_smi(), name);
     }
 
     pub fn store_ic(
@@ -172,26 +179,22 @@ impl Isolate {
         value: Tagged,
         vector: FeedbackVector,
         slot: i32,
-    ) -> bool {
+        define_own: bool,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
         if self.is_global_object(receiver) {
             self.ic_statistics.property.misses += 1;
-            return self.set_property_by_name(receiver, name, value);
-        }
-
-        if !receiver.has_fast_properties(&self.heap) {
-            self.ic_statistics.property.misses += 1;
-            return self.set_property_by_name(receiver, name, value);
+            return Ok(self.set_property_by_name(receiver, name, value));
         }
 
         if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {
             self.ic_statistics.property.misses += 1;
             self.function_prototype_setter(function, value);
-            return true;
+            return Ok(true);
         }
 
         if self.array_length_if_requested(receiver, name).is_some() {
             self.ic_statistics.property.misses += 1;
-            return self.set_property_by_name(receiver, name, value);
+            return Ok(self.set_property_by_name(receiver, name, value));
         }
 
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
@@ -206,7 +209,7 @@ impl Isolate {
         ) {
             if self.store_through_handler(receiver, cached, value) {
                 self.ic_statistics.property.hits += 1;
-                return true;
+                return Ok(true);
             }
         }
 
@@ -214,23 +217,28 @@ impl Isolate {
             if let Some(handler) = self.stub_cache_get(name, map) {
                 if self.store_through_handler(receiver, handler, value) {
                     self.ic_statistics.property.shared_hits += 1;
-                    return true;
+                    return Ok(true);
                 }
             }
         }
 
         self.ic_statistics.property.misses += 1;
-        let existing = self.lookup_own_property(receiver, name);
-        let stored = self.set_property_by_name(receiver, name, value);
-
-        if stored {
-            if let Some(existing) = existing {
-                if existing.details.location() == PropertyLocation::Field {
-                    let handler = self.handler_for_field(map, existing.details);
-                    self.update_ic(nexus, map, handler.as_smi(), name);
-                }
-            }
+        let scope = self.handle_scope();
+        let value_handle = self.create_handle(value);
+        let mut it = LookupIterator::new(self, receiver.tagged(), name);
+        let value = value_handle.get(self);
+        let stored = if define_own {
+            let holder = JSObject::unchecked_cast(it.get_receiver(self).to_strong_heap_object().expect("a receiver"));
+            let name = it.name(self);
+            Ok(self.define_own_property(holder, name, value))
+        } else {
+            self.set_property(&mut it, value, StoreOrigin::Named)
+        };
+        let unchanged = it.get_holder(self).map(&self.heap) == map;
+        if matches!(stored, Ok(true)) && unchanged {
+            self.update_caches(&mut it, nexus, map, name);
         }
+        self.close_handle_scope(scope);
         stored
     }
 
