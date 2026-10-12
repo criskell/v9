@@ -100,12 +100,12 @@ impl Isolate {
     ) -> Tagged {
         if self.is_global_object(receiver) {
             self.ic_statistics.property.misses += 1;
-            return self.get_property(receiver, name);
+            return self.get_property_without_accessors(receiver, name);
         }
 
         if !receiver.has_fast_properties(&self.heap) {
             self.ic_statistics.property.misses += 1;
-            return self.get_property(receiver, name);
+            return self.get_property_without_accessors(receiver, name);
         }
 
         if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {

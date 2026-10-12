@@ -1185,7 +1185,7 @@ impl Isolate {
         if let Some(prototype) = self.get_prototype_chain_root(object) {
             if let Some(holder) = prototype.to_strong_heap_object() {
                 let holder = JSObject::unchecked_cast(holder);
-                return Ok(self.get_property(holder, name));
+                return Ok(self.get_property_without_accessors(holder, name));
             }
         }
         let object_text = self.to_string(object);

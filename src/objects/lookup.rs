@@ -1,4 +1,5 @@
 use crate::common::globals::StoreOrigin;
+use crate::handles::handles::Handle;
 use crate::execution::isolate::Isolate;
 use crate::objects::hash_table::K_NOT_FOUND;
 use crate::objects::instance_type;
@@ -14,6 +15,254 @@ pub struct PropertyLocationInfo {
     pub details: PropertyDetails,
     pub dictionary_entry: i32,
     pub descriptor_index: i32,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum State {
+    NotFound,
+    Accessor,
+    Data,
+    Transition,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Configuration {
+    OwnProperty,
+    PrototypeChain,
+}
+
+pub const K_INVALID_INDEX: i32 = -1;
+
+pub struct LookupIterator {
+    state: State,
+    has_property: bool,
+    property_details: PropertyDetails,
+    receiver: Handle,
+    name: Handle,
+    holder: Handle,
+    lookup_start_object: Handle,
+    number: i32,
+    configuration: Configuration,
+}
+
+impl LookupIterator {
+    pub fn new(isolate: &mut Isolate, receiver: Tagged, name: Tagged) -> LookupIterator {
+        LookupIterator::with_configuration(isolate, receiver, name, Configuration::PrototypeChain)
+    }
+
+    pub fn own_property(isolate: &mut Isolate, receiver: Tagged, name: Tagged) -> LookupIterator {
+        LookupIterator::with_configuration(isolate, receiver, name, Configuration::OwnProperty)
+    }
+
+    pub fn with_configuration(
+        isolate: &mut Isolate,
+        receiver: Tagged,
+        name: Tagged,
+        configuration: Configuration,
+    ) -> LookupIterator {
+        LookupIterator::with_lookup_start_object(isolate, receiver, name, receiver, configuration)
+    }
+
+    pub fn with_lookup_start_object(
+        isolate: &mut Isolate,
+        receiver: Tagged,
+        name: Tagged,
+        lookup_start_object: Tagged,
+        configuration: Configuration,
+    ) -> LookupIterator {
+        let receiver = isolate.create_handle(receiver);
+        let name = isolate.create_handle(name);
+        let lookup_start_object = isolate.create_handle(lookup_start_object);
+        let mut iterator = LookupIterator {
+            state: State::NotFound,
+            has_property: false,
+            property_details: PropertyDetails::empty(),
+            receiver,
+            name,
+            holder: lookup_start_object,
+            lookup_start_object,
+            number: K_INVALID_INDEX,
+            configuration,
+        };
+        iterator.start(isolate);
+        iterator
+    }
+
+    fn start(&mut self, isolate: &mut Isolate) {
+        self.state = State::NotFound;
+        self.has_property = false;
+        let Some(holder) = self.lookup_start_object.get(isolate).to_strong_heap_object() else {
+            return;
+        };
+        if !instance_type::is_js_receiver(isolate.heap.instance_type(holder)) {
+            return;
+        }
+        self.holder = self.lookup_start_object;
+        let map = Map::unchecked_cast(isolate.heap.map(holder));
+        self.state = self.lookup_in_regular_holder(isolate, map, JSObject::unchecked_cast(holder));
+        if !self.is_found() {
+            self.next(isolate);
+        }
+    }
+
+    pub fn next(&mut self, isolate: &mut Isolate) {
+        debug_assert_ne!(self.state, State::Transition);
+        self.has_property = false;
+        let mut holder = JSObject::unchecked_cast(self.holder.object(isolate));
+        let mut map = holder.map(&isolate.heap);
+        loop {
+            let Some(next) = self.next_holder(isolate, map) else {
+                self.state = State::NotFound;
+                return;
+            };
+            holder = next;
+            map = holder.map(&isolate.heap);
+            self.holder = isolate.create_object_handle(holder.object());
+            self.state = self.lookup_in_regular_holder(isolate, map, holder);
+            if self.is_found() {
+                return;
+            }
+        }
+    }
+
+    fn next_holder(&self, isolate: &Isolate, map: Map) -> Option<JSObject> {
+        let prototype = map.prototype(&isolate.heap);
+        if prototype == isolate.roots.null_value {
+            return None;
+        }
+        if self.configuration == Configuration::OwnProperty {
+            return None;
+        }
+        let object = prototype.to_strong_heap_object()?;
+        if !instance_type::is_js_receiver(isolate.heap.instance_type(object)) {
+            return None;
+        }
+        Some(JSObject::unchecked_cast(object))
+    }
+
+    fn lookup_in_regular_holder(
+        &mut self,
+        isolate: &Isolate,
+        map: Map,
+        holder: JSObject,
+    ) -> State {
+        let name = self.name.get(isolate);
+        if !map.is_dictionary_map(&isolate.heap) {
+            let descriptors = map.instance_descriptors(&isolate.heap);
+            self.number = descriptors.search(&isolate.heap, name);
+            if self.number == crate::objects::descriptor_array::K_NOT_FOUND {
+                return State::NotFound;
+            }
+            self.property_details = descriptors.get_details(&isolate.heap, self.number);
+        } else {
+            let dictionary = holder.property_dictionary(&isolate.heap);
+            self.number = dictionary.find_entry(&isolate.heap, name);
+            if self.number == K_NOT_FOUND {
+                return State::NotFound;
+            }
+            self.property_details = dictionary.details_at(&isolate.heap, self.number);
+        }
+        self.has_property = true;
+        match self.property_details.kind() {
+            crate::objects::property_details::PropertyKind::Data => State::Data,
+            crate::objects::property_details::PropertyKind::Accessor => State::Accessor,
+        }
+    }
+
+    pub fn state(&self) -> State {
+        self.state
+    }
+
+    pub fn is_found(&self) -> bool {
+        self.state != State::NotFound
+    }
+
+    pub fn not_found(&mut self) {
+        self.has_property = false;
+        self.state = State::NotFound;
+    }
+
+    pub fn name(&self, isolate: &Isolate) -> Tagged {
+        self.name.get(isolate)
+    }
+
+    pub fn get_receiver(&self, isolate: &Isolate) -> Tagged {
+        self.receiver.get(isolate)
+    }
+
+    pub fn get_holder(&self, isolate: &Isolate) -> JSObject {
+        JSObject::unchecked_cast(self.holder.object(isolate))
+    }
+
+    pub fn holder_is_receiver(&self, isolate: &Isolate) -> bool {
+        self.holder.get(isolate) == self.receiver.get(isolate)
+    }
+
+    pub fn is_dictionary_holder(&self, isolate: &Isolate) -> bool {
+        !self.get_holder(isolate).has_fast_properties(&isolate.heap)
+    }
+
+    pub fn property_details(&self) -> PropertyDetails {
+        debug_assert!(self.has_property);
+        self.property_details
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.property_details().is_read_only()
+    }
+
+    pub fn is_configurable(&self) -> bool {
+        self.property_details().is_configurable()
+    }
+
+    pub fn number(&self) -> i32 {
+        self.number
+    }
+
+    fn fetch_value(&self, isolate: &Isolate) -> Tagged {
+        let holder = self.get_holder(isolate);
+        if self.is_dictionary_holder(isolate) {
+            let value = holder
+                .property_dictionary(&isolate.heap)
+                .value_at(&isolate.heap, self.number);
+            return isolate.unwrap_cell(holder, value);
+        }
+        if self.property_details.location()
+            == crate::objects::property_details::PropertyLocation::Descriptor
+        {
+            return holder
+                .map(&isolate.heap)
+                .instance_descriptors(&isolate.heap)
+                .get_value(&isolate.heap, self.number);
+        }
+        holder.fast_property_at(&isolate.heap, self.property_details.field_index() as i32)
+    }
+
+    pub fn get_data_value(&self, isolate: &Isolate) -> Tagged {
+        debug_assert_eq!(self.state, State::Data);
+        self.fetch_value(isolate)
+    }
+
+    pub fn get_accessors(&self, isolate: &Isolate) -> Tagged {
+        debug_assert_eq!(self.state, State::Accessor);
+        self.fetch_value(isolate)
+    }
+
+    pub fn write_data_value(&self, isolate: &mut Isolate, value: Tagged) {
+        debug_assert_eq!(self.state, State::Data);
+        let holder = self.get_holder(isolate);
+        if self.is_dictionary_holder(isolate) {
+            holder
+                .property_dictionary(&isolate.heap)
+                .value_at_put(&mut isolate.heap, self.number, value);
+            return;
+        }
+        holder.set_fast_property_at(
+            &mut isolate.heap,
+            self.property_details.field_index() as i32,
+            value,
+        );
+    }
 }
 
 impl Isolate {
@@ -73,7 +322,7 @@ impl Isolate {
         }
     }
 
-    pub fn get_property(&self, object: JSObject, name: Tagged) -> Tagged {
+    pub fn get_property_without_accessors(&self, object: JSObject, name: Tagged) -> Tagged {
         if let Some(length) = self.array_length_if_requested(object, name) {
             return length;
         }
@@ -101,39 +350,54 @@ impl Isolate {
         Some((text, symbol.is_private_brand(&self.heap)))
     }
 
+    pub(crate) fn get_property(
+        &mut self,
+        it: &mut LookupIterator,
+    ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
+        while it.is_found() {
+            match it.state() {
+                State::Transition => unreachable!("a transition is not a lookup state"),
+                State::Accessor => {
+                    let pair = it.get_accessors(self);
+                    let receiver = it.get_receiver(self);
+                    let getter = self.accessor_component(pair, true);
+                    return self.call_accessor(getter, receiver, &[]);
+                }
+                State::Data => {
+                    return Ok(it.get_data_value(self));
+                }
+                State::NotFound => {}
+            }
+            it.next(self);
+        }
+        let name = it.name(self);
+        if let Some((description, is_private_brand)) = self.private_name_description(name) {
+            let message = if is_private_brand {
+                let class_name = if description.is_empty() {
+                    "anonymous".to_string()
+                } else {
+                    description
+                };
+                self.new_string(&format!("Receiver must be an instance of class {class_name}"))
+            } else {
+                self.new_string(&format!(
+                    "Cannot read private member {description} from an object whose class did \
+                     not declare it"
+                ))
+            };
+            return Err(Thrown(message.tagged()));
+        }
+        Ok(self.undefined_value())
+    }
+
     pub(crate) fn get_property_with_accessors(
         &mut self,
         object: JSObject,
         name: Tagged,
     ) -> crate::interpreter::interpreter::ExecutionResult {
-        use crate::interpreter::interpreter::Thrown;
-        use crate::objects::property_details::PropertyKind;
-        let Some(found) = self.lookup_property(object, name) else {
-            if let Some((description, is_private_brand)) = self.private_name_description(name) {
-                let message = if is_private_brand {
-                    let class_name = if description.is_empty() {
-                        "anonymous".to_string()
-                    } else {
-                        description
-                    };
-                    self.new_string(&format!("Receiver must be an instance of class {class_name}"))
-                } else {
-                    self.new_string(&format!(
-                        "Cannot read private member {description} from an object whose class did \
-                         not declare it"
-                    ))
-                };
-                return Err(Thrown(message.tagged()));
-            }
-            return Ok(self.undefined_value());
-        };
-        if found.details.kind() != PropertyKind::Accessor {
-            let value = self.property_value_at(&found);
-            return Ok(self.unwrap_cell(object, value));
-        }
-        let pair = self.property_value_at(&found);
-        let getter = self.accessor_component(pair, true);
-        self.call_accessor(getter, object.tagged(), &[])
+        let mut it = LookupIterator::new(self, object.tagged(), name);
+        self.get_property(&mut it)
     }
 
     pub(crate) fn set_property_with_accessors(
@@ -168,13 +432,9 @@ impl Isolate {
         Ok(value)
     }
 
-    pub(crate) fn has_accessor(&self, object: JSObject, name: Tagged) -> bool {
-        match self.lookup_property(object, name) {
-            Some(found) => {
-                found.details.kind() == crate::objects::property_details::PropertyKind::Accessor
-            }
-            None => false,
-        }
+    pub(crate) fn has_accessor(&mut self, object: JSObject, name: Tagged) -> bool {
+        let it = LookupIterator::new(self, object.tagged(), name);
+        it.state() == State::Accessor
     }
 
     fn accessor_component(&self, pair: Tagged, getter: bool) -> Tagged {
@@ -319,15 +579,15 @@ impl Isolate {
     }
 
     fn existing_accessor_pair(
-        &self,
+        &mut self,
         object: JSObject,
         name: Tagged,
     ) -> Option<crate::objects::r#struct::AccessorPair> {
-        let found = self.lookup_own_property(object, name)?;
-        if found.details.kind() != crate::objects::property_details::PropertyKind::Accessor {
+        let it = LookupIterator::own_property(self, object.tagged(), name);
+        if it.state() != State::Accessor {
             return None;
         }
-        let value = self.property_value_at(&found);
+        let value = it.get_accessors(self);
         Some(crate::objects::r#struct::AccessorPair::unchecked_cast(
             value.to_strong_heap_object()?,
         ))
@@ -732,7 +992,7 @@ impl Isolate {
         let object_handle = self.create_object_handle(object.object());
         let key = self.internalize_string(name).tagged();
         let object = JSObject::unchecked_cast(object_handle.object(self));
-        let result = self.get_property(object, key);
+        let result = self.get_property_without_accessors(object, key);
         self.close_handle_scope(scope);
         result
     }
@@ -1307,16 +1567,13 @@ impl Isolate {
         name: Tagged,
         receiver: Tagged,
     ) -> crate::interpreter::interpreter::ExecutionResult {
-        use crate::objects::property_details::PropertyKind;
-        let Some(found) = self.lookup_property(start, name) else {
-            return Ok(self.undefined_value());
-        };
-        if found.details.kind() != PropertyKind::Accessor {
-            let value = self.property_value_at(&found);
-            return Ok(self.unwrap_cell(start, value));
-        }
-        let pair = self.property_value_at(&found);
-        let getter = self.accessor_component(pair, true);
-        self.call_accessor(getter, receiver, &[])
+        let mut it = LookupIterator::with_lookup_start_object(
+            self,
+            receiver,
+            name,
+            start.tagged(),
+            Configuration::PrototypeChain,
+        );
+        self.get_property(&mut it)
     }
 }

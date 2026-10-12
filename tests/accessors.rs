@@ -442,3 +442,43 @@ fn normalizing_an_object_keeps_its_accessor() {
         "3"
     );
 }
+
+#[test]
+fn a_lookup_walks_the_prototype_chain_and_stops_at_the_first_holder() {
+    assert_eq!(
+        evaluate(
+            "class A { get x() { return 'a'; } }
+             class B extends A { get x() { return 'b'; } }
+             (new B()).x"
+        ),
+        "b"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { get x() { return 'a'; } }
+             class B extends A {}
+             (new B()).x"
+        ),
+        "a"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { get x() { return 'a'; } }
+             class B extends A { m() { return super.x; } get x() { return 'b'; } }
+             (new B()).m()"
+        ),
+        "a"
+    );
+}
+
+#[test]
+fn a_getter_on_the_prototype_runs_with_the_instance_as_the_receiver() {
+    assert_eq!(
+        evaluate(
+            "class A { get x() { return this.v; } }
+             class B extends A { constructor() { super(); this.v = 7; } }
+             (new B()).x"
+        ),
+        "7"
+    );
+}

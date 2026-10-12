@@ -338,6 +338,10 @@ impl PropertyDetails {
         PropertyDetails(cleared | encode(index, DICTIONARY_STORAGE_SHIFT, DICTIONARY_STORAGE_BITS))
     }
 
+    pub fn empty() -> PropertyDetails {
+        PropertyDetails(0)
+    }
+
     pub fn with_constness(self, constness: PropertyConstness) -> PropertyDetails {
         let cleared = self.0 & !(mask(CONSTNESS_BITS) << CONSTNESS_SHIFT);
         PropertyDetails(cleared | encode(constness as u32, CONSTNESS_SHIFT, CONSTNESS_BITS))
