@@ -2329,14 +2329,13 @@ impl Assembler {
 
     fn neon_across_lanes(&mut self, vd: VRegister, vn: VRegister, op: Instr) {
         debug_assert!(
-            (vn.is_8b() && vd.is_1h())
-                || (vn.is_16b() && vd.is_1h())
-                || (vn.is_4h() && vd.is_1s())
-                || (vn.is_8h() && vd.is_1s())
-                || (vn.is_4s() && vd.is_1d())
+            (vn.is_8b() && vd.is_1b())
+                || (vn.is_16b() && vd.is_1b())
+                || (vn.is_4h() && vd.is_1h())
+                || (vn.is_8h() && vd.is_1h())
                 || (vn.is_4s() && vd.is_1s())
         );
-        let instruction = if op & NEON_ACROSS_LANES_FP_FIXED == NEON_ACROSS_LANES_FP_FIXED {
+        let instruction = if (op & NEON_ACROSS_LANES_FP_F_MASK) == NEON_ACROSS_LANES_FP_FIXED {
             Assembler::fp_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd)
         } else {
             Assembler::v_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd)
@@ -2359,6 +2358,142 @@ impl Assembler {
         }
         debug_assert!((vd.lane_count() == 8) && vd.is_128_bits());
         NEON_FP_8H
+    }
+
+    fn imm_neon_hlm(index: i32, num_bits: i32) -> Instr {
+        let h;
+        let l;
+        let m;
+        if num_bits == 3 {
+            debug_assert!(crate::utils::utils::is_uintn(index as i64, 3));
+            h = (index >> 2) & 1;
+            l = (index >> 1) & 1;
+            m = index & 1;
+        } else if num_bits == 2 {
+            debug_assert!(is_uint2(index as i64));
+            h = (index >> 1) & 1;
+            l = index & 1;
+            m = 0;
+        } else {
+            debug_assert!(is_uint1(index as i64) && (num_bits == 1));
+            h = index & 1;
+            l = 0;
+            m = 0;
+        }
+        ((h as Instr) << NEON_H_OFFSET)
+            | ((l as Instr) << NEON_L_OFFSET)
+            | ((m as Instr) << NEON_M_OFFSET)
+    }
+
+    fn neon_by_element(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        vm: VRegister,
+        vm_index: i32,
+        vop: Instr,
+    ) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        debug_assert!(
+            (vd.is_4h() && vm.is_1h())
+                || (vd.is_8h() && vm.is_1h())
+                || (vd.is_1h() && vm.is_1h())
+                || (vd.is_2s() && vm.is_1s())
+                || (vd.is_4s() && vm.is_1s())
+                || (vd.is_1s() && vm.is_1s())
+        );
+        debug_assert!(
+            (vm.is_1h() && (vm.code() < 16) && (vm_index < 8))
+                || (vm.is_1s() && (vm_index < 4))
+        );
+
+        let format;
+        let mut op = vop;
+        let index_num_bits = if vm.is_1h() { 3 } else { 2 };
+        if vd.is_scalar() {
+            op |= NEON_SCALAR | NEON_Q;
+            format = Assembler::s_format(vn);
+        } else {
+            format = Assembler::v_format(vn);
+        }
+        let instruction = format
+            | op
+            | Assembler::imm_neon_hlm(vm_index, index_num_bits)
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_by_element_l(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        vm: VRegister,
+        vm_index: i32,
+        vop: Instr,
+    ) {
+        debug_assert!(
+            (vd.is_4s() && vn.is_4h() && vm.is_1h())
+                || (vd.is_4s() && vn.is_8h() && vm.is_1h())
+                || (vd.is_1s() && vn.is_1h() && vm.is_1h())
+                || (vd.is_2d() && vn.is_2s() && vm.is_1s())
+                || (vd.is_2d() && vn.is_4s() && vm.is_1s())
+                || (vd.is_1d() && vn.is_1s() && vm.is_1s())
+        );
+        debug_assert!(
+            (vm.is_1h() && (vm.code() < 16) && (vm_index < 8))
+                || (vm.is_1s() && (vm_index < 4))
+        );
+
+        let format;
+        let mut op = vop;
+        let index_num_bits = if vm.is_1h() { 3 } else { 2 };
+        if vd.is_scalar() {
+            op |= NEON_SCALAR | NEON_Q;
+            format = Assembler::s_format(vn);
+        } else {
+            format = Assembler::v_format(vn);
+        }
+        let instruction = format
+            | op
+            | Assembler::imm_neon_hlm(vm_index, index_num_bits)
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_fp_by_element(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        vm: VRegister,
+        vm_index: i32,
+        vop: Instr,
+    ) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        debug_assert!(
+            (vd.is_2s() && vm.is_1s())
+                || (vd.is_4s() && vm.is_1s())
+                || (vd.is_1s() && vm.is_1s())
+                || (vd.is_2d() && vm.is_1d())
+                || (vd.is_1d() && vm.is_1d())
+        );
+        debug_assert!((vm.is_1s() && (vm_index < 4)) || (vm.is_1d() && (vm_index < 2)));
+
+        let mut op = vop;
+        let index_num_bits = if vm.is_1s() { 2 } else { 1 };
+        if vd.is_scalar() {
+            op |= NEON_Q | NEON_SCALAR;
+        }
+        let instruction = Assembler::fp_format(vd)
+            | op
+            | Assembler::imm_neon_hlm(vm_index, index_num_bits)
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
     }
 
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
@@ -2651,7 +2786,6 @@ macro_rules! define_fp_3_same {
 define_fp_3_same!(
     (fadd, FADD),
     (fsub, FSUB),
-    (fmul, FMUL),
     (fdiv, FDIV),
     (fmax, FMAX),
     (fmaxnm, FMAXNM),
@@ -2997,8 +3131,6 @@ define_neon_3_same!(
     (ushl, NEON_USHL, vd, vd.is_vector() || vd.is_1d()),
     (srshl, NEON_SRSHL, vd, vd.is_vector() || vd.is_1d()),
     (urshl, NEON_URSHL, vd, vd.is_vector() || vd.is_1d()),
-    (sqdmulh, NEON_SQDMULH, vd, vd.is_lane_size_h() || vd.is_lane_size_s()),
-    (sqrdmulh, NEON_SQRDMULH, vd, vd.is_lane_size_h() || vd.is_lane_size_s()),
     (shadd, NEON_SHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
     (uhadd, NEON_UHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
     (srhadd, NEON_SRHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
@@ -3017,8 +3149,6 @@ define_neon_3_same!(
     (sabd, NEON_SABD, vd, vd.is_vector() && !vd.is_lane_size_d()),
     (uaba, NEON_UABA, vd, vd.is_vector() && !vd.is_lane_size_d()),
     (uabd, NEON_UABD, vd, vd.is_vector() && !vd.is_lane_size_d()),
-    (mla, NEON_MLA, vd, vd.is_vector() && !vd.is_lane_size_d()),
-    (mls, NEON_MLS, vd, vd.is_vector() && !vd.is_lane_size_d()),
     (bit, NEON_BIT, vd, vd.is_8b() || vd.is_16b()),
     (bif, NEON_BIF, vd, vd.is_8b() || vd.is_16b()),
     (bsl, NEON_BSL, vd, vd.is_8b() || vd.is_16b()),
@@ -3101,55 +3231,78 @@ impl Arithmetic for Register {
 }
 
 impl Arithmetic for VRegister {
-    type Rhs = VRegister;
+    type Rhs = VOperand;
 
-    fn add(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn add(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_vector() || vd.is_1d());
-        asm.neon_3_same(vd, vn, vm, NEON_ADD);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_ADD);
     }
 
-    fn sub(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn sub(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_vector() || vd.is_1d());
-        asm.neon_3_same(vd, vn, vm, NEON_SUB);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_SUB);
     }
 
-    fn mul(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn mul(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        let vm = operand.reg();
+        if operand.has_lane() {
+            debug_assert!(vn.is_vector());
+            asm.neon_by_element(vd, vn, vm, operand.index(), NEON_MUL_BYELEMENT);
+            return;
+        }
         debug_assert!(vd.is_vector() && !vd.is_lane_size_d());
         asm.neon_3_same(vd, vn, vm, NEON_MUL);
     }
 
-    fn and_(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn and_(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_8b() || vd.is_16b());
-        asm.neon_3_same(vd, vn, vm, NEON_AND);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_AND);
     }
 
-    fn orr(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn orr(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_8b() || vd.is_16b());
-        asm.neon_3_same(vd, vn, vm, NEON_ORR);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_ORR);
     }
 
-    fn orn(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn orn(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_8b() || vd.is_16b());
-        asm.neon_3_same(vd, vn, vm, NEON_ORN);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_ORN);
     }
 
-    fn eor(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn eor(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_8b() || vd.is_16b());
-        asm.neon_3_same(vd, vn, vm, NEON_EOR);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_EOR);
     }
 
-    fn bic(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn bic(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        debug_assert!(!operand.has_lane());
         debug_assert!(vd.is_8b() || vd.is_16b());
-        asm.neon_3_same(vd, vn, vm, NEON_BIC);
+        asm.neon_3_same(vd, vn, operand.reg(), NEON_BIC);
     }
 
-    fn smull(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn smull(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        let vm = operand.reg();
         debug_assert!(vn.is_vector() && vn.is_d());
+        if operand.has_lane() {
+            asm.neon_by_element_l(vd, vn, vm, operand.index(), NEON_SMULL_BYELEMENT);
+            return;
+        }
         asm.neon_3_different_l(vd, vn, vm, NEON_SMULL);
     }
 
-    fn umull(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+    fn umull(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: VOperand) {
+        let vm = operand.reg();
         debug_assert!(vn.is_vector() && vn.is_d());
+        if operand.has_lane() {
+            asm.neon_by_element_l(vd, vn, vm, operand.index(), NEON_UMULL_BYELEMENT);
+            return;
+        }
         asm.neon_3_different_l(vd, vn, vm, NEON_UMULL);
     }
 }
@@ -3225,28 +3378,12 @@ define_neon_3_different_l!(
     (sabdl2, NEON_SABDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
     (uabdl, NEON_UABDL, vd, vn, vm, vn.is_vector() && vn.is_d()),
     (uabdl2, NEON_UABDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (smlal, NEON_SMLAL, vd, vn, vm, vn.is_vector() && vn.is_d()),
-    (smlal2, NEON_SMLAL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (umlal, NEON_UMLAL, vd, vn, vm, vn.is_vector() && vn.is_d()),
-    (umlal2, NEON_UMLAL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (smlsl, NEON_SMLSL, vd, vn, vm, vn.is_vector() && vn.is_d()),
-    (smlsl2, NEON_SMLSL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (umlsl, NEON_UMLSL, vd, vn, vm, vn.is_vector() && vn.is_d()),
-    (umlsl2, NEON_UMLSL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (smull2, NEON_SMULL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (umull2, NEON_UMULL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
     (ssubl, NEON_SSUBL, vd, vn, vm, vn.is_vector() && vn.is_d()),
     (ssubl2, NEON_SSUBL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
     (uaddl, NEON_UADDL, vd, vn, vm, vn.is_vector() && vn.is_d()),
     (uaddl2, NEON_UADDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
     (usubl, NEON_USUBL, vd, vn, vm, vn.is_vector() && vn.is_d()),
     (usubl2, NEON_USUBL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
-    (sqdmlal, NEON_SQDMLAL, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s()),
-    (sqdmlal2, NEON_SQDMLAL2, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s()),
-    (sqdmlsl, NEON_SQDMLSL, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s()),
-    (sqdmlsl2, NEON_SQDMLSL2, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s()),
-    (sqdmull, NEON_SQDMULL, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s()),
-    (sqdmull2, NEON_SQDMULL2, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s()),
 );
 
 macro_rules! define_neon_3_different_hn {
@@ -3378,4 +3515,154 @@ define_neon_2_reg_misc!(
     (sadalp, NEON_SADALP, vd, true),
     (uadalp, NEON_UADALP, vd, true),
     (cnt, NEON_CNT, vd, vd.is_8b() || vd.is_16b()),
+);
+
+macro_rules! define_neon_dual_3_same {
+    ($(($name:ident, $op:ident, $op_byelement:ident, $vd:ident, $vn:ident, $vm:ident,
+        $as:expr, $as_byelement:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name<T: Into<VOperand>>(
+                    &mut self,
+                    $vd: VRegister,
+                    $vn: VRegister,
+                    operand: T,
+                ) {
+                    let operand = operand.into();
+                    let $vm = operand.reg();
+                    if operand.has_lane() {
+                        debug_assert!($as_byelement);
+                        self.neon_by_element($vd, $vn, $vm, operand.index(), $op_byelement);
+                    } else {
+                        debug_assert!($as);
+                        self.neon_3_same($vd, $vn, $vm, $op);
+                    }
+                }
+            )*
+        }
+    };
+}
+
+define_neon_dual_3_same!(
+    (mla, NEON_MLA, NEON_MLA_BYELEMENT, vd, vn, vm,
+     vd.is_vector() && !vd.is_lane_size_d(), vn.is_vector()),
+    (mls, NEON_MLS, NEON_MLS_BYELEMENT, vd, vn, vm,
+     vd.is_vector() && !vd.is_lane_size_d(), vn.is_vector()),
+    (sqdmulh, NEON_SQDMULH, NEON_SQDMULH_BYELEMENT, vd, vn, vm,
+     vd.is_lane_size_h() || vd.is_lane_size_s(), true),
+    (sqrdmulh, NEON_SQRDMULH, NEON_SQRDMULH_BYELEMENT, vd, vn, vm,
+     vd.is_lane_size_h() || vd.is_lane_size_s(), true),
+);
+
+macro_rules! define_neon_dual_3_different_l {
+    ($(($name:ident, $op:ident, $op_byelement:ident, $vd:ident, $vn:ident, $vm:ident,
+        $as:expr, $as_byelement:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name<T: Into<VOperand>>(
+                    &mut self,
+                    $vd: VRegister,
+                    $vn: VRegister,
+                    operand: T,
+                ) {
+                    let operand = operand.into();
+                    let $vm = operand.reg();
+                    if operand.has_lane() {
+                        debug_assert!($as_byelement);
+                        self.neon_by_element_l($vd, $vn, $vm, operand.index(), $op_byelement);
+                    } else {
+                        debug_assert!($as);
+                        self.neon_3_different_l($vd, $vn, $vm, $op);
+                    }
+                }
+            )*
+        }
+    };
+}
+
+define_neon_dual_3_different_l!(
+    (smlal, NEON_SMLAL, NEON_SMLAL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
+    (smlal2, NEON_SMLAL2, NEON_SMLAL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
+    (umlal, NEON_UMLAL, NEON_UMLAL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
+    (umlal2, NEON_UMLAL2, NEON_UMLAL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
+    (smlsl, NEON_SMLSL, NEON_SMLSL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
+    (smlsl2, NEON_SMLSL2, NEON_SMLSL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
+    (umlsl, NEON_UMLSL, NEON_UMLSL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
+    (umlsl2, NEON_UMLSL2, NEON_UMLSL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
+    (smull2, NEON_SMULL2, NEON_SMULL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
+    (umull2, NEON_UMULL2, NEON_UMULL_BYELEMENT, vd, vn, vm,
+     vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
+    (sqdmull, NEON_SQDMULL, NEON_SQDMULL_BYELEMENT, vd, vn, vm,
+     vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s(), vn.is_scalar() || vn.is_d()),
+    (sqdmull2, NEON_SQDMULL2, NEON_SQDMULL_BYELEMENT, vd, vn, vm,
+     vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s(), vn.is_vector() && vn.is_q()),
+    (sqdmlal, NEON_SQDMLAL, NEON_SQDMLAL_BYELEMENT, vd, vn, vm,
+     vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s(), vn.is_scalar() || vn.is_d()),
+    (sqdmlal2, NEON_SQDMLAL2, NEON_SQDMLAL_BYELEMENT, vd, vn, vm,
+     vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s(), vn.is_vector() && vn.is_q()),
+    (sqdmlsl, NEON_SQDMLSL, NEON_SQDMLSL_BYELEMENT, vd, vn, vm,
+     vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s(), vn.is_scalar() || vn.is_d()),
+    (sqdmlsl2, NEON_SQDMLSL2, NEON_SQDMLSL_BYELEMENT, vd, vn, vm,
+     vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s(), vn.is_vector() && vn.is_q()),
+);
+
+macro_rules! define_neon_dual_fp {
+    ($(($name:ident, $op:ident, $op_byelement:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name<T: Into<VOperand>>(
+                    &mut self,
+                    vd: VRegister,
+                    vn: VRegister,
+                    operand: T,
+                ) {
+                    let operand = operand.into();
+                    let vm = operand.reg();
+                    if operand.has_lane() {
+                        self.neon_fp_by_element(vd, vn, vm, operand.index(), $op_byelement);
+                    } else {
+                        debug_assert!(vd.is_1s() || vd.is_1d());
+                        self.fp_data_processing_2_source(vd, vn, vm, $op);
+                    }
+                }
+            )*
+        }
+    };
+}
+
+define_neon_dual_fp!(
+    (fmul, FMUL, NEON_FMUL_BYELEMENT),
+);
+
+macro_rules! define_neon_fp_by_element {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    vd: VRegister,
+                    vn: VRegister,
+                    vm: VRegister,
+                    vm_index: i32,
+                ) {
+                    self.neon_fp_by_element(vd, vn, vm, vm_index, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_fp_by_element!(
+    (fmla, NEON_FMLA_BYELEMENT),
+    (fmls, NEON_FMLS_BYELEMENT),
+    (fmulx, NEON_FMULX_BYELEMENT),
 );

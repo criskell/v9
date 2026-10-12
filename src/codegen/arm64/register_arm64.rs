@@ -722,6 +722,48 @@ pub fn are_same_format(reg1: VRegister, regs: &[VRegister]) -> bool {
     regs.iter().all(|reg| reg.is_valid() && reg1.is_same_format(*reg))
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct VOperand {
+    reg: VRegister,
+    index: i32,
+}
+
+pub const NO_LANE: i32 = -1;
+
+impl VOperand {
+    #[inline]
+    pub fn reg(&self) -> VRegister {
+        self.reg
+    }
+
+    #[inline]
+    pub fn index(&self) -> i32 {
+        debug_assert!(self.has_lane());
+        self.index
+    }
+
+    #[inline]
+    pub fn has_lane(&self) -> bool {
+        self.index != NO_LANE
+    }
+}
+
+impl From<VRegister> for VOperand {
+    fn from(reg: VRegister) -> VOperand {
+        VOperand {
+            reg,
+            index: NO_LANE,
+        }
+    }
+}
+
+impl VRegister {
+    pub fn lane(self, index: i32) -> VOperand {
+        debug_assert!(index >= 0);
+        VOperand { reg: self, index }
+    }
+}
+
 pub const FP_ZERO: VRegister = D15;
 pub const FP_FIXED1: VRegister = D27;
 pub const FP_FIXED2: VRegister = D28;
