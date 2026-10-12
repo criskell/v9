@@ -1,9 +1,7 @@
 use crate::codegen::arm64::constants_arm64::*;
 use crate::codegen::arm64::decoder_arm64::{decode, DecoderVisitor};
 use crate::codegen::arm64::instructions_arm64::{Instruction, Reg31Mode};
-use crate::codegen::arm64::utils_arm64::{
-    count_leading_sign_bits, count_leading_zeros, count_set_bits, count_trailing_zeros,
-};
+use crate::codegen::arm64::utils_arm64::{count_leading_sign_bits, count_leading_zeros};
 
 pub const K_SP_REG_CODE: u32 = (K_SP_REG_INTERNAL_CODE as u32) & K_REG_CODE_MASK;
 
@@ -727,6 +725,162 @@ impl Simulator {
         self.set_xreg(instr.rd(), result & mask_all);
     }
 
+    pub fn dreg(&self, code: u32) -> f64 {
+        f64::from_bits(self.vregisters[code as usize])
+    }
+
+    pub fn sreg(&self, code: u32) -> f32 {
+        f32::from_bits(self.vregisters[code as usize] as u32)
+    }
+
+    pub fn set_dreg(&mut self, code: u32, value: f64) {
+        self.vregisters[code as usize] = value.to_bits();
+    }
+
+    pub fn set_sreg(&mut self, code: u32, value: f32) {
+        self.vregisters[code as usize] = value.to_bits() as u64;
+    }
+
+    fn fp_compare(&mut self, val0: f64, val1: f64) {
+        if val0.is_nan() || val1.is_nan() {
+            self.nzcv.set_flags(FP_UNORDERED_FLAG >> FLAGS_OFFSET);
+        } else if val0 < val1 {
+            self.nzcv.set_flags(FP_LESS_THAN_FLAG >> FLAGS_OFFSET);
+        } else if val0 > val1 {
+            self.nzcv.set_flags(FP_GREATER_THAN_FLAG >> FLAGS_OFFSET);
+        } else {
+            debug_assert_eq!(val0, val1);
+            self.nzcv.set_flags(FP_EQUAL_FLAG >> FLAGS_OFFSET);
+        }
+    }
+
+    fn fp_round_int(value: f64, round_mode: FPRounding) -> f64 {
+        if (value == 0.0)
+            || (value.to_bits() == K_FP64_POSITIVE_INFINITY)
+            || (value.to_bits() == K_FP64_NEGATIVE_INFINITY)
+        {
+            return value;
+        }
+        if value.is_nan() {
+            return value;
+        }
+
+        let mut int_result = value.floor();
+        let error = value - int_result;
+        match round_mode {
+            FPRounding::FPTieAway => {
+                if (-0.5 < value) && (value < 0.0) {
+                    int_result = -0.0;
+                } else if (error > 0.5) || ((error == 0.5) && (int_result >= 0.0)) {
+                    int_result += 1.0;
+                }
+            }
+            FPRounding::FPTieEven => {
+                if (-0.5 <= value) && (value < 0.0) {
+                    int_result = -0.0;
+                } else if (error > 0.5) || ((error == 0.5) && (int_result % 2.0 != 0.0)) {
+                    int_result += 1.0;
+                }
+            }
+            FPRounding::FPZero => {
+                if value < 0.0 {
+                    int_result = value.ceil();
+                }
+            }
+            FPRounding::FPNegativeInfinity => {}
+            FPRounding::FPPositiveInfinity => {
+                if (-1.0 < value) && (value < 0.0) {
+                    int_result = -0.0;
+                } else if error > 0.0 {
+                    int_result += 1.0;
+                }
+            }
+        }
+        int_result
+    }
+
+    fn fp_to_int64(value: f64, rmode: FPRounding) -> i64 {
+        let value = Simulator::fp_round_int(value, rmode);
+        if value.is_nan() {
+            return 0;
+        }
+        if value >= i64::MAX as f64 {
+            return i64::MAX;
+        }
+        if value <= i64::MIN as f64 {
+            return i64::MIN;
+        }
+        value as i64
+    }
+
+    fn fp_to_int32(value: f64, rmode: FPRounding) -> i32 {
+        let value = Simulator::fp_round_int(value, rmode);
+        if value.is_nan() {
+            return 0;
+        }
+        if value >= i32::MAX as f64 {
+            return i32::MAX;
+        }
+        if value <= i32::MIN as f64 {
+            return i32::MIN;
+        }
+        value as i32
+    }
+
+    fn fp_to_uint64(value: f64, rmode: FPRounding) -> u64 {
+        let value = Simulator::fp_round_int(value, rmode);
+        if value.is_nan() || value <= 0.0 {
+            return 0;
+        }
+        if value >= u64::MAX as f64 {
+            return u64::MAX;
+        }
+        value as u64
+    }
+
+    fn fp_to_uint32(value: f64, rmode: FPRounding) -> u32 {
+        let value = Simulator::fp_round_int(value, rmode);
+        if value.is_nan() || value <= 0.0 {
+            return 0;
+        }
+        if value >= u32::MAX as f64 {
+            return u32::MAX;
+        }
+        value as u32
+    }
+
+    fn fp_max(a: f64, b: f64) -> f64 {
+        if a.is_nan() || b.is_nan() {
+            return f64::NAN;
+        }
+        if (a == 0.0) && (b == 0.0) && (a.is_sign_negative() != b.is_sign_negative()) {
+            return 0.0;
+        }
+        if a > b {
+            a
+        } else {
+            b
+        }
+    }
+
+    fn fp_min(a: f64, b: f64) -> f64 {
+        if a.is_nan() || b.is_nan() {
+            return f64::NAN;
+        }
+        if (a == 0.0) && (b == 0.0) && (a.is_sign_negative() != b.is_sign_negative()) {
+            return -0.0;
+        }
+        if a < b {
+            a
+        } else {
+            b
+        }
+    }
+
+    fn is_fp64(instr: Instruction) -> bool {
+        instr.mask(FP64) == FP64
+    }
+
     fn signed_reg(&self, code: u32, reg_size: u32) -> i64 {
         if reg_size == 32 {
             self.wreg(code) as i32 as i64
@@ -1035,10 +1189,7 @@ impl DecoderVisitor for Simulator {
                     count_leading_sign_bits(self.xreg(src) as i64, K_X_REG_SIZE_IN_BITS);
                 self.set_xreg(dst, value as u64);
             }
-            _ => {
-                let _ = (count_trailing_zeros, count_set_bits);
-                self.visit_unimplemented(instr);
-            }
+            _ => self.visit_unimplemented(instr),
         }
     }
 
@@ -1169,6 +1320,400 @@ impl DecoderVisitor for Simulator {
     }
 
     fn visit_system(&mut self, _instr: Instruction) {}
+
+    fn visit_fp_immediate(&mut self, instr: Instruction) {
+        let dest = instr.rd();
+        match instr.mask(FP_IMMEDIATE_MASK) {
+            FMOV_S_IMM => {
+                let value = instr.imm_fp32();
+                self.set_sreg(dest, value);
+            }
+            FMOV_D_IMM => {
+                let value = instr.imm_fp64();
+                self.set_dreg(dest, value);
+            }
+            _ => self.visit_unallocated(instr),
+        }
+    }
+
+    fn visit_fp_compare(&mut self, instr: Instruction) {
+        match instr.mask(FP_COMPARE_MASK) {
+            FCMP_S => {
+                let a = self.sreg(instr.rn()) as f64;
+                let b = self.sreg(instr.rm()) as f64;
+                self.fp_compare(a, b);
+            }
+            FCMP_D => {
+                let a = self.dreg(instr.rn());
+                let b = self.dreg(instr.rm());
+                self.fp_compare(a, b);
+            }
+            FCMP_S_ZERO => {
+                let a = self.sreg(instr.rn()) as f64;
+                self.fp_compare(a, 0.0);
+            }
+            FCMP_D_ZERO => {
+                let a = self.dreg(instr.rn());
+                self.fp_compare(a, 0.0);
+            }
+            _ => self.visit_unimplemented(instr),
+        }
+    }
+
+    fn visit_fp_data_processing_1_source(&mut self, instr: Instruction) {
+        let fd = instr.rd();
+        let fn_ = instr.rn();
+        let is_double = Simulator::is_fp64(instr);
+        let mut fpcr_rounding = FPRounding::FPTieEven;
+
+        match instr.mask(FP_DATA_PROCESSING_1_SOURCE_MASK) {
+            FMOV_S => {
+                let value = self.sreg(fn_);
+                self.set_sreg(fd, value);
+                return;
+            }
+            FMOV_D => {
+                let value = self.dreg(fn_);
+                self.set_dreg(fd, value);
+                return;
+            }
+            FABS_S => {
+                let value = self.sreg(fn_).abs();
+                self.set_sreg(fd, value);
+                return;
+            }
+            FABS_D => {
+                let value = self.dreg(fn_).abs();
+                self.set_dreg(fd, value);
+                return;
+            }
+            FNEG_S => {
+                let value = -self.sreg(fn_);
+                self.set_sreg(fd, value);
+                return;
+            }
+            FNEG_D => {
+                let value = -self.dreg(fn_);
+                self.set_dreg(fd, value);
+                return;
+            }
+            FSQRT_S => {
+                let value = self.sreg(fn_).sqrt();
+                self.set_sreg(fd, value);
+                return;
+            }
+            FSQRT_D => {
+                let value = self.dreg(fn_).sqrt();
+                self.set_dreg(fd, value);
+                return;
+            }
+            FCVT_DS => {
+                let value = self.sreg(fn_) as f64;
+                self.set_dreg(fd, value);
+                return;
+            }
+            FCVT_SD => {
+                let value = self.dreg(fn_) as f32;
+                self.set_sreg(fd, value);
+                return;
+            }
+            FRINTI_S | FRINTI_D => {}
+            FRINTX_S | FRINTX_D => {}
+            FRINTA_S | FRINTA_D => fpcr_rounding = FPRounding::FPTieAway,
+            FRINTM_S | FRINTM_D => fpcr_rounding = FPRounding::FPNegativeInfinity,
+            FRINTN_S | FRINTN_D => fpcr_rounding = FPRounding::FPTieEven,
+            FRINTP_S | FRINTP_D => fpcr_rounding = FPRounding::FPPositiveInfinity,
+            FRINTZ_S | FRINTZ_D => fpcr_rounding = FPRounding::FPZero,
+            _ => {
+                self.visit_unimplemented(instr);
+                return;
+            }
+        }
+
+        if is_double {
+            let value = Simulator::fp_round_int(self.dreg(fn_), fpcr_rounding);
+            self.set_dreg(fd, value);
+        } else {
+            let value = Simulator::fp_round_int(self.sreg(fn_) as f64, fpcr_rounding);
+            self.set_sreg(fd, value as f32);
+        }
+    }
+
+    fn visit_fp_data_processing_2_source(&mut self, instr: Instruction) {
+        let fd = instr.rd();
+        let fn_ = instr.rn();
+        let fm = instr.rm();
+        let is_double = Simulator::is_fp64(instr);
+        let a = if is_double {
+            self.dreg(fn_)
+        } else {
+            self.sreg(fn_) as f64
+        };
+        let b = if is_double {
+            self.dreg(fm)
+        } else {
+            self.sreg(fm) as f64
+        };
+
+        let result = match instr.mask(FP_DATA_PROCESSING_2_SOURCE_MASK) {
+            FADD_S | FADD_D => a + b,
+            FSUB_S | FSUB_D => a - b,
+            FMUL_S | FMUL_D => a * b,
+            FNMUL_S | FNMUL_D => -(a * b),
+            FDIV_S | FDIV_D => a / b,
+            FMAX_S | FMAX_D => Simulator::fp_max(a, b),
+            FMIN_S | FMIN_D => Simulator::fp_min(a, b),
+            FMAXNM_S | FMAXNM_D => {
+                if a.is_nan() {
+                    b
+                } else if b.is_nan() {
+                    a
+                } else {
+                    Simulator::fp_max(a, b)
+                }
+            }
+            FMINNM_S | FMINNM_D => {
+                if a.is_nan() {
+                    b
+                } else if b.is_nan() {
+                    a
+                } else {
+                    Simulator::fp_min(a, b)
+                }
+            }
+            _ => {
+                self.visit_unallocated(instr);
+                return;
+            }
+        };
+
+        if is_double {
+            self.set_dreg(fd, result);
+        } else {
+            self.set_sreg(fd, result as f32);
+        }
+    }
+
+    fn visit_fp_data_processing_3_source(&mut self, instr: Instruction) {
+        let fd = instr.rd();
+        let fn_ = instr.rn();
+        let fm = instr.rm();
+        let fa = instr.ra();
+
+        match instr.mask(FP_DATA_PROCESSING_3_SOURCE_MASK) {
+            FMADD_S => {
+                let result = self.sreg(fn_).mul_add(self.sreg(fm), self.sreg(fa));
+                self.set_sreg(fd, result);
+            }
+            FMSUB_S => {
+                let result = (-self.sreg(fn_)).mul_add(self.sreg(fm), self.sreg(fa));
+                self.set_sreg(fd, result);
+            }
+            FMADD_D => {
+                let result = self.dreg(fn_).mul_add(self.dreg(fm), self.dreg(fa));
+                self.set_dreg(fd, result);
+            }
+            FMSUB_D => {
+                let result = (-self.dreg(fn_)).mul_add(self.dreg(fm), self.dreg(fa));
+                self.set_dreg(fd, result);
+            }
+            FNMADD_S => {
+                let result = (-self.sreg(fn_)).mul_add(self.sreg(fm), -self.sreg(fa));
+                self.set_sreg(fd, result);
+            }
+            FNMSUB_S => {
+                let result = self.sreg(fn_).mul_add(self.sreg(fm), -self.sreg(fa));
+                self.set_sreg(fd, result);
+            }
+            FNMADD_D => {
+                let result = (-self.dreg(fn_)).mul_add(self.dreg(fm), -self.dreg(fa));
+                self.set_dreg(fd, result);
+            }
+            FNMSUB_D => {
+                let result = self.dreg(fn_).mul_add(self.dreg(fm), -self.dreg(fa));
+                self.set_dreg(fd, result);
+            }
+            _ => self.visit_unimplemented(instr),
+        }
+    }
+
+    fn visit_fp_integer_convert(&mut self, instr: Instruction) {
+        let dst = instr.rd();
+        let src = instr.rn();
+
+        match instr.mask(FP_INTEGER_CONVERT_MASK) {
+            FCVTZS_WS => {
+                let value = Simulator::fp_to_int32(self.sreg(src) as f64, FPRounding::FPZero);
+                self.set_wreg(dst, value as u32);
+            }
+            FCVTZS_XS => {
+                let value = Simulator::fp_to_int64(self.sreg(src) as f64, FPRounding::FPZero);
+                self.set_xreg(dst, value as u64);
+            }
+            FCVTZS_WD => {
+                let value = Simulator::fp_to_int32(self.dreg(src), FPRounding::FPZero);
+                self.set_wreg(dst, value as u32);
+            }
+            FCVTZS_XD => {
+                let value = Simulator::fp_to_int64(self.dreg(src), FPRounding::FPZero);
+                self.set_xreg(dst, value as u64);
+            }
+            FCVTZU_WS => {
+                let value = Simulator::fp_to_uint32(self.sreg(src) as f64, FPRounding::FPZero);
+                self.set_wreg(dst, value);
+            }
+            FCVTZU_XS => {
+                let value = Simulator::fp_to_uint64(self.sreg(src) as f64, FPRounding::FPZero);
+                self.set_xreg(dst, value);
+            }
+            FCVTZU_WD => {
+                let value = Simulator::fp_to_uint32(self.dreg(src), FPRounding::FPZero);
+                self.set_wreg(dst, value);
+            }
+            FCVTZU_XD => {
+                let value = Simulator::fp_to_uint64(self.dreg(src), FPRounding::FPZero);
+                self.set_xreg(dst, value);
+            }
+            FCVTNS_WD => {
+                let value = Simulator::fp_to_int32(self.dreg(src), FPRounding::FPTieEven);
+                self.set_wreg(dst, value as u32);
+            }
+            FCVTNS_XD => {
+                let value = Simulator::fp_to_int64(self.dreg(src), FPRounding::FPTieEven);
+                self.set_xreg(dst, value as u64);
+            }
+            FCVTMS_WD => {
+                let value =
+                    Simulator::fp_to_int32(self.dreg(src), FPRounding::FPNegativeInfinity);
+                self.set_wreg(dst, value as u32);
+            }
+            FCVTMS_XD => {
+                let value =
+                    Simulator::fp_to_int64(self.dreg(src), FPRounding::FPNegativeInfinity);
+                self.set_xreg(dst, value as u64);
+            }
+            FCVTAS_WD => {
+                let value = Simulator::fp_to_int32(self.dreg(src), FPRounding::FPTieAway);
+                self.set_wreg(dst, value as u32);
+            }
+            FCVTAS_XD => {
+                let value = Simulator::fp_to_int64(self.dreg(src), FPRounding::FPTieAway);
+                self.set_xreg(dst, value as u64);
+            }
+            SCVTF_SW => {
+                let value = self.wreg(src) as i32 as f32;
+                self.set_sreg(dst, value);
+            }
+            SCVTF_SX => {
+                let value = self.xreg(src) as i64 as f32;
+                self.set_sreg(dst, value);
+            }
+            SCVTF_DW => {
+                let value = self.wreg(src) as i32 as f64;
+                self.set_dreg(dst, value);
+            }
+            SCVTF_DX => {
+                let value = self.xreg(src) as i64 as f64;
+                self.set_dreg(dst, value);
+            }
+            UCVTF_SW => {
+                let value = self.wreg(src) as f32;
+                self.set_sreg(dst, value);
+            }
+            UCVTF_SX => {
+                let value = self.xreg(src) as f32;
+                self.set_sreg(dst, value);
+            }
+            UCVTF_DW => {
+                let value = self.wreg(src) as f64;
+                self.set_dreg(dst, value);
+            }
+            UCVTF_DX => {
+                let value = self.xreg(src) as f64;
+                self.set_dreg(dst, value);
+            }
+            FMOV_WS => {
+                let value = self.sreg(src).to_bits();
+                self.set_wreg(dst, value);
+            }
+            FMOV_XD => {
+                let value = self.dreg(src).to_bits();
+                self.set_xreg(dst, value);
+            }
+            FMOV_SW => {
+                let value = f32::from_bits(self.wreg(src));
+                self.set_sreg(dst, value);
+            }
+            FMOV_DX => {
+                let value = f64::from_bits(self.xreg(src));
+                self.set_dreg(dst, value);
+            }
+            _ => self.visit_unimplemented(instr),
+        }
+    }
+
+    fn visit_fp_fixed_point_convert(&mut self, instr: Instruction) {
+        let dst = instr.rd();
+        let src = instr.rn();
+        let fbits = 64 - instr.fp_scale();
+
+        match instr.mask(FP_FIXED_POINT_CONVERT_MASK) {
+            SCVTF_SW_FIXED => {
+                let value = self.wreg(src) as i32 as f32 / (1u64 << fbits) as f32;
+                self.set_sreg(dst, value);
+            }
+            SCVTF_SX_FIXED => {
+                let value = self.xreg(src) as i64 as f32 / (1u64 << fbits) as f32;
+                self.set_sreg(dst, value);
+            }
+            SCVTF_DW_FIXED => {
+                let value = self.wreg(src) as i32 as f64 / (1u64 << fbits) as f64;
+                self.set_dreg(dst, value);
+            }
+            SCVTF_DX_FIXED => {
+                let value = self.xreg(src) as i64 as f64 / (1u64 << fbits) as f64;
+                self.set_dreg(dst, value);
+            }
+            UCVTF_DX_FIXED => {
+                let value = self.xreg(src) as f64 / (1u64 << fbits) as f64;
+                self.set_dreg(dst, value);
+            }
+            UCVTF_DW_FIXED => {
+                let value = self.wreg(src) as f64 / (1u64 << fbits) as f64;
+                self.set_dreg(dst, value);
+            }
+            FCVTZS_XD_FIXED => {
+                let value = Simulator::fp_to_int64(
+                    self.dreg(src) * (1u64 << fbits) as f64,
+                    FPRounding::FPZero,
+                );
+                self.set_xreg(dst, value as u64);
+            }
+            FCVTZS_WD_FIXED => {
+                let value = Simulator::fp_to_int32(
+                    self.dreg(src) * (1u64 << fbits) as f64,
+                    FPRounding::FPZero,
+                );
+                self.set_wreg(dst, value as u32);
+            }
+            FCVTZU_XD_FIXED => {
+                let value = Simulator::fp_to_uint64(
+                    self.dreg(src) * (1u64 << fbits) as f64,
+                    FPRounding::FPZero,
+                );
+                self.set_xreg(dst, value);
+            }
+            _ => self.visit_unimplemented(instr),
+        }
+    }
+
+    fn visit_fp_conditional_compare(&mut self, instr: Instruction) {
+        self.visit_unimplemented(instr);
+    }
+
+    fn visit_fp_conditional_select(&mut self, instr: Instruction) {
+        self.visit_unimplemented(instr);
+    }
 
     fn visit_unallocated(&mut self, instr: Instruction) {
         self.halted = true;

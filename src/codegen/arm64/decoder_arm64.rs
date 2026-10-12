@@ -33,6 +33,15 @@ pub trait DecoderVisitor {
     fn visit_add_sub_shifted(&mut self, instr: Instruction);
     fn visit_add_sub_extended(&mut self, instr: Instruction);
     fn visit_data_processing_3_source(&mut self, instr: Instruction);
+    fn visit_fp_fixed_point_convert(&mut self, instr: Instruction);
+    fn visit_fp_integer_convert(&mut self, instr: Instruction);
+    fn visit_fp_data_processing_1_source(&mut self, instr: Instruction);
+    fn visit_fp_data_processing_2_source(&mut self, instr: Instruction);
+    fn visit_fp_data_processing_3_source(&mut self, instr: Instruction);
+    fn visit_fp_compare(&mut self, instr: Instruction);
+    fn visit_fp_immediate(&mut self, instr: Instruction);
+    fn visit_fp_conditional_compare(&mut self, instr: Instruction);
+    fn visit_fp_conditional_select(&mut self, instr: Instruction);
     fn visit_unallocated(&mut self, instr: Instruction);
     fn visit_unimplemented(&mut self, instr: Instruction);
 }
@@ -50,7 +59,7 @@ pub fn decode<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
         0x3 => decode_bitfield_extract(visitor, instr),
         0x4 | 0x5 | 0x6 | 0x7 => decode_branch_system_exception(visitor, instr),
         0x8 | 0x9 | 0xC | 0xD => decode_load_store(visitor, instr),
-        0xE | 0xF => visitor.visit_unimplemented(instr),
+        0xE | 0xF => decode_fp(visitor, instr),
         _ => unreachable!(),
     }
 }
@@ -373,5 +382,125 @@ fn decode_load_store<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
         visitor.visit_unallocated(instr);
     } else {
         visitor.visit_load_store_unsigned_offset(instr);
+    }
+}
+
+fn decode_fp<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
+    debug_assert!((instr.bits(27, 24) == 0xE) || (instr.bits(27, 24) == 0xF));
+
+    if instr.bit(28) == 0 {
+        visitor.visit_unimplemented(instr);
+        return;
+    }
+    if instr.bits(31, 30) == 0x3 {
+        visitor.visit_unallocated(instr);
+        return;
+    }
+    if instr.bits(31, 30) == 0x1 {
+        visitor.visit_unimplemented(instr);
+        return;
+    }
+    if instr.bit(29) != 0 {
+        visitor.visit_unallocated(instr);
+        return;
+    }
+    if instr.bit(24) != 0 {
+        debug_assert_eq!(0, instr.bit(30));
+        if instr.mask(0xA0800000) != 0 {
+            visitor.visit_unallocated(instr);
+        } else {
+            visitor.visit_fp_data_processing_3_source(instr);
+        }
+        return;
+    }
+    if instr.bit(21) == 0 {
+        if (instr.bit(23) == 1)
+            || (instr.bit(18) == 1)
+            || (instr.mask(0x80008000) == 0x00000000)
+            || (instr.mask(0x000E0000) == 0x00000000)
+            || (instr.mask(0x000E0000) == 0x000A0000)
+            || (instr.mask(0x00160000) == 0x00000000)
+            || (instr.mask(0x00160000) == 0x00120000)
+        {
+            visitor.visit_unallocated(instr);
+        } else {
+            visitor.visit_fp_fixed_point_convert(instr);
+        }
+        return;
+    }
+    if instr.bits(15, 10) == 32 {
+        visitor.visit_unallocated(instr);
+    } else if instr.bits(15, 10) == 0 {
+        if (instr.bits(23, 22) == 0x3)
+            || (instr.mask(0x000E0000) == 0x000A0000)
+            || (instr.mask(0x000E0000) == 0x000C0000)
+            || (instr.mask(0x00160000) == 0x00120000)
+            || (instr.mask(0x00160000) == 0x00140000)
+            || (instr.mask(0x20C40000) == 0x00800000)
+            || (instr.mask(0x20C60000) == 0x00840000)
+            || (instr.mask(0xA0C60000) == 0x80060000)
+            || (instr.mask(0xA0C60000) == 0x00860000)
+            || (instr.mask(0xA0CE0000) == 0x80860000)
+            || (instr.mask(0xA0CE0000) == 0x804E0000)
+            || (instr.mask(0xA0CE0000) == 0x000E0000)
+            || (instr.mask(0xA0D60000) == 0x00160000)
+            || (instr.mask(0xA0D60000) == 0x80560000)
+            || (instr.mask(0xA0D60000) == 0x80960000)
+        {
+            visitor.visit_unallocated(instr);
+        } else {
+            visitor.visit_fp_integer_convert(instr);
+        }
+    } else if instr.bits(14, 10) == 16 {
+        let masked_a0df8000 = instr.mask(0xA0DF8000);
+        if (instr.mask(0x80180000) != 0)
+            || (masked_a0df8000 == 0x00020000)
+            || (masked_a0df8000 == 0x00030000)
+            || (masked_a0df8000 == 0x00068000)
+            || (masked_a0df8000 == 0x00428000)
+            || (masked_a0df8000 == 0x00430000)
+            || (masked_a0df8000 == 0x00468000)
+            || (instr.mask(0xA0D80000) == 0x00800000)
+            || (instr.mask(0xA0DE0000) == 0x00C00000)
+            || (instr.mask(0xA0DF0000) == 0x00C30000)
+            || (instr.mask(0xA0DC0000) == 0x00C40000)
+        {
+            visitor.visit_unallocated(instr);
+        } else {
+            visitor.visit_fp_data_processing_1_source(instr);
+        }
+    } else if instr.bits(13, 10) == 8 {
+        if (instr.bits(15, 14) != 0)
+            || (instr.bits(2, 0) != 0)
+            || (instr.mask(0x80800000) != 0x00000000)
+        {
+            visitor.visit_unallocated(instr);
+        } else {
+            visitor.visit_fp_compare(instr);
+        }
+    } else if instr.bits(12, 10) == 4 {
+        if (instr.bits(9, 5) != 0) || (instr.mask(0x80800000) != 0x00000000) {
+            visitor.visit_unallocated(instr);
+        } else {
+            visitor.visit_fp_immediate(instr);
+        }
+    } else if instr.mask(0x80800000) != 0x00000000 {
+        visitor.visit_unallocated(instr);
+    } else {
+        match instr.bits(11, 10) {
+            1 => visitor.visit_fp_conditional_compare(instr),
+            2 => {
+                if (instr.bits(15, 14) == 0x3)
+                    || (instr.mask(0x00009000) == 0x00009000)
+                    || (instr.mask(0x0000A000) == 0x0000A000)
+                {
+                    visitor.visit_unallocated(instr);
+                } else {
+                    visitor.visit_fp_data_processing_2_source(instr);
+                }
+            }
+            3 => visitor.visit_fp_conditional_select(instr),
+            _ => unreachable!(),
+        }
     }
 }

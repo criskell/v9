@@ -1,5 +1,7 @@
 use vx::codegen::arm64::assembler_arm64::{Assembler, MemOperand, Operand};
 use vx::codegen::arm64::constants_arm64::{AddrMode, Condition, Shift};
+#[allow(unused_imports)]
+use vx::codegen::arm64::register_arm64::{D0, D1, D2, D3, D4, D5, D6, D7, S0, S1, S2, S3};
 use vx::codegen::arm64::register_arm64::*;
 use vx::codegen::label::Label;
 use vx::execution::arm64::simulator_arm64::Simulator;
@@ -221,4 +223,198 @@ fn an_address_of_a_label_is_loaded_by_adr() {
         a.bind(&mut here);
     });
     assert_eq!(simulator.xreg(0), 8);
+}
+
+#[test]
+fn floating_point_arithmetic_executes() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 1.5);
+        a.fmov_immediate(D1, 0.5);
+        a.fadd(D2, D0, D1);
+        a.fsub(D3, D0, D1);
+        a.fmul(D4, D0, D1);
+        a.fdiv(D5, D0, D1);
+        a.fnmul(D6, D0, D1);
+    });
+    assert_eq!(simulator.dreg(2), 2.0);
+    assert_eq!(simulator.dreg(3), 1.0);
+    assert_eq!(simulator.dreg(4), 0.75);
+    assert_eq!(simulator.dreg(5), 3.0);
+    assert_eq!(simulator.dreg(6), -0.75);
+}
+
+#[test]
+fn single_precision_arithmetic_executes() {
+    let simulator = run(|a| {
+        a.fmov_immediate(S0, 1.5);
+        a.fmov_immediate(S1, 2.0);
+        a.fadd(S2, S0, S1);
+        a.fdiv(S3, S0, S1);
+    });
+    assert_eq!(simulator.sreg(2), 3.5);
+    assert_eq!(simulator.sreg(3), 0.75);
+}
+
+#[test]
+fn floating_point_unary_operations_execute() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, -2.0);
+        a.fabs(D1, D0);
+        a.fneg(D2, D0);
+        a.fmov_immediate(D3, 9.0);
+        a.fsqrt(D4, D3);
+        a.fmov(D5, D3);
+    });
+    assert_eq!(simulator.dreg(1), 2.0);
+    assert_eq!(simulator.dreg(2), 2.0);
+    assert_eq!(simulator.dreg(4), 3.0);
+    assert_eq!(simulator.dreg(5), 9.0);
+}
+
+#[test]
+fn the_rounding_modes_execute() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 2.5);
+        a.frintn(D1, D0);
+        a.frintp(D2, D0);
+        a.frintm(D3, D0);
+        a.frintz(D4, D0);
+        a.frinta(D5, D0);
+        a.fmov_immediate(D6, 3.5);
+        a.frintn(D7, D6);
+    });
+    assert_eq!(simulator.dreg(1), 2.0);
+    assert_eq!(simulator.dreg(2), 3.0);
+    assert_eq!(simulator.dreg(3), 2.0);
+    assert_eq!(simulator.dreg(4), 2.0);
+    assert_eq!(simulator.dreg(5), 3.0);
+    assert_eq!(simulator.dreg(7), 4.0);
+}
+
+#[test]
+fn a_floating_point_comparison_sets_the_flags() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 1.0);
+        a.fmov_immediate(D1, 2.0);
+        a.fcmp(D0, D1);
+        a.cset(X0, Condition::Mi);
+        a.fcmp(D1, D0);
+        a.cset(X1, Condition::Gt);
+        a.fcmp(D0, D0);
+        a.cset(X2, Condition::Eq);
+        a.fcmp_zero(D0, 0.0);
+        a.cset(X3, Condition::Ne);
+    });
+    assert_eq!(simulator.xreg(0), 1);
+    assert_eq!(simulator.xreg(1), 1);
+    assert_eq!(simulator.xreg(2), 1);
+    assert_eq!(simulator.xreg(3), 1);
+}
+
+#[test]
+fn fused_multiply_add_executes() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 2.0);
+        a.fmov_immediate(D1, 3.0);
+        a.fmov_immediate(D2, 4.0);
+        a.fmadd(D3, D0, D1, D2);
+        a.fmsub(D4, D0, D1, D2);
+        a.fnmadd(D5, D0, D1, D2);
+        a.fnmsub(D6, D0, D1, D2);
+    });
+    assert_eq!(simulator.dreg(3), 10.0);
+    assert_eq!(simulator.dreg(4), -2.0);
+    assert_eq!(simulator.dreg(5), -10.0);
+    assert_eq!(simulator.dreg(6), 2.0);
+}
+
+#[test]
+fn conversions_between_integer_and_floating_point_execute() {
+    let simulator = run(|a| {
+        a.movz(X0, 42, -1);
+        a.scvtf(D0, X0, 0);
+        a.ucvtf(D1, X0, 0);
+        a.fmov_immediate(D2, 3.75);
+        a.fcvtzs(X1, D2, 0);
+        a.fcvtzu(X2, D2, 0);
+        a.movn(X3, 0, -1);
+        a.scvtf(D3, X3, 0);
+        a.fcvtzs(X4, D3, 0);
+        a.scvtf(D4, X0, 2);
+    });
+    assert_eq!(simulator.dreg(0), 42.0);
+    assert_eq!(simulator.dreg(1), 42.0);
+    assert_eq!(simulator.xreg(1), 3);
+    assert_eq!(simulator.xreg(2), 3);
+    assert_eq!(simulator.dreg(3), -1.0);
+    assert_eq!(simulator.xreg(4), u64::MAX);
+    assert_eq!(simulator.dreg(4), 10.5);
+}
+
+#[test]
+fn bit_moves_between_integer_and_floating_point_registers() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 1.5);
+        a.fmov_to_register(X0, D0);
+        a.fmov_from_register(D1, X0);
+        a.fmov_immediate(S2, 2.5);
+        a.fmov_to_register(W1, S2);
+        a.fmov_from_register(S3, W1);
+    });
+    assert_eq!(simulator.xreg(0), 1.5f64.to_bits());
+    assert_eq!(simulator.dreg(1), 1.5);
+    assert_eq!(simulator.wreg(1), 2.5f32.to_bits());
+    assert_eq!(simulator.sreg(3), 2.5);
+}
+
+#[test]
+fn conversions_between_the_floating_point_sizes_execute() {
+    let simulator = run(|a| {
+        a.fmov_immediate(S0, 1.5);
+        a.fcvt(D1, S0);
+        a.fmov_immediate(D2, 2.5);
+        a.fcvt(S3, D2);
+    });
+    assert_eq!(simulator.dreg(1), 1.5);
+    assert_eq!(simulator.sreg(3), 2.5);
+}
+
+#[test]
+fn a_double_loaded_from_the_constant_pool() {
+    let simulator = run(|a| {
+        a.ldr_literal(D0, 1.2345f64.to_bits());
+        a.fmov_immediate(D1, 2.0);
+        a.fmul(D2, D0, D1);
+        a.force_constant_pool_emission();
+    });
+    assert_eq!(simulator.dreg(0), 1.2345);
+    assert_eq!(simulator.dreg(2), 2.469);
+}
+
+#[test]
+fn floating_point_maximum_and_minimum() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 1.0);
+        a.fmov_immediate(D1, 2.0);
+        a.fmax(D2, D0, D1);
+        a.fmin(D3, D0, D1);
+        a.fmaxnm(D4, D0, D1);
+        a.fminnm(D5, D0, D1);
+    });
+    assert_eq!(simulator.dreg(2), 2.0);
+    assert_eq!(simulator.dreg(3), 1.0);
+    assert_eq!(simulator.dreg(4), 2.0);
+    assert_eq!(simulator.dreg(5), 1.0);
+}
+
+#[test]
+fn a_double_stored_and_loaded_through_memory() {
+    let simulator = run(|a| {
+        a.fmov_immediate(D0, 1.5);
+        a.sub(SP, SP, 16);
+        a.str(D0, MemOperand::new(SP, 8, AddrMode::Offset));
+        a.ldr(D1, MemOperand::new(SP, 8, AddrMode::Offset));
+        a.add(SP, SP, 16);
+    });
+    assert_eq!(simulator.dreg(1), 1.5);
 }

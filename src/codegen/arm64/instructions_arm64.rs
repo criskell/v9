@@ -420,6 +420,47 @@ impl Instruction {
         )
     }
 
+    #[inline]
+    pub fn imm_fp(self) -> u32 {
+        self.bits(20, 13)
+    }
+
+    pub fn imm_fp32(self) -> f32 {
+        Instruction::imm8_to_fp32(self.imm_fp())
+    }
+
+    pub fn imm_fp64(self) -> f64 {
+        Instruction::imm8_to_fp64(self.imm_fp())
+    }
+
+    pub fn imm8_to_fp32(imm8: u32) -> f32 {
+        let bits = imm8;
+        let bit7 = (bits >> 7) & 0x1;
+        let bit6 = (bits >> 6) & 0x1;
+        let bit5_to_0 = bits & 0x3f;
+        let result = (bit7 << 31) | ((32 - bit6) << 25) | (bit5_to_0 << 19);
+        f32::from_bits(result)
+    }
+
+    pub fn imm8_to_fp64(imm8: u32) -> f64 {
+        let bits = imm8 as u64;
+        let bit7 = (bits >> 7) & 0x1;
+        let bit6 = (bits >> 6) & 0x1;
+        let bit5_to_0 = bits & 0x3f;
+        let result = (bit7 << 63) | ((256 - bit6) << 54) | (bit5_to_0 << 48);
+        f64::from_bits(result)
+    }
+
+    #[inline]
+    pub fn fp_type(self) -> u32 {
+        self.bits(23, 22)
+    }
+
+    #[inline]
+    pub fn fp_scale(self) -> u32 {
+        self.bits(15, 10)
+    }
+
     pub fn is_ldr_literal(self) -> bool {
         self.mask(LOAD_LITERAL_F_MASK) == LOAD_LITERAL_FIXED
     }

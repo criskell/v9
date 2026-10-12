@@ -562,3 +562,113 @@ pub const K_WORD_MASK: i64 = 0xffffffff;
 pub const K_SHIFT_AMOUNT_W_REG_MASK: u32 = 0x1f;
 pub const K_SHIFT_AMOUNT_X_REG_MASK: u32 = 0x3f;
 pub const K_LINK_REG_CODE: u32 = 30;
+
+pub const FP_DATA_PROCESSING_1_SOURCE_MASK: Instr = 0xFFFFFC00;
+pub const FP_DATA_PROCESSING_2_SOURCE_MASK: Instr = 0xFFE0FC00;
+pub const FP_DATA_PROCESSING_3_SOURCE_MASK: Instr = 0xFFE08000;
+pub const FP_COMPARE_MASK: Instr = 0xFFE0FC1F;
+pub const FP_IMMEDIATE_MASK: Instr = 0xFFE01C00;
+pub const FP_INTEGER_CONVERT_MASK: Instr = 0xFFFFFC00;
+pub const FP_FIXED_POINT_CONVERT_MASK: Instr = 0xFFFF0000;
+
+pub const FMOV_S: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | 0x00000000;
+pub const FMOV_D: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | FP64 | 0x00000000;
+pub const FABS_S: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | 0x00008000;
+pub const FABS_D: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | FP64 | 0x00008000;
+pub const FNEG_S: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | 0x00010000;
+pub const FNEG_D: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | FP64 | 0x00010000;
+pub const FSQRT_S: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | 0x00018000;
+pub const FSQRT_D: Instr = FP_DATA_PROCESSING_1_SOURCE_FIXED | FP64 | 0x00018000;
+pub const FRINTN_S: Instr = FRINTN;
+pub const FRINTN_D: Instr = FRINTN | FP64;
+pub const FRINTP_S: Instr = FRINTP;
+pub const FRINTP_D: Instr = FRINTP | FP64;
+pub const FRINTM_S: Instr = FRINTM;
+pub const FRINTM_D: Instr = FRINTM | FP64;
+pub const FRINTZ_S: Instr = FRINTZ;
+pub const FRINTZ_D: Instr = FRINTZ | FP64;
+pub const FRINTA_S: Instr = FRINTA;
+pub const FRINTA_D: Instr = FRINTA | FP64;
+pub const FRINTX_S: Instr = FRINTX;
+pub const FRINTX_D: Instr = FRINTX | FP64;
+pub const FRINTI_S: Instr = FRINTI;
+pub const FRINTI_D: Instr = FRINTI | FP64;
+
+pub const FMUL_S: Instr = FMUL;
+pub const FMUL_D: Instr = FMUL | FP64;
+pub const FDIV_S: Instr = FDIV;
+pub const FDIV_D: Instr = FDIV | FP64;
+pub const FADD_S: Instr = FADD;
+pub const FADD_D: Instr = FADD | FP64;
+pub const FSUB_S: Instr = FSUB;
+pub const FSUB_D: Instr = FSUB | FP64;
+pub const FMAX_S: Instr = FMAX;
+pub const FMAX_D: Instr = FMAX | FP64;
+pub const FMIN_S: Instr = FMIN;
+pub const FMIN_D: Instr = FMIN | FP64;
+pub const FMAXNM_S: Instr = FMAXNM;
+pub const FMAXNM_D: Instr = FMAXNM | FP64;
+pub const FMINNM_S: Instr = FMINNM;
+pub const FMINNM_D: Instr = FMINNM | FP64;
+
+pub const FCMP_D: Instr = FP_COMPARE_FIXED | FP64 | 0x00000000;
+pub const FCMP_D_ZERO: Instr = FP_COMPARE_FIXED | FP64 | 0x00000008;
+
+pub const FCVTZS_WS: Instr = FCVTZS;
+pub const FCVTZS_XS: Instr = FCVTZS | SIXTY_FOUR_BITS;
+pub const FCVTZS_WD: Instr = FCVTZS | FP64;
+pub const FCVTZS_XD: Instr = FCVTZS | SIXTY_FOUR_BITS | FP64;
+pub const FCVTZU_WS: Instr = FCVTZU;
+pub const FCVTZU_XS: Instr = FCVTZU | SIXTY_FOUR_BITS;
+pub const FCVTZU_WD: Instr = FCVTZU | FP64;
+pub const FCVTZU_XD: Instr = FCVTZU | SIXTY_FOUR_BITS | FP64;
+pub const SCVTF_SW: Instr = SCVTF;
+pub const SCVTF_SX: Instr = SCVTF | SIXTY_FOUR_BITS;
+pub const SCVTF_DW: Instr = SCVTF | FP64;
+pub const SCVTF_DX: Instr = SCVTF | SIXTY_FOUR_BITS | FP64;
+pub const UCVTF_SW: Instr = UCVTF;
+pub const UCVTF_SX: Instr = UCVTF | SIXTY_FOUR_BITS;
+pub const UCVTF_DW: Instr = UCVTF | FP64;
+pub const UCVTF_DX: Instr = UCVTF | SIXTY_FOUR_BITS | FP64;
+pub const FCVTNS_WS: Instr = FCVTNS;
+pub const FCVTNS_XS: Instr = FCVTNS | SIXTY_FOUR_BITS;
+pub const FCVTNS_WD: Instr = FCVTNS | FP64;
+pub const FCVTNS_XD: Instr = FCVTNS | SIXTY_FOUR_BITS | FP64;
+pub const FCVTMS_WD: Instr = FCVTMS | FP64;
+pub const FCVTMS_XD: Instr = FCVTMS | SIXTY_FOUR_BITS | FP64;
+pub const FCVTAS_WD: Instr = FCVTAS | FP64;
+pub const FCVTAS_XD: Instr = FCVTAS | SIXTY_FOUR_BITS | FP64;
+
+pub const SCVTF_SW_FIXED: Instr = SCVTF_FIXED;
+pub const SCVTF_SX_FIXED: Instr = SCVTF_FIXED | SIXTY_FOUR_BITS;
+pub const SCVTF_DW_FIXED: Instr = SCVTF_FIXED | FP64;
+pub const SCVTF_DX_FIXED: Instr = SCVTF_FIXED | SIXTY_FOUR_BITS | FP64;
+pub const UCVTF_SW_FIXED: Instr = UCVTF_FIXED;
+pub const UCVTF_SX_FIXED: Instr = UCVTF_FIXED | SIXTY_FOUR_BITS;
+pub const UCVTF_DW_FIXED: Instr = UCVTF_FIXED | FP64;
+pub const UCVTF_DX_FIXED: Instr = UCVTF_FIXED | SIXTY_FOUR_BITS | FP64;
+pub const FCVTZS_WS_FIXED: Instr = FCVTZS_FIXED;
+pub const FCVTZS_XS_FIXED: Instr = FCVTZS_FIXED | SIXTY_FOUR_BITS;
+pub const FCVTZS_WD_FIXED: Instr = FCVTZS_FIXED | FP64;
+pub const FCVTZS_XD_FIXED: Instr = FCVTZS_FIXED | SIXTY_FOUR_BITS | FP64;
+pub const FCVTZU_WS_FIXED: Instr = FCVTZU_FIXED;
+pub const FCVTZU_XS_FIXED: Instr = FCVTZU_FIXED | SIXTY_FOUR_BITS;
+pub const FCVTZU_WD_FIXED: Instr = FCVTZU_FIXED | FP64;
+pub const FCVTZU_XD_FIXED: Instr = FCVTZU_FIXED | SIXTY_FOUR_BITS | FP64;
+
+pub const K_FP64_POSITIVE_INFINITY: u64 = 0x7FF0000000000000;
+pub const K_FP64_NEGATIVE_INFINITY: u64 = 0xFFF0000000000000;
+
+pub const FP_EQUAL_FLAG: u32 = Z_FLAG | C_FLAG;
+pub const FP_LESS_THAN_FLAG: u32 = N_FLAG;
+pub const FP_GREATER_THAN_FLAG: u32 = C_FLAG;
+pub const FP_UNORDERED_FLAG: u32 = C_FLAG | V_FLAG;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FPRounding {
+    FPTieEven = 0x0,
+    FPPositiveInfinity = 0x1,
+    FPNegativeInfinity = 0x2,
+    FPZero = 0x3,
+    FPTieAway,
+}
