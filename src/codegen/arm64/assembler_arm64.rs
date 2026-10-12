@@ -356,22 +356,26 @@ impl Assembler {
         offset >> K_INSTR_SIZE_LOG2
     }
 
-    fn rd(rd: CPURegister) -> Instr {
+    fn rd(rd: impl Into<CPURegister>) -> Instr {
+        let rd = rd.into();
         debug_assert_ne!(rd.code(), K_SP_REG_INTERNAL_CODE);
         (rd.code() as Instr) << RD_OFFSET
     }
 
-    fn rn(rn: CPURegister) -> Instr {
+    fn rn(rn: impl Into<CPURegister>) -> Instr {
+        let rn = rn.into();
         debug_assert_ne!(rn.code(), K_SP_REG_INTERNAL_CODE);
         (rn.code() as Instr) << RN_OFFSET
     }
 
-    fn rm(rm: CPURegister) -> Instr {
+    fn rm(rm: impl Into<CPURegister>) -> Instr {
+        let rm = rm.into();
         debug_assert_ne!(rm.code(), K_SP_REG_INTERNAL_CODE);
         (rm.code() as Instr) << RM_OFFSET
     }
 
-    fn rt(rt: CPURegister) -> Instr {
+    fn rt(rt: impl Into<CPURegister>) -> Instr {
+        let rt = rt.into();
         debug_assert_ne!(rt.code(), K_SP_REG_INTERNAL_CODE);
         (rt.code() as Instr) << RT_OFFSET
     }
@@ -482,7 +486,8 @@ impl Assembler {
         offset_is_size_multiple && is_uint12(offset >> size_log2)
     }
 
-    pub fn appropriate_zero_reg_for(reg: CPURegister) -> Register {
+    pub fn appropriate_zero_reg_for(reg: impl Into<CPURegister>) -> Register {
+        let reg = reg.into();
         if reg.is_64_bits() {
             XZR
         } else {
@@ -490,7 +495,8 @@ impl Assembler {
         }
     }
 
-    fn load_op_for(rt: CPURegister) -> Instr {
+    fn load_op_for(rt: impl Into<CPURegister>) -> Instr {
+        let rt = rt.into();
         debug_assert!(rt.is_valid());
         if rt.is_register() {
             return if rt.is_64_bits() { LDR_X } else { LDR_W };
@@ -508,7 +514,8 @@ impl Assembler {
         }
     }
 
-    fn store_op_for(rt: CPURegister) -> Instr {
+    fn store_op_for(rt: impl Into<CPURegister>) -> Instr {
+        let rt = rt.into();
         debug_assert!(rt.is_valid());
         if rt.is_register() {
             return if rt.is_64_bits() { STR_X } else { STR_W };
@@ -606,10 +613,6 @@ impl Assembler {
         self.emit(instruction);
     }
 
-    pub fn add<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.add_sub(rd, rn, operand.into(), FlagsUpdate::LeaveFlags, ADD);
-    }
-
     pub fn adds<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
         self.add_sub(rd, rn, operand.into(), FlagsUpdate::SetFlags, ADD);
     }
@@ -617,10 +620,6 @@ impl Assembler {
     pub fn cmn<T: Into<Operand>>(&mut self, rn: Register, operand: T) {
         let zr = Assembler::appropriate_zero_reg_for(rn);
         self.adds(zr, rn, operand);
-    }
-
-    pub fn sub<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.add_sub(rd, rn, operand.into(), FlagsUpdate::LeaveFlags, SUB);
     }
 
     pub fn subs<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
@@ -635,18 +634,6 @@ impl Assembler {
     pub fn neg<T: Into<Operand>>(&mut self, rd: Register, operand: T) {
         let zr = Assembler::appropriate_zero_reg_for(rd);
         self.sub(rd, zr, operand);
-    }
-
-    pub fn and_<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.logical(rd, rn, operand.into(), AND);
-    }
-
-    pub fn orr<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.logical(rd, rn, operand.into(), ORR);
-    }
-
-    pub fn eor<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.logical(rd, rn, operand.into(), EOR);
     }
 
     pub fn mov(&mut self, rd: Register, rm: Register) {
@@ -670,11 +657,11 @@ impl Assembler {
         self.move_wide(rd, imm, shift, MOVK);
     }
 
-    pub fn ldr(&mut self, rt: CPURegister, src: MemOperand) {
+    pub fn ldr(&mut self, rt: impl Into<CPURegister> + Copy, src: MemOperand) {
         self.load_store(rt, src, Assembler::load_op_for(rt));
     }
 
-    pub fn str(&mut self, rt: CPURegister, src: MemOperand) {
+    pub fn str(&mut self, rt: impl Into<CPURegister> + Copy, src: MemOperand) {
         self.load_store(rt, src, Assembler::store_op_for(rt));
     }
 
@@ -730,12 +717,14 @@ impl Assembler {
         self.hint(SystemHint::Nop);
     }
 
-    fn ra(ra: CPURegister) -> Instr {
+    fn ra(ra: impl Into<CPURegister>) -> Instr {
+        let ra = ra.into();
         debug_assert_ne!(ra.code(), K_SP_REG_INTERNAL_CODE);
         (ra.code() as Instr) << RA_OFFSET
     }
 
-    fn rt2(rt2: CPURegister) -> Instr {
+    fn rt2(rt2: impl Into<CPURegister>) -> Instr {
+        let rt2 = rt2.into();
         debug_assert_ne!(rt2.code(), K_SP_REG_INTERNAL_CODE);
         (rt2.code() as Instr) << RT2_OFFSET
     }
@@ -835,12 +824,13 @@ impl Assembler {
         }
     }
 
-    fn load_pair_op_for(rt: CPURegister, rt2: CPURegister) -> Instr {
+    fn load_pair_op_for(rt: impl Into<CPURegister>, rt2: impl Into<CPURegister>) -> Instr {
         debug_assert_eq!(STP_W | LOAD_STORE_PAIR_L_BIT, LDP_W);
         Assembler::store_pair_op_for(rt, rt2) | LOAD_STORE_PAIR_L_BIT
     }
 
-    fn store_pair_op_for(rt: CPURegister, _rt2: CPURegister) -> Instr {
+    fn store_pair_op_for(rt: impl Into<CPURegister>, _rt2: impl Into<CPURegister>) -> Instr {
+        let rt = rt.into();
         if rt.is_register() {
             return if rt.is_64_bits() { STP_X } else { STP_W };
         }
@@ -985,16 +975,8 @@ impl Assembler {
         self.logical(rd, rn, operand.into(), ANDS);
     }
 
-    pub fn bic<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.logical(rd, rn, operand.into(), BIC);
-    }
-
     pub fn bics<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
         self.logical(rd, rn, operand.into(), BICS);
-    }
-
-    pub fn orn<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
-        self.logical(rd, rn, operand.into(), ORN);
     }
 
     pub fn eon<T: Into<Operand>>(&mut self, rd: Register, rn: Register, operand: T) {
@@ -1442,11 +1424,6 @@ impl Assembler {
         self.data_processing_3_source(rd, rn, rm, ra, MSUB);
     }
 
-    pub fn mul(&mut self, rd: Register, rn: Register, rm: Register) {
-        let zr = Assembler::appropriate_zero_reg_for(rn);
-        self.data_processing_3_source(rd, rn, rm, zr, MADD);
-    }
-
     pub fn mneg(&mut self, rd: Register, rn: Register, rm: Register) {
         let zr = Assembler::appropriate_zero_reg_for(rn);
         self.data_processing_3_source(rd, rn, rm, zr, MSUB);
@@ -1541,12 +1518,12 @@ impl Assembler {
         self.adr(rd, offset);
     }
 
-    pub fn ldp(&mut self, rt: CPURegister, rt2: CPURegister, src: MemOperand) {
+    pub fn ldp(&mut self, rt: impl Into<CPURegister> + Copy, rt2: impl Into<CPURegister> + Copy, src: MemOperand) {
         let op = Assembler::load_pair_op_for(rt, rt2);
         self.load_store_pair(rt, rt2, src, op);
     }
 
-    pub fn stp(&mut self, rt: CPURegister, rt2: CPURegister, dst: MemOperand) {
+    pub fn stp(&mut self, rt: impl Into<CPURegister> + Copy, rt2: impl Into<CPURegister> + Copy, dst: MemOperand) {
         let op = Assembler::store_pair_op_for(rt, rt2);
         self.load_store_pair(rt, rt2, dst, op);
     }
@@ -1558,11 +1535,13 @@ impl Assembler {
 
     fn load_store_pair(
         &mut self,
-        rt: CPURegister,
-        rt2: CPURegister,
+        rt: impl Into<CPURegister>,
+        rt2: impl Into<CPURegister>,
         addr: MemOperand,
         op: Instr,
     ) {
+        let rt = rt.into();
+        let rt2 = rt2.into();
         debug_assert!(((op & LOAD_STORE_PAIR_L_BIT) == 0) || rt != rt2);
         debug_assert_eq!(rt.size_in_bits(), rt2.size_in_bits());
         debug_assert!(Assembler::is_imm_ls_pair(
@@ -1581,8 +1560,8 @@ impl Assembler {
         if addr.is_immediate_offset() {
             addrmodeop = LOAD_STORE_PAIR_OFFSET_FIXED;
         } else {
-            debug_assert_ne!(rt, addr.base());
-            debug_assert_ne!(rt2, addr.base());
+            debug_assert_ne!(rt, addr.base().into());
+            debug_assert_ne!(rt2, addr.base().into());
             debug_assert_ne!(addr.offset(), 0);
             if addr.is_pre_index() {
                 addrmodeop = LOAD_STORE_PAIR_PRE_INDEX_FIXED;
@@ -1852,7 +1831,7 @@ impl Assembler {
         self.emit(instruction);
     }
 
-    pub fn rt_of(rt: CPURegister) -> Instr {
+    pub fn rt_of(rt: impl Into<CPURegister>) -> Instr {
         Assembler::rt(rt)
     }
 
@@ -1864,7 +1843,8 @@ impl Assembler {
         crate::utils::utils::is_int19(offset >> K_LOAD_LITERAL_SCALE_LOG2)
     }
 
-    fn load_literal_op_for(rt: CPURegister) -> Instr {
+    fn load_literal_op_for(rt: impl Into<CPURegister>) -> Instr {
+        let rt = rt.into();
         if rt.is_register() {
             return if rt.is_64_bits() { LDR_X_LIT } else { LDR_W_LIT };
         }
@@ -1876,17 +1856,17 @@ impl Assembler {
         }
     }
 
-    pub fn ldr_pcrel(&mut self, rt: CPURegister, imm19: i32) {
-        debug_assert!(!rt.is_zero());
+    pub fn ldr_pcrel(&mut self, rt: impl Into<CPURegister> + Copy, imm19: i32) {
+        debug_assert!(!rt.into().is_zero());
         let instruction = Assembler::load_literal_op_for(rt)
             | Assembler::imm_l_literal(imm19)
             | Assembler::rt(rt);
         self.emit(instruction);
     }
 
-    pub fn ldr_literal(&mut self, rt: CPURegister, imm: u64) {
+    pub fn ldr_literal(&mut self, rt: impl Into<CPURegister> + Copy, imm: u64) {
         self.block_pools();
-        if rt.is_32_bits() {
+        if rt.into().is_32_bits() {
             self.constpool.record_entry_32(imm as u32, self.pc_offset());
         } else {
             self.constpool.record_entry_64(imm, self.pc_offset());
@@ -1999,7 +1979,7 @@ impl Assembler {
         self.logical_immediate(rd, rn, n, imm_s, imm_r, op);
     }
 
-    pub fn load_store_for_macro(&mut self, rt: CPURegister, addr: MemOperand, op: Instr) {
+    pub fn load_store_for_macro(&mut self, rt: impl Into<CPURegister>, addr: MemOperand, op: Instr) {
         self.load_store(rt, addr, op);
     }
 
@@ -2015,16 +1995,17 @@ impl Assembler {
         Assembler::calc_ls_data_size_log2(op)
     }
 
-    fn rs(rs: CPURegister) -> Instr {
+    fn rs(rs: impl Into<CPURegister>) -> Instr {
+        let rs = rs.into();
         debug_assert_ne!(rs.code(), K_SP_REG_INTERNAL_CODE);
         (rs.code() as Instr) << RS_OFFSET
     }
 
-    pub fn are_even(reg1: CPURegister, reg2: CPURegister) -> bool {
+    pub fn are_even(reg1: Register, reg2: Register) -> bool {
         reg1.is_even() && reg2.is_even()
     }
 
-    pub fn are_consecutive(reg1: CPURegister, reg2: CPURegister) -> bool {
+    pub fn are_consecutive(reg1: Register, reg2: Register) -> bool {
         (reg1.code() + 1) % K_NUMBER_OF_REGISTERS == reg2.code()
     }
 
@@ -2403,7 +2384,8 @@ impl Assembler {
         self.emit(instruction);
     }
 
-    fn load_store(&mut self, rt: CPURegister, addr: MemOperand, op: Instr) {
+    fn load_store(&mut self, rt: impl Into<CPURegister>, addr: MemOperand, op: Instr) {
+        let rt = rt.into();
         let memop = op | Assembler::rt(rt) | Assembler::rn_sp(addr.base());
 
         if addr.is_immediate_offset() {
@@ -2435,7 +2417,7 @@ impl Assembler {
             self.emit(instruction);
         } else {
             debug_assert!(Assembler::is_imm_ls_unscaled(addr.offset()));
-            debug_assert_ne!(rt, addr.base());
+            debug_assert_ne!(rt, addr.base().into());
             let offset = addr.offset() as i32;
             if addr.is_pre_index() {
                 let instruction =
@@ -2866,3 +2848,132 @@ define_neon_3_same!(
     (sqrshl, NEON_SQRSHL, vd, true),
     (uqrshl, NEON_UQRSHL, vd, true),
 );
+
+pub trait Arithmetic: Copy {
+    type Rhs;
+
+    fn add(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn sub(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn mul(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn and_(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn orr(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn orn(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn eor(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn bic(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+}
+
+impl Arithmetic for Register {
+    type Rhs = Operand;
+
+    fn add(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.add_sub(rd, rn, operand, FlagsUpdate::LeaveFlags, ADD);
+    }
+
+    fn sub(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.add_sub(rd, rn, operand, FlagsUpdate::LeaveFlags, SUB);
+    }
+
+    fn mul(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        let rm = operand.reg();
+        let zr = Assembler::appropriate_zero_reg_for(rn);
+        asm.data_processing_3_source(rd, rn, rm, zr, MADD);
+    }
+
+    fn and_(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.logical(rd, rn, operand, AND);
+    }
+
+    fn orr(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.logical(rd, rn, operand, ORR);
+    }
+
+    fn orn(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.logical(rd, rn, operand, ORN);
+    }
+
+    fn eor(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.logical(rd, rn, operand, EOR);
+    }
+
+    fn bic(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        asm.logical(rd, rn, operand, BIC);
+    }
+}
+
+impl Arithmetic for VRegister {
+    type Rhs = VRegister;
+
+    fn add(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_vector() || vd.is_1d());
+        asm.neon_3_same(vd, vn, vm, NEON_ADD);
+    }
+
+    fn sub(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_vector() || vd.is_1d());
+        asm.neon_3_same(vd, vn, vm, NEON_SUB);
+    }
+
+    fn mul(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_vector() && !vd.is_lane_size_d());
+        asm.neon_3_same(vd, vn, vm, NEON_MUL);
+    }
+
+    fn and_(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        asm.neon_3_same(vd, vn, vm, NEON_AND);
+    }
+
+    fn orr(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        asm.neon_3_same(vd, vn, vm, NEON_ORR);
+    }
+
+    fn orn(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        asm.neon_3_same(vd, vn, vm, NEON_ORN);
+    }
+
+    fn eor(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        asm.neon_3_same(vd, vn, vm, NEON_EOR);
+    }
+
+    fn bic(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        asm.neon_3_same(vd, vn, vm, NEON_BIC);
+    }
+}
+
+impl Assembler {
+    pub fn add<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::add(self, rd, rn, operand.into());
+    }
+
+    pub fn sub<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::sub(self, rd, rn, operand.into());
+    }
+
+    pub fn mul<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::mul(self, rd, rn, operand.into());
+    }
+
+    pub fn and_<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::and_(self, rd, rn, operand.into());
+    }
+
+    pub fn orr<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::orr(self, rd, rn, operand.into());
+    }
+
+    pub fn orn<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::orn(self, rd, rn, operand.into());
+    }
+
+    pub fn eor<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::eor(self, rd, rn, operand.into());
+    }
+
+    pub fn bic<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::bic(self, rd, rn, operand.into());
+    }
+}

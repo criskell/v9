@@ -38,24 +38,24 @@ impl UseScratchRegisterScope {
 
     pub fn acquire_x(&mut self, masm: &mut MacroAssembler) -> Register {
         let code = UseScratchRegisterScope::acquire_next_available(masm.tmp_list_mut()).code();
-        CPURegister::x_reg_from_code(code as u32)
+        Register::x_reg_from_code(code as u32)
     }
 
     pub fn acquire_w(&mut self, masm: &mut MacroAssembler) -> Register {
         let code = UseScratchRegisterScope::acquire_next_available(masm.tmp_list_mut()).code();
-        CPURegister::w_reg_from_code(code as u32)
+        Register::w_reg_from_code(code as u32)
     }
 
     pub fn acquire_d(&mut self, masm: &mut MacroAssembler) -> VRegister {
         let code =
             UseScratchRegisterScope::acquire_next_available(masm.fptmp_list_mut()).code();
-        CPURegister::d_reg_from_code(code as u32)
+        VRegister::d_reg_from_code(code as u32)
     }
 
     pub fn acquire_s(&mut self, masm: &mut MacroAssembler) -> VRegister {
         let code =
             UseScratchRegisterScope::acquire_next_available(masm.fptmp_list_mut()).code();
-        CPURegister::s_reg_from_code(code as u32)
+        VRegister::s_reg_from_code(code as u32)
     }
 
     pub fn acquire_same_size_as(
@@ -64,7 +64,7 @@ impl UseScratchRegisterScope {
         reg: Register,
     ) -> Register {
         let code = UseScratchRegisterScope::acquire_next_available(masm.tmp_list_mut()).code();
-        CPURegister::create_register(code, reg.size_in_bits())
+        Register::create(code, reg.size_in_bits())
     }
 
     pub fn can_acquire(masm: &MacroAssembler) -> bool {
@@ -74,7 +74,7 @@ impl UseScratchRegisterScope {
     fn acquire_next_available(available: &mut CPURegList) -> CPURegister {
         assert!(!available.is_empty());
         let result = available.pop_lowest_index();
-        debug_assert!(!result.aliases(XZR) && !result.aliases(SP));
+        debug_assert!(!result.aliases(XZR.into()) && !result.aliases(SP.into()));
         result
     }
 }
@@ -101,11 +101,11 @@ impl MacroAssembler {
     }
 
     pub fn default_tmp_list() -> CPURegList {
-        CPURegList::new(&[IP0, IP1])
+        CPURegList::new(&[IP0.into(), IP1.into()])
     }
 
     pub fn default_fptmp_list() -> CPURegList {
-        CPURegList::new(&[FP_SCRATCH1, FP_SCRATCH2])
+        CPURegList::new(&[FP_SCRATCH1.into(), FP_SCRATCH2.into()])
     }
 
     pub fn tmp_list(&self) -> &CPURegList {
@@ -254,7 +254,8 @@ impl MacroAssembler {
         count
     }
 
-    fn appropriate_zero_reg_for(reg: CPURegister) -> Register {
+    fn appropriate_zero_reg_for(reg: impl Into<CPURegister>) -> Register {
+        let reg = reg.into();
         if reg.is_64_bits() {
             XZR
         } else {
@@ -358,7 +359,7 @@ impl MacroAssembler {
     ) {
         debug_assert!(rd.size_in_bits() >= rn.size_in_bits());
         let reg_size = rd.size_in_bits();
-        let rn_ = CPURegister::create_register(rn.code(), rd.size_in_bits());
+        let rn_ = Register::create(rn.code(), rd.size_in_bits());
         let high_bit = (8u32 << ((extend as u32) & 0x3)) - 1;
         let non_shift_bits = (reg_size - left_shift) & (reg_size - 1);
 
@@ -619,16 +620,18 @@ impl MacroAssembler {
         temps.close(self);
     }
 
-    pub fn push(&mut self, regs: &[CPURegister]) {
+    pub fn push<T: Into<CPURegister> + Copy>(&mut self, regs: &[T]) {
         debug_assert!(!regs.is_empty() && regs.len() <= 4);
+        let regs: Vec<CPURegister> = regs.iter().map(|reg| (*reg).into()).collect();
         let size = regs[0].size_in_bytes() as i64;
-        self.push_helper(regs.len(), size, regs);
+        self.push_helper(regs.len(), size, &regs);
     }
 
-    pub fn pop(&mut self, regs: &[CPURegister]) {
+    pub fn pop<T: Into<CPURegister> + Copy>(&mut self, regs: &[T]) {
         debug_assert!(!regs.is_empty() && regs.len() <= 4);
+        let regs: Vec<CPURegister> = regs.iter().map(|reg| (*reg).into()).collect();
         let size = regs[0].size_in_bytes() as i64;
-        self.pop_helper(regs.len(), size, regs);
+        self.pop_helper(regs.len(), size, &regs);
     }
 
     fn push_helper(&mut self, count: usize, size: i64, src: &[CPURegister]) {
@@ -721,12 +724,14 @@ impl MacroAssembler {
         self.add(SP, SP, size as i64);
     }
 
-    pub fn ldr(&mut self, rt: CPURegister, addr: MemOperand) {
+    pub fn ldr(&mut self, rt: impl Into<CPURegister> + Copy, addr: MemOperand) {
+        let rt = rt.into();
         let op = Assembler::load_op_for_macro(rt);
         self.load_store_macro(rt, addr, op);
     }
 
-    pub fn str(&mut self, rt: CPURegister, addr: MemOperand) {
+    pub fn str(&mut self, rt: impl Into<CPURegister> + Copy, addr: MemOperand) {
+        let rt = rt.into();
         let op = Assembler::store_op_for_macro(rt);
         self.load_store_macro(rt, addr, op);
     }

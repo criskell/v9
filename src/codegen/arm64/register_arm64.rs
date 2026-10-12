@@ -194,6 +194,12 @@ impl CPURegister {
     }
 
     #[inline]
+    pub fn is_128_bits(self) -> bool {
+        debug_assert!(self.is_valid());
+        self.reg_size == 128
+    }
+
+    #[inline]
     pub fn aliases(self, other: CPURegister) -> bool {
         self.reg_code == other.reg_code && self.reg_type == other.reg_type
     }
@@ -209,11 +215,30 @@ impl PartialEq for CPURegister {
 
 impl Eq for CPURegister {}
 
-pub type Register = CPURegister;
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Register(CPURegister);
 
-impl CPURegister {
-    pub const fn create_register(code: i32, size: u32) -> Register {
-        CPURegister::create(code, size, RegisterType::Register)
+impl std::ops::Deref for Register {
+    type Target = CPURegister;
+
+    fn deref(&self) -> &CPURegister {
+        &self.0
+    }
+}
+
+impl From<Register> for CPURegister {
+    fn from(reg: Register) -> CPURegister {
+        reg.0
+    }
+}
+
+impl Register {
+    pub const fn no_reg() -> Register {
+        Register(CPURegister::no_reg())
+    }
+
+    pub const fn create(code: i32, size: u32) -> Register {
+        Register(CPURegister::create(code, size, RegisterType::Register))
     }
 
     pub fn x_reg_from_code(code: u32) -> Register {
@@ -221,7 +246,7 @@ impl CPURegister {
             return SP;
         }
         debug_assert!((code as i32) < K_NUMBER_OF_REGISTERS);
-        CPURegister::create_register(code as i32, K_X_REG_SIZE_IN_BITS as u32)
+        Register::create(code as i32, K_X_REG_SIZE_IN_BITS as u32)
     }
 
     pub fn w_reg_from_code(code: u32) -> Register {
@@ -229,23 +254,21 @@ impl CPURegister {
             return WSP;
         }
         debug_assert!((code as i32) < K_NUMBER_OF_REGISTERS);
-        CPURegister::create_register(code as i32, K_W_REG_SIZE_IN_BITS as u32)
+        Register::create(code as i32, K_W_REG_SIZE_IN_BITS as u32)
     }
 
     pub fn from_code(code: i32) -> Register {
-        CPURegister::create_register(code, K_X_REG_SIZE_IN_BITS as u32)
+        Register::create(code, K_X_REG_SIZE_IN_BITS as u32)
     }
 }
 
-pub const NO_REG: Register = CPURegister::no_reg();
+pub const NO_REG: Register = Register::no_reg();
 
 macro_rules! define_registers {
     ($(($w:ident, $x:ident, $code:expr)),* $(,)?) => {
         $(
-            pub const $w: Register =
-                CPURegister::create_register($code, K_W_REG_SIZE_IN_BITS as u32);
-            pub const $x: Register =
-                CPURegister::create_register($code, K_X_REG_SIZE_IN_BITS as u32);
+            pub const $w: Register = Register::create($code, K_W_REG_SIZE_IN_BITS as u32);
+            pub const $x: Register = Register::create($code, K_X_REG_SIZE_IN_BITS as u32);
         )*
     };
 }
@@ -285,10 +308,8 @@ define_registers!(
     (W31, X31, 31),
 );
 
-pub const WSP: Register =
-    CPURegister::create_register(K_SP_REG_INTERNAL_CODE, K_W_REG_SIZE_IN_BITS as u32);
-pub const SP: Register =
-    CPURegister::create_register(K_SP_REG_INTERNAL_CODE, K_X_REG_SIZE_IN_BITS as u32);
+pub const WSP: Register = Register::create(K_SP_REG_INTERNAL_CODE, K_W_REG_SIZE_IN_BITS as u32);
+pub const SP: Register = Register::create(K_SP_REG_INTERNAL_CODE, K_X_REG_SIZE_IN_BITS as u32);
 
 pub const IP0: Register = X16;
 pub const IP1: Register = X17;
@@ -303,54 +324,67 @@ pub const XZR: Register = X31;
 pub const WZR: Register = W31;
 pub const PADREG: Register = X31;
 
-pub type VRegister = CPURegister;
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct VRegister(CPURegister);
 
-impl CPURegister {
-    pub const fn create_v_register(code: i32, size: u32, lane_count: i32) -> VRegister {
-        CPURegister {
+impl std::ops::Deref for VRegister {
+    type Target = CPURegister;
+
+    fn deref(&self) -> &CPURegister {
+        &self.0
+    }
+}
+
+impl From<VRegister> for CPURegister {
+    fn from(reg: VRegister) -> CPURegister {
+        reg.0
+    }
+}
+
+impl VRegister {
+    pub const fn no_reg() -> VRegister {
+        VRegister(CPURegister::no_reg())
+    }
+
+    pub const fn create(code: i32, size: u32, lane_count: i32) -> VRegister {
+        VRegister(CPURegister {
             reg_code: code,
             reg_size: size,
             reg_type: RegisterType::VRegister,
             lane_count,
-        }
+        })
     }
 
     pub fn b_reg_from_code(code: u32) -> VRegister {
-        CPURegister::create_v_register(code as i32, K_B_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, K_B_REG_SIZE_IN_BITS as u32, 1)
     }
 
     pub fn h_reg_from_code(code: u32) -> VRegister {
-        CPURegister::create_v_register(code as i32, K_H_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, K_H_REG_SIZE_IN_BITS as u32, 1)
     }
 
     pub fn s_reg_from_code(code: u32) -> VRegister {
-        CPURegister::create_v_register(code as i32, K_S_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, K_S_REG_SIZE_IN_BITS as u32, 1)
     }
 
     pub fn d_reg_from_code(code: u32) -> VRegister {
-        CPURegister::create_v_register(code as i32, K_D_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, K_D_REG_SIZE_IN_BITS as u32, 1)
     }
 
     pub fn q_reg_from_code(code: u32) -> VRegister {
-        CPURegister::create_v_register(code as i32, K_Q_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, K_Q_REG_SIZE_IN_BITS as u32, 1)
     }
 }
 
 macro_rules! define_v_registers {
     ($(($b:ident, $h:ident, $s:ident, $d:ident, $q:ident, $v:ident, $code:expr)),* $(,)?) => {
         $(
-            pub const $b: VRegister =
-                CPURegister::create_v_register($code, K_B_REG_SIZE_IN_BITS as u32, 1);
-            pub const $h: VRegister =
-                CPURegister::create_v_register($code, K_H_REG_SIZE_IN_BITS as u32, 1);
-            pub const $s: VRegister =
-                CPURegister::create_v_register($code, K_S_REG_SIZE_IN_BITS as u32, 1);
-            pub const $d: VRegister =
-                CPURegister::create_v_register($code, K_D_REG_SIZE_IN_BITS as u32, 1);
-            pub const $q: VRegister =
-                CPURegister::create_v_register($code, K_Q_REG_SIZE_IN_BITS as u32, 1);
-            pub const $v: VRegister =
-                CPURegister::create_v_register($code, K_Q_REG_SIZE_IN_BITS as u32, 1);
+            pub const $b: VRegister = VRegister::create($code, K_B_REG_SIZE_IN_BITS as u32, 1);
+            pub const $h: VRegister = VRegister::create($code, K_H_REG_SIZE_IN_BITS as u32, 1);
+            pub const $s: VRegister = VRegister::create($code, K_S_REG_SIZE_IN_BITS as u32, 1);
+            pub const $d: VRegister = VRegister::create($code, K_D_REG_SIZE_IN_BITS as u32, 1);
+            pub const $q: VRegister = VRegister::create($code, K_Q_REG_SIZE_IN_BITS as u32, 1);
+            pub const $v: VRegister = VRegister::create($code, K_Q_REG_SIZE_IN_BITS as u32, 1);
         )*
     };
 }
@@ -565,41 +599,41 @@ pub fn is_vector_format(vform: VectorFormat) -> bool {
     )
 }
 
-impl CPURegister {
+impl VRegister {
     pub fn v8b(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 8)
+        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 8)
     }
 
     pub fn v16b(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 16)
+        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 16)
     }
 
     pub fn v4h(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 4)
+        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 4)
     }
 
     pub fn v8h(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 8)
+        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 8)
     }
 
     pub fn v2s(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 2)
+        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 2)
     }
 
     pub fn v4s(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 4)
+        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 4)
     }
 
     pub fn v2d(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 2)
+        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 2)
     }
 
     pub fn v1d(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 1)
     }
 
     pub fn v1q(self) -> VRegister {
-        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 1)
     }
 
     pub fn format(self, f: VectorFormat) -> VRegister {
@@ -609,13 +643,7 @@ impl CPURegister {
         } else {
             1
         };
-        CPURegister::create_v_register(self.code(), reg_size, reg_count)
-    }
-
-    #[inline]
-    pub fn is_128_bits(self) -> bool {
-        debug_assert!(self.is_valid());
-        self.size_in_bits() == 128
+        VRegister::create(self.code(), reg_size, reg_count)
     }
 
     #[inline]
