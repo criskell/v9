@@ -609,8 +609,12 @@ impl Isolate {
         }
         let name = self.to_string(key);
         let key = self.internalize_string(&name).tagged();
-        self.lookup_property(JSObject::unchecked_cast(receiver), key)
-            .is_some()
+        let it = crate::objects::lookup::LookupIterator::new(
+            self,
+            JSObject::unchecked_cast(receiver).tagged(),
+            key,
+        );
+        it.is_found()
     }
 }
 

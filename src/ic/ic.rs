@@ -102,7 +102,8 @@ impl Isolate {
     ) -> crate::interpreter::interpreter::ExecutionResult {
         if self.is_global_object(receiver) {
             self.ic_statistics.property.misses += 1;
-            return Ok(self.get_property_without_accessors(receiver, name));
+            let mut it = LookupIterator::new(self, receiver.tagged(), name);
+            return self.get_property(&mut it);
         }
 
         if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {

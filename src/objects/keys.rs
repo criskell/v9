@@ -222,6 +222,7 @@ impl Isolate {
                 return true;
             }
         }
-        self.lookup_property(object, key).is_some()
+        let it = crate::objects::lookup::LookupIterator::new(self, object.tagged(), key);
+        it.is_found()
     }
 }

@@ -8,14 +8,6 @@ use crate::objects::map::Map;
 use crate::objects::property_details::{PropertyDetails, Representation};
 use crate::objects::tagged::Tagged;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct PropertyLocationInfo {
-    pub holder_map: Map,
-    pub holder: JSObject,
-    pub details: PropertyDetails,
-    pub dictionary_entry: i32,
-    pub descriptor_index: i32,
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum State {
@@ -227,21 +219,21 @@ impl LookupIterator {
 
     fn fetch_value(&self, isolate: &Isolate) -> Tagged {
         let holder = self.get_holder(isolate);
-        if self.is_dictionary_holder(isolate) {
-            let value = holder
+        let value = if self.is_dictionary_holder(isolate) {
+            holder
                 .property_dictionary(&isolate.heap)
-                .value_at(&isolate.heap, self.number);
-            return isolate.unwrap_cell(holder, value);
-        }
-        if self.property_details.location()
+                .value_at(&isolate.heap, self.number)
+        } else if self.property_details.location()
             == crate::objects::property_details::PropertyLocation::Descriptor
         {
-            return holder
+            holder
                 .map(&isolate.heap)
                 .instance_descriptors(&isolate.heap)
-                .get_value(&isolate.heap, self.number);
-        }
-        holder.fast_property_at(&isolate.heap, self.property_details.field_index() as i32)
+                .get_value(&isolate.heap, self.number)
+        } else {
+            holder.fast_property_at(&isolate.heap, self.property_details.field_index() as i32)
+        };
+        isolate.unwrap_cell(holder, value)
     }
 
     pub fn get_data_value(&self, isolate: &Isolate) -> Tagged {
@@ -382,67 +374,17 @@ impl LookupIterator {
 impl Isolate {
 
 
-    pub fn lookup_own_property(
-        &self,
-        object: JSObject,
-        name: Tagged,
-    ) -> Option<PropertyLocationInfo> {
-        let map = object.map(&self.heap);
-        if map.is_dictionary_map(&self.heap) {
-            let dictionary = object.property_dictionary(&self.heap);
-            let entry = dictionary.find_entry(&self.heap, name);
-            if entry == K_NOT_FOUND {
-                return None;
-            }
-            return Some(PropertyLocationInfo {
-                holder_map: map,
-                holder: object,
-                details: dictionary.details_at(&self.heap, entry),
-                dictionary_entry: entry,
-                descriptor_index: K_NOT_FOUND,
-            });
-        }
-        let descriptor_index = map.find_descriptor(&self.heap, name);
-        if descriptor_index == crate::objects::descriptor_array::K_NOT_FOUND {
-            return None;
-        }
-        let details = map
-            .instance_descriptors(&self.heap)
-            .get_details(&self.heap, descriptor_index);
-        Some(PropertyLocationInfo {
-            holder_map: map,
-            holder: object,
-            details,
-            dictionary_entry: K_NOT_FOUND,
-            descriptor_index,
-        })
-    }
 
-    pub fn lookup_property(&self, object: JSObject, name: Tagged) -> Option<PropertyLocationInfo> {
-        let mut holder = object;
-        loop {
-            if let Some(found) = self.lookup_own_property(holder, name) {
-                return Some(found);
-            }
-            let prototype = holder.map(&self.heap).prototype(&self.heap);
-            if prototype == self.roots.null_value || prototype == self.roots.undefined_value {
-                return None;
-            }
-            let prototype_object = prototype.to_strong_heap_object()?;
-            if !instance_type::is_js_receiver(self.heap.instance_type(prototype_object)) {
-                return None;
-            }
-            holder = JSObject::unchecked_cast(prototype_object);
-        }
-    }
 
-    pub fn get_property_without_accessors(&self, object: JSObject, name: Tagged) -> Tagged {
+    pub fn get_data_property(&mut self, object: JSObject, name: Tagged) -> Tagged {
         if let Some(length) = self.array_length_if_requested(object, name) {
             return length;
         }
-        match self.get_property_raw(object, name) {
-            Some(value) => self.unwrap_cell(object, value),
-            None => self.undefined_value(),
+        let it = LookupIterator::new(self, object.tagged(), name);
+        match it.state() {
+            State::Data => it.get_data_value(self),
+            State::Accessor => it.get_accessors(self),
+            _ => self.undefined_value(),
         }
     }
 
@@ -716,20 +658,15 @@ impl Isolate {
         self.execute(function, receiver, args)
     }
 
-    pub fn get_own_property(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
-        let value = self.get_own_property_raw(object, name)?;
-        Some(self.unwrap_cell(object, value))
+    pub fn get_own_property(&mut self, object: JSObject, name: Tagged) -> Option<Tagged> {
+        let it = LookupIterator::own_property(self, object.tagged(), name);
+        match it.state() {
+            State::Data => Some(it.get_data_value(self)),
+            State::Accessor => Some(it.get_accessors(self)),
+            _ => None,
+        }
     }
 
-    pub(crate) fn get_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
-        let found = self.lookup_property(object, name)?;
-        Some(self.property_value_at(&found))
-    }
-
-    pub(crate) fn get_own_property_raw(&self, object: JSObject, name: Tagged) -> Option<Tagged> {
-        let found = self.lookup_own_property(object, name)?;
-        Some(self.property_value_at(&found))
-    }
 
     pub(crate) fn define_accessor(
         &mut self,
@@ -753,8 +690,8 @@ impl Isolate {
                 let getter = getter_handle.get(self);
                 let setter = setter_handle.get(self);
                 if pair.equals(&self.heap, getter, setter) {
-                    let found = self.lookup_own_property(object, name).expect("the accessor");
-                    if found.details.attributes() == attributes {
+                    let it = LookupIterator::own_property(self, object.tagged(), name);
+                    if it.property_details().attributes() == attributes {
                         self.close_handle_scope(scope);
                         return;
                     }
@@ -870,24 +807,6 @@ impl Isolate {
     }
 
     #[inline]
-    pub(crate) fn property_value_at(&self, found: &PropertyLocationInfo) -> Tagged {
-        if found.dictionary_entry != K_NOT_FOUND {
-            return found
-                .holder
-                .property_dictionary(&self.heap)
-                .value_at(&self.heap, found.dictionary_entry);
-        }
-        if found.details.location() == crate::objects::property_details::PropertyLocation::Descriptor
-        {
-            return found
-                .holder_map
-                .instance_descriptors(&self.heap)
-                .get_value(&self.heap, found.descriptor_index);
-        }
-        found
-            .holder
-            .fast_property_at(&self.heap, found.details.field_index() as i32)
-    }
 
     pub(crate) fn array_length_if_requested(
         &self,
@@ -1116,26 +1035,14 @@ impl Isolate {
     }
 
     pub(crate) fn delete_property(&mut self, object: JSObject, name: Tagged) -> bool {
-        if self.lookup_own_property(object, name).is_none() {
+        let mut it = LookupIterator::own_property(self, object.tagged(), name);
+        if !it.is_found() {
             return true;
         }
-        let scope = self.handle_scope();
-        let object_handle = self.create_object_handle(object.object());
-        let name_handle = self.create_handle(name);
-        self.normalize_properties(object);
-        let object = JSObject::unchecked_cast(object_handle.object(self));
-        let name = name_handle.get(self);
-        self.close_handle_scope(scope);
-        let dictionary = object.property_dictionary(&self.heap);
-        let entry = dictionary.find_entry(&self.heap, name);
-        if entry == K_NOT_FOUND {
-            return true;
-        }
-        if !dictionary.details_at(&self.heap, entry).is_configurable() {
+        if !it.is_configurable() {
             return false;
         }
-        let updated = self.name_dictionary_delete(dictionary, entry).tagged();
-        object.set_raw_properties_or_hash(&mut self.heap, updated);
+        it.delete(self);
         true
     }
 
@@ -1145,9 +1052,9 @@ impl Isolate {
         name: Tagged,
         value: Tagged,
     ) -> bool {
-        use crate::objects::property_details::PropertyKind;
-        if let Some(found) = self.lookup_own_property(object, name) {
-            if found.details.kind() == PropertyKind::Accessor {
+        let it = LookupIterator::own_property(self, object.tagged(), name);
+        {
+            if it.state() == State::Accessor {
                 let scope = self.handle_scope();
                 let object_handle = self.create_object_handle(object.object());
                 let name_handle = self.create_handle(name);
@@ -1254,7 +1161,7 @@ impl Isolate {
         let object_handle = self.create_object_handle(object.object());
         let key = self.internalize_string(name).tagged();
         let object = JSObject::unchecked_cast(object_handle.object(self));
-        let result = self.get_property_without_accessors(object, key);
+        let result = self.get_data_property(object, key);
         self.close_handle_scope(scope);
         result
     }
@@ -1614,11 +1521,11 @@ mod tests {
             None
         );
 
-        let found = isolate
-            .lookup_property(object.get(&isolate), inherited)
-            .unwrap();
-        assert_eq!(found.holder, prototype.get(&isolate));
-        assert_eq!(found.holder_map, prototype.get(&isolate).map(&isolate.heap));
+        let object_value = object.get(&isolate).tagged();
+        let it = LookupIterator::new(&mut isolate, object_value, inherited);
+        assert!(it.is_found());
+        assert_eq!(it.get_holder(&isolate), prototype.get(&isolate));
+        assert!(!it.holder_is_receiver(&isolate));
     }
 
     #[test]
@@ -1741,7 +1648,9 @@ impl Isolate {
     pub fn global_cell(&self, name: Tagged) -> Option<crate::objects::property_cell::PropertyCell> {
         use crate::objects::property_cell::PropertyCell;
         let global = self.global_object();
-        let value = self.get_own_property_raw(global, name)?;
+        let map = global.map(&self.heap);
+        let details = map.find_property_details(&self.heap, name)?;
+        let value = global.fast_property_at(&self.heap, details.field_index() as i32);
         let object = value.to_strong_heap_object()?;
         if self.heap.instance_type(object) == instance_type::PROPERTY_CELL_TYPE {
             Some(PropertyCell::unchecked_cast(object))
