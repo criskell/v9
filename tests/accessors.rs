@@ -416,7 +416,7 @@ fn an_accessor_can_be_defined_on_a_dictionary_object() {
              o.b = 9;
              o.g + ',' + Object.keys(o).join('')"
         ),
-        "9,bg"
+        "9,b"
     );
 }
 
@@ -482,3 +482,46 @@ fn a_getter_on_the_prototype_runs_with_the_instance_as_the_receiver() {
         "7"
     );
 }
+
+#[test]
+fn redefining_a_data_property_with_new_attributes_keeps_the_new_value() {
+    assert_eq!(
+        evaluate(
+            "var o = {};
+             Object.defineProperty(o, 'x', { value: 1, enumerable: true, configurable: true });
+             Object.defineProperty(o, 'x', { value: 2, enumerable: false, configurable: true });
+             var names = '';
+             for (var k in o) { names = names + k; }
+             o.x + ',' + names"
+        ),
+        "2,"
+    );
+}
+
+#[test]
+fn redefining_a_data_property_as_read_only_stops_later_writes() {
+    assert_eq!(
+        evaluate(
+            "var o = { x: 1 };
+             Object.defineProperty(o, 'x', { value: 2, writable: false });
+             o.x = 3;
+             o.x"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn a_define_over_an_accessor_drops_the_getter() {
+    assert_eq!(
+        evaluate(
+            "var o = {};
+             Object.defineProperty(o, 'x', { get: function () { return 1; }, configurable: true });
+             Object.defineProperty(o, 'x', { value: 7, writable: true, configurable: true });
+             o.x = 9;
+             o.x"
+        ),
+        "9"
+    );
+}
+

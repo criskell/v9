@@ -60,14 +60,17 @@ impl Isolate {
             let mut entries: Vec<(u32, Tagged)> = dictionary
                 .iterate_entries(&self.heap)
                 .iter()
+                .filter(|entry| {
+                    HashTableBase::is_key(&self.heap, dictionary.key_at(&self.heap, **entry))
+                })
+                .filter(|entry| !self.is_symbol(dictionary.key_at(&self.heap, **entry)))
+                .filter(|entry| dictionary.details_at(&self.heap, **entry).is_enumerable())
                 .map(|entry| {
                     (
                         dictionary.details_at(&self.heap, *entry).dictionary_index(),
                         dictionary.key_at(&self.heap, *entry),
                     )
                 })
-                .filter(|(_, key)| HashTableBase::is_key(&self.heap, *key))
-                .filter(|(_, key)| !self.is_symbol(*key))
                 .collect();
             entries.sort_by_key(|(index, _)| *index);
             return entries.into_iter().map(|(_, key)| key).collect();
