@@ -103,7 +103,8 @@ def main():
             r"^\s*(class|struct)\s+([A-Z0-9_]+\s+)?" + re.escape(name) + r"\b"
         )
     elif "::" in name:
-        pattern = re.compile(re.escape(name) + r"\s*\(")
+        # A definition at namespace scope: the signature starts at column zero.
+        pattern = re.compile(r"^\S.*?" + re.escape(name) + r"\s*\(")
     else:
         # A definition at namespace scope, not a call: the signature starts at
         # column zero. An inline body inside a class needs Class::Method or

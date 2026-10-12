@@ -175,12 +175,12 @@ impl Isolate {
     ) -> bool {
         if self.is_global_object(receiver) {
             self.ic_statistics.property.misses += 1;
-            return self.set_property(receiver, name, value);
+            return self.set_property_by_name(receiver, name, value);
         }
 
         if !receiver.has_fast_properties(&self.heap) {
             self.ic_statistics.property.misses += 1;
-            return self.set_property(receiver, name, value);
+            return self.set_property_by_name(receiver, name, value);
         }
 
         if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {
@@ -191,7 +191,7 @@ impl Isolate {
 
         if self.array_length_if_requested(receiver, name).is_some() {
             self.ic_statistics.property.misses += 1;
-            return self.set_property(receiver, name, value);
+            return self.set_property_by_name(receiver, name, value);
         }
 
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
@@ -221,7 +221,7 @@ impl Isolate {
 
         self.ic_statistics.property.misses += 1;
         let existing = self.lookup_own_property(receiver, name);
-        let stored = self.set_property(receiver, name, value);
+        let stored = self.set_property_by_name(receiver, name, value);
 
         if stored {
             if let Some(existing) = existing {

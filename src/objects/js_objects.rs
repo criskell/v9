@@ -404,6 +404,45 @@ impl crate::execution::isolate::Isolate {
         Err(Thrown(message))
     }
 
+    pub(crate) fn delete_normalized_property(&mut self, object: JSObject, entry: i32) {
+        debug_assert!(!object.has_fast_properties(&self.heap));
+        let dictionary = object.property_dictionary(&self.heap);
+        let updated = self.name_dictionary_delete(dictionary, entry).tagged();
+        object.set_raw_properties_or_hash(&mut self.heap, updated);
+    }
+
+    pub(crate) fn migrate_to_map(&mut self, object: JSObject, new_map: Map) {
+        let old_map = object.map(&self.heap);
+        if old_map == new_map {
+            return;
+        }
+        if old_map.is_dictionary_map(&self.heap) {
+            debug_assert!(new_map.is_dictionary_map(&self.heap));
+            self.heap.set_map(object.object(), new_map.object());
+        } else if !new_map.is_dictionary_map(&self.heap) {
+            self.migrate_fast_to_fast(object, new_map);
+        } else {
+            self.migrate_fast_to_slow(object, new_map);
+        }
+    }
+
+    pub(crate) fn migrate_fast_to_fast(&mut self, object: JSObject, new_map: Map) {
+        let inobject = new_map.inobject_properties(&self.heap);
+        let number_of_fields = new_map.number_of_own_descriptors(&self.heap);
+        if number_of_fields > inobject {
+            let scope = self.handle_scope();
+            let object_handle = self.create_object_handle(object.object());
+            let new_map_handle = self.create_object_handle(new_map.object());
+            self.grow_property_array(object, number_of_fields - inobject);
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            let new_map = new_map_handle.object(self);
+            self.heap.set_map(object.object(), new_map);
+            self.close_handle_scope(scope);
+            return;
+        }
+        self.heap.set_map(object.object(), new_map.object());
+    }
+
     pub(crate) fn set_normalized_property(
         &mut self,
         object: JSObject,

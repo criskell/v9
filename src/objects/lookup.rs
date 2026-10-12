@@ -43,6 +43,7 @@ pub struct LookupIterator {
     lookup_start_object: Handle,
     number: i32,
     configuration: Configuration,
+    transition: Handle,
 }
 
 impl LookupIterator {
@@ -83,6 +84,7 @@ impl LookupIterator {
             lookup_start_object,
             number: K_INVALID_INDEX,
             configuration,
+            transition: name,
         };
         iterator.start(isolate);
         iterator
@@ -248,6 +250,114 @@ impl LookupIterator {
         self.fetch_value(isolate)
     }
 
+    pub fn transition_map(&self, isolate: &Isolate) -> Map {
+        debug_assert_eq!(self.state, State::Transition);
+        Map::unchecked_cast(self.transition.object(isolate))
+    }
+
+    pub fn prepare_for_data_property(&mut self, isolate: &mut Isolate, value: Tagged) {
+        debug_assert!(self.state == State::Data || self.state == State::Accessor);
+        debug_assert!(self.holder_is_receiver(isolate));
+        let holder = self.get_holder(isolate);
+        if !holder.has_fast_properties(&isolate.heap) {
+            return;
+        }
+        let map = holder.map(&isolate.heap);
+        let name = self.name.get(isolate);
+        isolate.widen_field_representation(map, name, value);
+    }
+
+    pub fn prepare_transition_to_data_property(
+        &mut self,
+        isolate: &mut Isolate,
+        receiver: JSObject,
+        value: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+        store_origin: StoreOrigin,
+    ) {
+        use crate::objects::property_details::{PropertyConstness, PropertyKind};
+        if self.state == State::Transition {
+            return;
+        }
+        debug_assert!(self.state == State::NotFound || !self.holder_is_receiver(isolate));
+
+        let map = receiver.map(&isolate.heap);
+        if map.is_dictionary_map(&isolate.heap) {
+            self.state = State::Transition;
+            self.property_details = PropertyDetails::new_dictionary(
+                PropertyKind::Data,
+                attributes,
+                PropertyConstness::Mutable,
+                0,
+            );
+            self.transition = isolate.create_object_handle(map.object());
+            return;
+        }
+
+        let name = self.name.get(isolate);
+        let representation = Representation::for_value(value);
+        let transition =
+            isolate.transition_to_data_property(map, name, representation, attributes, store_origin);
+        self.state = State::Transition;
+        self.transition = isolate.create_object_handle(transition.object());
+        if !transition.is_dictionary_map(&isolate.heap) {
+            let name = self.name.get(isolate);
+            self.property_details = transition
+                .find_property_details(&isolate.heap, name)
+                .expect("the transition target owns the property");
+            self.has_property = true;
+        }
+    }
+
+    pub fn apply_transition_to_data_property(
+        &mut self,
+        isolate: &mut Isolate,
+        receiver: JSObject,
+    ) {
+        debug_assert_eq!(self.state, State::Transition);
+        self.holder = isolate.create_object_handle(receiver.object());
+        let transition = self.transition_map(isolate);
+        isolate.migrate_to_map(receiver, transition);
+        let receiver = JSObject::unchecked_cast(self.holder.object(isolate));
+        let transition = self.transition_map(isolate);
+        if transition.is_dictionary_map(&isolate.heap) {
+            let name = self.name.get(isolate);
+            let details = self.property_details;
+            let undefined = isolate.undefined_value();
+            isolate.set_normalized_property(receiver, name, undefined, details);
+            let receiver = JSObject::unchecked_cast(self.holder.object(isolate));
+            let name = self.name.get(isolate);
+            self.number = receiver
+                .property_dictionary(&isolate.heap)
+                .find_entry(&isolate.heap, name);
+            self.property_details = receiver
+                .property_dictionary(&isolate.heap)
+                .details_at(&isolate.heap, self.number);
+        } else {
+            self.number = transition.last_added(&isolate.heap);
+        }
+        self.has_property = true;
+        self.state = State::Data;
+    }
+
+    pub fn delete(&mut self, isolate: &mut Isolate) {
+        let holder = self.get_holder(isolate);
+        let mode = holder.map(&isolate.heap).is_prototype_map(&isolate.heap);
+        let _ = mode;
+        if holder.has_fast_properties(&isolate.heap) {
+            isolate.normalize_properties(holder);
+        }
+        let holder = JSObject::unchecked_cast(self.holder.object(isolate));
+        let name = self.name.get(isolate);
+        let entry = holder
+            .property_dictionary(&isolate.heap)
+            .find_entry(&isolate.heap, name);
+        if entry != K_NOT_FOUND {
+            isolate.delete_normalized_property(holder, entry);
+        }
+        self.state = State::NotFound;
+    }
+
     pub fn write_data_value(&self, isolate: &mut Isolate, value: Tagged) {
         debug_assert_eq!(self.state, State::Data);
         let holder = self.get_holder(isolate);
@@ -400,6 +510,145 @@ impl Isolate {
         self.get_property(&mut it)
     }
 
+    pub(crate) fn set_property(
+        &mut self,
+        it: &mut LookupIterator,
+        value: Tagged,
+        store_origin: StoreOrigin,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        if it.is_found() {
+            let mut found = true;
+            let result = self.set_property_internal(it, value, store_origin, &mut found)?;
+            if found {
+                return Ok(result);
+            }
+        }
+        self.add_data_property(
+            it,
+            value,
+            crate::objects::property_details::NONE,
+            store_origin,
+        )
+    }
+
+    fn set_property_internal(
+        &mut self,
+        it: &mut LookupIterator,
+        value: Tagged,
+        _store_origin: StoreOrigin,
+        found: &mut bool,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        loop {
+            match it.state() {
+                State::Accessor => {
+                    if it.is_read_only() {
+                        return self.write_to_read_only_property(it);
+                    }
+                    let pair = it.get_accessors(self);
+                    let receiver = it.get_receiver(self);
+                    let setter = self.accessor_component(pair, false);
+                    self.call_accessor(setter, receiver, &[value])?;
+                    return Ok(true);
+                }
+                State::Data => {
+                    if it.is_read_only() {
+                        return self.write_to_read_only_property(it);
+                    }
+                    if it.holder_is_receiver(self) {
+                        return self.set_data_property(it, value);
+                    }
+                    *found = false;
+                    return Ok(false);
+                }
+                State::NotFound | State::Transition => {
+                    *found = false;
+                    return Ok(false);
+                }
+            }
+        }
+    }
+
+    fn set_data_property(
+        &mut self,
+        it: &mut LookupIterator,
+        value: Tagged,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        it.prepare_for_data_property(self, value);
+        it.write_data_value(self, value);
+        Ok(true)
+    }
+
+    fn add_data_property(
+        &mut self,
+        it: &mut LookupIterator,
+        value: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+        store_origin: StoreOrigin,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        let receiver = it.get_receiver(self);
+        let Some(receiver) = receiver.to_strong_heap_object() else {
+            return self.cannot_create_property(it);
+        };
+        if !instance_type::is_js_receiver(self.heap.instance_type(receiver)) {
+            return self.cannot_create_property(it);
+        }
+        let receiver = JSObject::unchecked_cast(receiver);
+
+        let name = it.name(self);
+        if let Some((description, _)) = self.private_name_description(name) {
+            if !it.is_found() {
+                let message = self
+                    .new_string(&format!(
+                        "Cannot write private member {description} to an object whose class did \
+                         not declare it"
+                    ))
+                    .tagged();
+                return Err(crate::interpreter::interpreter::Thrown(message));
+            }
+        }
+
+        if !receiver.map(&self.heap).is_extensible(&self.heap) {
+            return Ok(false);
+        }
+
+        self.transition_and_write_data_property(it, receiver, value, attributes, store_origin)
+    }
+
+    fn transition_and_write_data_property(
+        &mut self,
+        it: &mut LookupIterator,
+        receiver: JSObject,
+        value: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+        store_origin: StoreOrigin,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        let scope = self.handle_scope();
+        let receiver_handle = self.create_object_handle(receiver.object());
+        let value_handle = self.create_handle(value);
+        it.prepare_transition_to_data_property(self, receiver, value, attributes, store_origin);
+        debug_assert_eq!(it.state(), State::Transition);
+        let receiver = JSObject::unchecked_cast(receiver_handle.object(self));
+        it.apply_transition_to_data_property(self, receiver);
+        let value = value_handle.get(self);
+        it.write_data_value(self, value);
+        self.close_handle_scope(scope);
+        Ok(true)
+    }
+
+    fn write_to_read_only_property(
+        &mut self,
+        _it: &mut LookupIterator,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        Ok(false)
+    }
+
+    fn cannot_create_property(
+        &mut self,
+        _it: &mut LookupIterator,
+    ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
+        Ok(false)
+    }
+
     pub(crate) fn set_property_with_accessors(
         &mut self,
         object: JSObject,
@@ -407,28 +656,22 @@ impl Isolate {
         value: Tagged,
         store_origin: StoreOrigin,
     ) -> crate::interpreter::interpreter::ExecutionResult {
-        use crate::interpreter::interpreter::Thrown;
-        use crate::objects::property_details::PropertyKind;
-        if self.lookup_property(object, name).is_none() {
-            if let Some((description, _)) = self.private_name_description(name) {
-                let message = self
-                    .new_string(&format!(
-                        "Cannot write private member {description} to an object whose class did \
-                         not declare it"
-                    ))
-                    .tagged();
-                return Err(Thrown(message));
-            }
+        if self.array_length_if_requested(object, name).is_some() {
+            self.array_length_setter(object, value);
+            return Ok(value);
         }
-        if let Some(found) = self.lookup_property(object, name) {
-            if found.details.kind() == PropertyKind::Accessor {
-                let pair = self.property_value_at(&found);
-                let setter = self.accessor_component(pair, false);
-                self.call_accessor(setter, object.tagged(), &[value])?;
-                return Ok(value);
-            }
+        if self.is_global_object(object) {
+            self.store_global(name, value);
+            return Ok(value);
         }
-        self.set_property_with_origin(object, name, value, store_origin);
+        let scope = self.handle_scope();
+        let value_handle = self.create_handle(value);
+        let mut it = LookupIterator::new(self, object.tagged(), name);
+        let value = value_handle.get(self);
+        let result = self.set_property(&mut it, value, store_origin);
+        let value = value_handle.get(self);
+        self.close_handle_scope(scope);
+        result?;
         Ok(value)
     }
 
@@ -681,7 +924,12 @@ impl Isolate {
         }
     }
 
-    pub fn set_property(&mut self, object: JSObject, name: Tagged, value: Tagged) -> bool {
+    pub fn set_property_by_name(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+    ) -> bool {
         self.set_property_with_origin(object, name, value, StoreOrigin::Named)
     }
 
@@ -755,6 +1003,7 @@ impl Isolate {
             name,
             representation,
             crate::objects::property_details::NONE,
+            store_origin,
         );
         let new_map_handle = self.create_object_handle(new_map.object());
         let name = name_handle.get(self);
@@ -783,6 +1032,12 @@ impl Isolate {
         if map.is_dictionary_map(&self.heap) {
             return;
         }
+        let new_map = self.normalize(map);
+        self.migrate_fast_to_slow(object, new_map);
+    }
+
+    pub(crate) fn migrate_fast_to_slow(&mut self, object: JSObject, new_map: Map) {
+        let map = object.map(&self.heap);
         let number_of_own = map.number_of_own_descriptors(&self.heap);
         let scope = self.handle_scope();
         let object_handle = self.create_object_handle(object.object());
@@ -814,8 +1069,6 @@ impl Isolate {
             dictionary = self.name_dictionary_add(dictionary_now, key, value, slow_details);
         }
         let dictionary_handle = self.create_object_handle(dictionary.object());
-        let map = Map::unchecked_cast(map_handle.object(self));
-        let new_map = self.normalize(map);
         let object = JSObject::unchecked_cast(object_handle.object(self));
         self.heap.set_map(object.object(), new_map.object());
         let dictionary = dictionary_handle.get(self);
@@ -933,8 +1186,13 @@ impl Isolate {
         let value_handle = self.create_handle(value);
         let name_handle = self.create_handle(name);
 
-        let new_map =
-            self.transition_to_data_property(map, name, representation, attributes);
+        let new_map = self.transition_to_data_property(
+            map,
+            name,
+            representation,
+            attributes,
+            StoreOrigin::Named,
+        );
         let new_map_handle = self.create_object_handle(new_map.object());
         let name = name_handle.get(self);
         let field_index = new_map
@@ -982,7 +1240,7 @@ impl Isolate {
         let key = self.internalize_string(name).tagged();
         let object = JSObject::unchecked_cast(object_handle.object(self));
         let value = value_handle.get(self);
-        let result = self.set_property(object, key, value);
+        let result = self.set_property_by_name(object, key, value);
         self.close_handle_scope(scope);
         result
     }

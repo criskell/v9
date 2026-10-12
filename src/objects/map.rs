@@ -489,6 +489,7 @@ impl Isolate {
         name: Tagged,
         representation: Representation,
         attributes: crate::objects::property_details::PropertyAttributes,
+        store_origin: StoreOrigin,
     ) -> Map {
         debug_assert!(instance_type::is_name(
             self.heap.instance_type_of(name).unwrap()
@@ -500,8 +501,11 @@ impl Isolate {
             return target;
         }
 
-        let new_map =
-            self.copy_add_descriptor(map, name, representation, attributes);
+        if self.too_many_fast_properties(map, store_origin) {
+            return self.normalize(map);
+        }
+
+        let new_map = self.copy_add_descriptor(map, name, representation, attributes);
 
         let transition_array_map = self.roots.transition_array_map();
         let _recorded =
