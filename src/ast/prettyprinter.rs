@@ -151,6 +151,25 @@ fn print_statement(out: &mut String, statement: &Statement, depth: usize) {
                 }
             }
         }
+        Statement::InitializeClassStaticElements { elements, .. } => {
+            out.push_str("INITIALIZE CLASS STATIC ELEMENTS\n");
+            for element in elements {
+                match element {
+                    ClassLiteralStaticElement::Property(field) => {
+                        indent(out, depth + 1);
+                        out.push_str(&format!("FIELD {}\n", field.name));
+                        print_expression(out, &field.value, depth + 2);
+                    }
+                    ClassLiteralStaticElement::StaticBlock(statements) => {
+                        indent(out, depth + 1);
+                        out.push_str("STATIC BLOCK\n");
+                        for statement in statements {
+                            print_statement(out, statement, depth + 2);
+                        }
+                    }
+                }
+            }
+        }
         Statement::InitializeClassMembers { fields, .. } => {
             out.push_str("INITIALIZE CLASS MEMBERS\n");
             for field in fields {

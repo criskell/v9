@@ -1320,10 +1320,15 @@ impl Parser {
         self.expect(Token::LeftBrace)?;
         let mut public_members = Vec::new();
         let mut instance_fields: Vec<ClassLiteralField> = Vec::new();
-        let mut static_fields: Vec<ClassLiteralField> = Vec::new();
+        let mut static_elements: Vec<ClassLiteralStaticElement> = Vec::new();
         let mut constructor = None;
         while self.peek() != Token::RightBrace {
             if self.check(Token::Semicolon) {
+                continue;
+            }
+            if self.peek() == Token::Static && self.peek_ahead() == Token::LeftBrace {
+                let block = self.parse_class_static_block(&mut class_info)?;
+                static_elements.push(ClassLiteralStaticElement::StaticBlock(block));
                 continue;
             }
             match self.parse_class_property_definition(&mut class_info)? {
@@ -1339,7 +1344,7 @@ impl Parser {
                 ClassMember::Property(property) => public_members.push(property),
                 ClassMember::Field(field) => {
                     if field.is_static {
-                        static_fields.push(field);
+                        static_elements.push(ClassLiteralStaticElement::Property(field));
                     } else {
                         instance_fields.push(field);
                     }
@@ -1347,7 +1352,7 @@ impl Parser {
                 ClassMember::ComputedField(property, field) => {
                     public_members.push(property);
                     if field.is_static {
-                        static_fields.push(field);
+                        static_elements.push(ClassLiteralStaticElement::Property(field));
                     } else {
                         instance_fields.push(field);
                     }
@@ -1379,11 +1384,11 @@ impl Parser {
                 position,
             ))
         };
-        let static_initializer = if static_fields.is_empty() {
+        let static_initializer = if static_elements.is_empty() {
             None
         } else {
-            Some(self.field_initializer_function(
-                &static_fields,
+            Some(self.static_elements_initializer_function(
+                static_elements,
                 class_info.static_members_scope.take().expect("the field scope"),
                 position,
             ))
@@ -1878,6 +1883,45 @@ impl Parser {
         self.scope_chain.push(ScopeKind::Function);
         self.declare_receiver();
         Some(self.scope_chain.detach())
+    }
+
+    fn parse_class_static_block(&mut self, class_info: &mut ClassInfo) -> Result<Vec<Statement>> {
+        self.consume(Token::Static);
+        self.scope_chain.push_scope(
+            class_info
+                .static_members_scope
+                .take()
+                .expect("the static elements scope"),
+        );
+        let saved = self.accept_in;
+        self.accept_in = true;
+        let block = self.parse_block_body();
+        self.accept_in = saved;
+        class_info.static_members_scope = Some(self.scope_chain.detach());
+        block
+    }
+
+    fn static_elements_initializer_function(
+        &mut self,
+        elements: Vec<ClassLiteralStaticElement>,
+        scope: crate::ast::scopes::Scope,
+        position: Position,
+    ) -> FunctionLiteral {
+        let body = vec![Statement::InitializeClassStaticElements { elements, position }];
+
+        self.scope_chain.push_scope(scope);
+        let scope = self.scope_chain.pop();
+        FunctionLiteral {
+            name: None,
+            kind: FunctionKind::NormalFunction,
+            requires_instance_members_initializer: false,
+            class_scope_has_private_brand: false,
+            parameters: Vec::new(),
+            body,
+            scope,
+            hoisted_functions: Vec::new(),
+            position,
+        }
     }
 
     fn field_initializer_function(

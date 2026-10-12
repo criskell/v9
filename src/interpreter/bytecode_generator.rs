@@ -281,6 +281,9 @@ impl BytecodeGenerator {
             Statement::InitializeClassMembers { fields, .. } => {
                 self.visit_initialize_class_members_statement(fields)
             }
+            Statement::InitializeClassStaticElements { elements, .. } => {
+                self.visit_initialize_class_static_elements_statement(elements)
+            }
             Statement::Break { .. } => {
                 if self.loop_stack.is_empty() {
                     return Err(GeneratorError {
@@ -483,6 +486,24 @@ impl BytecodeGenerator {
     ) -> Result<()> {
         for field in fields {
             self.build_class_property(field)?;
+        }
+        Ok(())
+    }
+
+    fn visit_initialize_class_static_elements_statement(
+        &mut self,
+        elements: &[crate::ast::ast::ClassLiteralStaticElement],
+    ) -> Result<()> {
+        use crate::ast::ast::ClassLiteralStaticElement;
+        for element in elements {
+            match element {
+                ClassLiteralStaticElement::Property(field) => {
+                    self.build_class_property(field)?;
+                }
+                ClassLiteralStaticElement::StaticBlock(statements) => {
+                    self.visit_statements(statements)?;
+                }
+            }
         }
         Ok(())
     }

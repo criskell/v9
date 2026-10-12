@@ -1545,3 +1545,65 @@ fn static_and_instance_private_members_live_side_by_side() {
         "1,2"
     );
 }
+
+#[test]
+fn a_static_block_runs_at_class_definition_with_the_class_as_this() {
+    assert_eq!(evaluate("class A { static { A.x = 1; } } A.x"), "1");
+    assert_eq!(evaluate("class A { static { this.x = 2; } } A.x"), "2");
+    assert_eq!(evaluate("var r = 'no'; class A { static { r = 'ran'; } } r"), "ran");
+    assert_eq!(evaluate("class A { static {} } 'ok'"), "ok");
+}
+
+#[test]
+fn static_blocks_and_static_fields_run_in_source_order() {
+    assert_eq!(
+        evaluate(
+            "var log = '';
+             class A { static { log = log + 'a'; } static y = 1; static { log = log + 'b'; } }
+             log"
+        ),
+        "ab"
+    );
+    assert_eq!(
+        evaluate(
+            "var log = '';
+             class A { static y = (log = log + 'y', 1); static { log = log + 'b'; } }
+             log + ',' + A.y"
+        ),
+        "yb,1"
+    );
+    assert_eq!(
+        evaluate(
+            "var log = '';
+             class A { static { log = log + 'b'; } static y = (log = log + 'y', 1); }
+             log"
+        ),
+        "by"
+    );
+}
+
+#[test]
+fn a_static_block_has_its_own_statements_and_sees_earlier_ones() {
+    assert_eq!(
+        evaluate(
+            "class A { static { var i = 0; while (i < 3) { i = i + 1; } this.n = i; } } A.n"
+        ),
+        "3"
+    );
+    assert_eq!(
+        evaluate("class A { static { this.x = 1; } static { this.y = this.x + 1; } } A.y"),
+        "2"
+    );
+}
+
+#[test]
+fn a_static_block_reaches_private_members_and_the_prototype() {
+    assert_eq!(
+        evaluate("class A { static #p = 1; static { this.q = A.#p + 1; } } A.q"),
+        "2"
+    );
+    assert_eq!(
+        evaluate("class A { m() { return 1; } static { this.v = (new this()).m(); } } A.v"),
+        "1"
+    );
+}

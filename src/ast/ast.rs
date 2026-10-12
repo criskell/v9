@@ -103,6 +103,12 @@ pub struct ClassLiteralProperty {
 }
 
 #[derive(Clone, Debug)]
+pub enum ClassLiteralStaticElement {
+    Property(ClassLiteralField),
+    StaticBlock(Vec<Statement>),
+}
+
+#[derive(Clone, Debug)]
 pub struct ClassLiteralField {
     pub name: String,
     pub value: Expression,
@@ -402,6 +408,11 @@ pub enum Statement {
         position: Position,
     },
 
+    InitializeClassStaticElements {
+        elements: Vec<ClassLiteralStaticElement>,
+        position: Position,
+    },
+
     InitializeClassMembers {
         fields: Vec<ClassLiteralField>,
         position: Position,
@@ -439,6 +450,7 @@ impl Statement {
             | Statement::DoWhile { position, .. }
             | Statement::For { position, .. }
             | Statement::InitializeClassMembers { position, .. }
+            | Statement::InitializeClassStaticElements { position, .. }
             | Statement::Switch { position, .. }
             | Statement::Return { position, .. }
             | Statement::ForIn { position, .. }
