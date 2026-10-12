@@ -137,7 +137,12 @@ impl Isolate {
             args[ClassBoilerplate::K_CONSTRUCTOR_ARGUMENT_INDEX as usize].get(self);
         let holder = JSObject::unchecked_cast(prototype.object(self));
         let name = self.internalize_string("constructor").tagged();
-        self.add_property_with_attributes(holder, name, constructor_value, DONT_ENUM);
+        let mut it = crate::objects::lookup::LookupIterator::own_property(
+            self,
+            holder.tagged(),
+            name,
+        );
+        self.define_own_property_ignore_attributes(&mut it, constructor_value, DONT_ENUM)?;
 
         self.add_descriptors_by_template(args, prototype, false)
     }
@@ -206,12 +211,12 @@ impl Isolate {
             let value_value = value.get(self);
             match value_kind {
                 ValueKind::ConstantKind => {
-                    self.add_property_with_attributes(
-                        holder,
+                    let mut it = crate::objects::lookup::LookupIterator::own_property(
+                        self,
+                        holder.tagged(),
                         name_value,
-                        value_value,
-                        DONT_ENUM,
                     );
+                    self.define_own_property_ignore_attributes(&mut it, value_value, DONT_ENUM)?;
                 }
                 ValueKind::GetterKind => {
                     let null = self.null_value();

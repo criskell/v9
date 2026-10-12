@@ -258,7 +258,7 @@ impl Isolate {
         );
         let function = self.new_js_function(shared).tagged();
         let target = JSObject::unchecked_cast(target.object(self));
-        self.add_property_by_str_with_attributes(
+        self.add_property_by_str(
             target,
             name,
             function,
@@ -384,7 +384,7 @@ impl Isolate {
             let key = self.internalize_string(name).tagged();
             let global = self.global_object();
             if self.get_own_property(global, key).is_none() {
-                self.set_property_by_name(global, key, undefined);
+                self.store_global(key, undefined);
             }
         }
 

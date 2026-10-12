@@ -184,7 +184,8 @@ impl Isolate {
     ) -> Result<bool, crate::interpreter::interpreter::Thrown> {
         if self.is_global_object(receiver) {
             self.ic_statistics.property.misses += 1;
-            return Ok(self.set_property_by_name(receiver, name, value));
+            self.store_global(name, value);
+            return Ok(true);
         }
 
         if let Some(function) = self.function_prototype_if_requested(receiver.tagged(), name) {
@@ -195,7 +196,8 @@ impl Isolate {
 
         if self.array_length_if_requested(receiver, name).is_some() {
             self.ic_statistics.property.misses += 1;
-            return Ok(self.set_property_by_name(receiver, name, value));
+            self.array_length_setter(receiver, value);
+            return Ok(true);
         }
 
         let nexus = FeedbackNexus::new(&self.heap, vector, slot);
@@ -226,14 +228,30 @@ impl Isolate {
         self.ic_statistics.property.misses += 1;
         let scope = self.handle_scope();
         let value_handle = self.create_handle(value);
-        let mut it = LookupIterator::new(self, receiver.tagged(), name);
-        let value = value_handle.get(self);
-        let stored = if define_own {
-            let holder = JSObject::unchecked_cast(it.get_receiver(self).to_strong_heap_object().expect("a receiver"));
-            let name = it.name(self);
-            Ok(self.define_own_property(holder, name, value))
+        let mut it = if define_own {
+            LookupIterator::own_property(self, receiver.tagged(), name)
         } else {
-            self.set_property(&mut it, value, StoreOrigin::Named)
+            LookupIterator::new(self, receiver.tagged(), name)
+        };
+        let can_store = if self.private_name_description(name).is_some() {
+            self.check_private_name_store(&mut it, define_own)
+        } else {
+            Ok(true)
+        };
+        let stored = match can_store {
+            Ok(true) => {
+                let value = value_handle.get(self);
+                if define_own {
+                    self.define_own_property_ignore_attributes(
+                        &mut it,
+                        value,
+                        crate::objects::property_details::NONE,
+                    )
+                } else {
+                    self.set_property(&mut it, value, StoreOrigin::Named)
+                }
+            }
+            other => other,
         };
         let unchanged = it.get_holder(self).map(&self.heap) == map;
         if matches!(stored, Ok(true)) && unchanged {

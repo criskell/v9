@@ -388,7 +388,12 @@ impl Isolate {
             self.define_accessor(object, name, getter, setter, property_attributes);
         } else {
             let value = descriptor.value().unwrap_or(self.undefined_value());
-            self.add_property_with_attributes(object, name, value, property_attributes);
+            let mut it = crate::objects::lookup::LookupIterator::own_property(
+                self,
+                object.tagged(),
+                name,
+            );
+            let _ = self.define_own_property_ignore_attributes(&mut it, value, property_attributes);
         }
         let result = target_handle.get(self);
         self.close_handle_scope(scope);

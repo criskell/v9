@@ -1003,11 +1003,13 @@ impl Isolate {
         };
         let object = object_handle.get(self);
         let value = value_handle.get(self);
-        let result = if let Some(receiver) = object.to_strong_heap_object() {
-            self.define_own_property(JSObject::unchecked_cast(receiver), name, value);
-            Ok(value)
-        } else {
-            Ok(value)
+        let result = match object.to_strong_heap_object() {
+            Some(receiver) => {
+                let stored = self.define_own_property(JSObject::unchecked_cast(receiver), name, value);
+                let value = value_handle.get(self);
+                stored.map(|_| value)
+            }
+            None => Ok(value),
         };
         self.close_handle_scope(scope);
         result
