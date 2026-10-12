@@ -31,10 +31,27 @@ pub enum VariableMode {
     Let,
     Const,
     PrivateMethod,
+    PrivateGetterOnly,
+    PrivateSetterOnly,
+    PrivateGetterAndSetter,
 }
 
-pub fn is_private_method_variable_mode(mode: VariableMode) -> bool {
-    mode == VariableMode::PrivateMethod
+pub fn is_private_method_or_accessor_variable_mode(mode: VariableMode) -> bool {
+    matches!(
+        mode,
+        VariableMode::PrivateMethod
+            | VariableMode::PrivateGetterOnly
+            | VariableMode::PrivateSetterOnly
+            | VariableMode::PrivateGetterAndSetter
+    )
+}
+
+pub fn is_complementary_accessor_pair(a: VariableMode, b: VariableMode) -> bool {
+    matches!(
+        (a, b),
+        (VariableMode::PrivateGetterOnly, VariableMode::PrivateSetterOnly)
+            | (VariableMode::PrivateSetterOnly, VariableMode::PrivateGetterOnly)
+    )
 }
 
 #[derive(Clone, Debug)]

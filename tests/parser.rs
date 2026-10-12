@@ -592,7 +592,7 @@ fn unimplemented_syntax_fails_loudly_rather_than_silently() {
     for (source, expected) in [
         ("class A { static prototype() {} }", "static property named 'prototype'"),
         ("class A { static #m() {} }", "static private methods"),
-        ("class A { get #x() { return 1; } }", "private accessors"),
+        ("class A { static get #x() { return 1; } }", "static private accessors"),
         ("class A { get x; }", "an accessor needs a body"),
         ("for (var x of y) {}", "for...of"),
         ("for (var a, b in y) {}", "single variable"),

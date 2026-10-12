@@ -333,7 +333,7 @@ impl Isolate {
         ))
     }
 
-    fn new_accessor_pair(&mut self) -> crate::objects::r#struct::AccessorPair {
+    pub(crate) fn new_accessor_pair(&mut self) -> crate::objects::r#struct::AccessorPair {
         use crate::objects::r#struct::AccessorPair;
         let object = self.allocate_raw_with_retry_or_fail(
             AccessorPair::K_SIZE as usize,

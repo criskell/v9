@@ -7,6 +7,9 @@ pub enum FunctionId {
     ThrowStaticPrototypeError,
     CreatePrivateNameSymbol,
     CreatePrivateBrandSymbol,
+    CreatePrivateAccessors,
+    LoadPrivateGetter,
+    LoadPrivateSetter,
 }
 
 pub struct Function {
@@ -53,6 +56,24 @@ const K_INTRINSIC_FUNCTIONS: &[Function] = &[
         nargs: 1,
         result_size: 1,
     },
+    Function {
+        function_id: FunctionId::CreatePrivateAccessors,
+        name: "CreatePrivateAccessors",
+        nargs: 2,
+        result_size: 1,
+    },
+    Function {
+        function_id: FunctionId::LoadPrivateGetter,
+        name: "LoadPrivateGetter",
+        nargs: 1,
+        result_size: 1,
+    },
+    Function {
+        function_id: FunctionId::LoadPrivateSetter,
+        name: "LoadPrivateSetter",
+        nargs: 1,
+        result_size: 1,
+    },
 ];
 
 impl FunctionId {
@@ -91,6 +112,9 @@ impl crate::execution::isolate::Isolate {
             FunctionId::ThrowStaticPrototypeError => self.runtime_throw_static_prototype_error(),
             FunctionId::CreatePrivateNameSymbol => self.runtime_create_private_name_symbol(args),
             FunctionId::CreatePrivateBrandSymbol => self.runtime_create_private_brand_symbol(args),
+            FunctionId::CreatePrivateAccessors => self.runtime_create_private_accessors(args),
+            FunctionId::LoadPrivateGetter => self.runtime_load_private_getter(args),
+            FunctionId::LoadPrivateSetter => self.runtime_load_private_setter(args),
         }
     }
 }

@@ -1432,9 +1432,15 @@ impl Parser {
             self.next();
             let name = self.scanner.current_literal().to_string();
             if kind != ClassLiteralPropertyKind::Method {
-                return Err(
-                    self.unexpected_token_with_hint("private accessors are not implemented")
-                );
+                if is_static {
+                    return Err(self.unexpected_token_with_hint(
+                        "static private accessors are not implemented",
+                    ));
+                }
+                if self.peek() != Token::LeftParen {
+                    return Err(self.unexpected_token_with_hint("an accessor needs a body"));
+                }
+                return self.parse_private_class_accessor(class_info, name, kind, position);
             }
             if self.peek() == Token::LeftParen {
                 if is_static {
@@ -1533,13 +1539,7 @@ impl Parser {
         position: Position,
     ) -> Result<ClassMember> {
         self.declare_private_name(&name, VariableMode::PrivateMethod)?;
-        if !class_info.has_private_brand {
-            class_info.has_private_brand = true;
-            self.create_synthetic_context_variable(
-                crate::ast::scopes::K_BRAND,
-                VariableMode::Const,
-            );
-        }
+        self.declare_private_brand(class_info);
         let value = self.parse_method_literal(Some(name.clone()), false, position)?;
         class_info.private_members.push(ClassLiteralProperty {
             key: PropertyKey::Name(name),
@@ -1551,9 +1551,53 @@ impl Parser {
         Ok(ClassMember::Empty)
     }
 
+    fn parse_private_class_accessor(
+        &mut self,
+        class_info: &mut ClassInfo,
+        name: String,
+        kind: ClassLiteralPropertyKind,
+        position: Position,
+    ) -> Result<ClassMember> {
+        let mode = if kind == ClassLiteralPropertyKind::Getter {
+            VariableMode::PrivateGetterOnly
+        } else {
+            VariableMode::PrivateSetterOnly
+        };
+        self.declare_private_name(&name, mode)?;
+        self.declare_private_brand(class_info);
+        let value = self.parse_method_literal(Some(name.clone()), false, position)?;
+        class_info.private_members.push(ClassLiteralProperty {
+            key: PropertyKey::Name(name),
+            value: Some(value),
+            kind,
+            is_static: false,
+            computed_name_var: None,
+        });
+        Ok(ClassMember::Empty)
+    }
+
+    fn declare_private_brand(&mut self, class_info: &mut ClassInfo) {
+        if class_info.has_private_brand {
+            return;
+        }
+        class_info.has_private_brand = true;
+        self.create_synthetic_context_variable(crate::ast::scopes::K_BRAND, VariableMode::Const);
+    }
+
     fn declare_private_name(&mut self, name: &str, mode: VariableMode) -> Result<()> {
-        if self.scope_chain.current().lookup_local(name).is_some() {
-            return Err(self.unexpected_token_with_hint("a private name is already declared"));
+        if let Some(existing) = self.scope_chain.current().lookup_local(name) {
+            if !crate::ast::ast::is_complementary_accessor_pair(existing.mode, mode) {
+                return Err(self.unexpected_token_with_hint("a private name is already declared"));
+            }
+            let index = self
+                .scope_chain
+                .current()
+                .lookup_local_index(name)
+                .expect("the private name");
+            self.scope_chain
+                .current()
+                .set_mode(index, VariableMode::PrivateGetterAndSetter);
+            return Ok(());
         }
         self.create_synthetic_context_variable(name, mode);
         Ok(())

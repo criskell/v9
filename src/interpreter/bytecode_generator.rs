@@ -614,14 +614,66 @@ impl BytecodeGenerator {
             .rposition(|breakable| matches!(breakable, Breakable::Loop(_)))
     }
 
-    fn private_method_name(&self, key: &PropertyAccess) -> Option<String> {
+    fn private_member(&self, key: &PropertyAccess) -> Option<(String, VariableMode)> {
         let PropertyAccess::Keyed(Expression::VariableProxy { name, .. }) = key else {
             return None;
         };
-        if self.variable_mode(name) == Some(crate::ast::ast::VariableMode::PrivateMethod) {
-            Some(name.clone())
+        let mode = self.variable_mode(name)?;
+        if crate::ast::ast::is_private_method_or_accessor_variable_mode(mode) {
+            Some((name.clone(), mode))
         } else {
             None
+        }
+    }
+
+    fn build_private_member_load(&mut self, object: Register, name: &str, mode: VariableMode) {
+        self.build_private_brand_check(object);
+        match mode {
+            VariableMode::PrivateMethod => self.build_variable_load(name),
+            VariableMode::PrivateSetterOnly => {
+                self.build_invalid_property_access(&format!(
+                    "'{name}' was defined without a getter"
+                ));
+            }
+            _ => {
+                let mark = self.builder.register_allocator().next_register_index();
+                let pair = self.builder.register_allocator().new_register();
+                self.build_variable_load(name);
+                self.builder.store_accumulator_in_register(pair);
+                self.build_private_getter_access(object, pair);
+                self.builder.register_allocator().release_registers(mark);
+            }
+        }
+    }
+
+    fn build_private_member_store(
+        &mut self,
+        object: Register,
+        name: &str,
+        mode: VariableMode,
+        value: Register,
+    ) {
+        match mode {
+            VariableMode::PrivateMethod => {
+                self.build_invalid_property_access(&format!(
+                    "Private method '{name}' is not writable"
+                ));
+            }
+            VariableMode::PrivateGetterOnly => {
+                self.build_private_brand_check(object);
+                self.build_invalid_property_access(&format!(
+                    "'{name}' was defined without a setter"
+                ));
+            }
+            _ => {
+                self.build_private_brand_check(object);
+                let mark = self.builder.register_allocator().next_register_index();
+                let pair = self.builder.register_allocator().new_register();
+                self.build_variable_load(name);
+                self.builder.store_accumulator_in_register(pair);
+                self.build_private_setter_access(object, pair, value);
+                self.builder.register_allocator().release_registers(mark);
+            }
         }
     }
 
@@ -632,6 +684,61 @@ impl BytecodeGenerator {
             }
         }
         None
+    }
+
+    fn visit_private_accessor(
+        &mut self,
+        accessor: Option<&FunctionLiteral>,
+        value_out: Register,
+    ) -> Result<()> {
+        match accessor {
+            Some(accessor) => {
+                let index = self.compile_function(accessor)?;
+                self.builder
+                    .create_closure(index)
+                    .store_accumulator_in_register(value_out);
+            }
+            None => {
+                self.builder
+                    .load_null()
+                    .store_accumulator_in_register(value_out);
+            }
+        }
+        Ok(())
+    }
+
+    fn build_private_getter_access(&mut self, object: Register, accessor_pair: Register) {
+        let mark = self.builder.register_allocator().next_register_index();
+        let accessor = self.builder.register_allocator().new_register();
+        let args = self.builder.register_allocator().new_register_list(1);
+        let pair = self.builder.register_allocator().new_register_list(1);
+        self.builder
+            .move_register(accessor_pair, pair.first_register())
+            .call_runtime(crate::runtime::runtime::FunctionId::LoadPrivateGetter, pair)
+            .store_accumulator_in_register(accessor)
+            .move_register(object, args.first_register())
+            .call_property(accessor, args);
+        self.builder.register_allocator().release_registers(mark);
+    }
+
+    fn build_private_setter_access(
+        &mut self,
+        object: Register,
+        accessor_pair: Register,
+        value: Register,
+    ) {
+        let mark = self.builder.register_allocator().next_register_index();
+        let accessor = self.builder.register_allocator().new_register();
+        let args = self.builder.register_allocator().new_register_list(2);
+        let pair = self.builder.register_allocator().new_register_list(1);
+        self.builder
+            .move_register(accessor_pair, pair.first_register())
+            .call_runtime(crate::runtime::runtime::FunctionId::LoadPrivateSetter, pair)
+            .store_accumulator_in_register(accessor)
+            .move_register(object, args.first_register())
+            .move_register(value, Register::new(args.first_register().index() + 1))
+            .call_property(accessor, args);
+        self.builder.register_allocator().release_registers(mark);
     }
 
     fn build_invalid_property_access(&mut self, message: &str) {
@@ -1213,10 +1320,17 @@ impl BytecodeGenerator {
             }
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
-                if let Some(name) = self.private_method_name(key) {
-                    self.build_invalid_property_access(&format!(
-                        "Private method '{name}' is not writable"
-                    ));
+                if let Some((name, mode)) = self.private_member(key) {
+                    if op != Token::Assign {
+                        return self.unsupported("a compound assignment to a private accessor");
+                    }
+                    let mark = self.builder.register_allocator().next_register_index();
+                    let value_register = self.builder.register_allocator().new_register();
+                    self.visit_for_accumulator_value(value)?;
+                    self.builder.store_accumulator_in_register(value_register);
+                    self.build_private_member_store(object_register, &name, mode, value_register);
+                    self.builder.load_accumulator_with_register(value_register);
+                    self.builder.register_allocator().release_registers(mark);
                     return Ok(());
                 }
                 match key.as_ref() {
@@ -1304,10 +1418,9 @@ impl BytecodeGenerator {
         }
         let mark = self.builder.register_allocator().next_register_index();
         let object_register = self.visit_for_register_value(object)?;
-        match self.private_method_name(key) {
-            Some(name) => {
-                self.build_private_brand_check(object_register);
-                self.build_variable_load(&name);
+        match self.private_member(key) {
+            Some((name, mode)) => {
+                self.build_private_member_load(object_register, &name, mode);
             }
             None => match key {
                 PropertyAccess::Named(name) => {
@@ -1413,10 +1526,9 @@ impl BytecodeGenerator {
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
                 let callee_register = self.builder.register_allocator().new_register();
-                match self.private_method_name(key) {
-                    Some(name) => {
-                        self.build_private_brand_check(object_register);
-                        self.build_variable_load(&name);
+                match self.private_member(key) {
+                    Some((name, mode)) => {
+                        self.build_private_member_load(object_register, &name, mode);
                     }
                     None => match key.as_ref() {
                         PropertyAccess::Named(name) => {
@@ -1695,7 +1807,60 @@ impl BytecodeGenerator {
             self.builder.register_allocator().release_registers(mark);
         }
 
+        let mut accessor_table: Vec<(String, Option<FunctionLiteral>, Option<FunctionLiteral>)> =
+            Vec::new();
         for property in &class.private_members {
+            if !matches!(
+                property.kind,
+                ClassLiteralPropertyKind::Getter | ClassLiteralPropertyKind::Setter
+            ) {
+                continue;
+            }
+            let PropertyKey::Name(name) = &property.key else {
+                unreachable!()
+            };
+            let value = property.value.clone();
+            match accessor_table.iter_mut().find(|(key, ..)| key == name) {
+                Some(entry) => {
+                    if property.kind == ClassLiteralPropertyKind::Getter {
+                        entry.1 = value;
+                    } else {
+                        entry.2 = value;
+                    }
+                }
+                None => {
+                    if property.kind == ClassLiteralPropertyKind::Getter {
+                        accessor_table.push((name.clone(), value, None));
+                    } else {
+                        accessor_table.push((name.clone(), None, value));
+                    }
+                }
+            }
+        }
+
+        for (name, getter, setter) in accessor_table {
+            let mark = self.builder.register_allocator().next_register_index();
+            let accessors = self.builder.register_allocator().new_register_list(2);
+            self.visit_private_accessor(getter.as_ref(), accessors.first_register())?;
+            self.visit_private_accessor(
+                setter.as_ref(),
+                Register::new(accessors.first_register().index() + 1),
+            )?;
+            self.builder.call_runtime(
+                crate::runtime::runtime::FunctionId::CreatePrivateAccessors,
+                accessors,
+            );
+            self.build_variable_assignment(&name);
+            self.builder.register_allocator().release_registers(mark);
+        }
+
+        for property in &class.private_members {
+            if matches!(
+                property.kind,
+                ClassLiteralPropertyKind::Getter | ClassLiteralPropertyKind::Setter
+            ) {
+                continue;
+            }
             let PropertyKey::Name(name) = &property.key else {
                 unreachable!()
             };

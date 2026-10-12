@@ -28,6 +28,34 @@ impl Isolate {
         Ok(self.undefined_value())
     }
 
+    pub(crate) fn runtime_load_private_setter(&mut self, args: &[Tagged]) -> ExecutionResult {
+        use crate::objects::r#struct::AccessorPair;
+        debug_assert_eq!(1, args.len());
+        let pair = AccessorPair::unchecked_cast(args[0].to_strong_heap_object().expect("a pair"));
+        Ok(pair.setter(&self.heap))
+    }
+
+    pub(crate) fn runtime_load_private_getter(&mut self, args: &[Tagged]) -> ExecutionResult {
+        use crate::objects::r#struct::AccessorPair;
+        debug_assert_eq!(1, args.len());
+        let pair = AccessorPair::unchecked_cast(args[0].to_strong_heap_object().expect("a pair"));
+        Ok(pair.getter(&self.heap))
+    }
+
+    pub(crate) fn runtime_create_private_accessors(&mut self, args: &[Tagged]) -> ExecutionResult {
+        debug_assert_eq!(2, args.len());
+        let scope = self.handle_scope();
+        let getter = self.create_handle(args[0]);
+        let setter = self.create_handle(args[1]);
+        let pair = self.new_accessor_pair();
+        let getter = getter.get(self);
+        let setter = setter.get(self);
+        pair.set_components(&mut self.heap, getter, setter);
+        let value = pair.tagged();
+        self.close_handle_scope(scope);
+        Ok(value)
+    }
+
     pub(crate) fn runtime_to_fast_properties(&mut self, args: &[Tagged]) -> ExecutionResult {
         debug_assert_eq!(1, args.len());
         let scope = self.handle_scope();

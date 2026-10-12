@@ -79,6 +79,14 @@ impl Scope {
         self.variables.len() - 1
     }
 
+    pub fn lookup_local_index(&self, name: &str) -> Option<usize> {
+        self.variables.iter().position(|v| v.name == name)
+    }
+
+    pub fn set_mode(&mut self, index: usize, mode: VariableMode) {
+        self.variables[index].mode = mode;
+    }
+
     pub fn force_context_allocation(&mut self, index: usize) {
         self.variables[index].force_context_allocation = true;
     }

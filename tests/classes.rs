@@ -1327,3 +1327,117 @@ fn a_private_name_may_not_be_declared_twice_in_one_class() {
     assert!(error("class A { #m() {} #m() {} }").contains("already declared"));
     assert!(error("class A { #x = 1; #x() {} }").contains("already declared"));
 }
+
+#[test]
+fn a_private_getter_runs_on_read() {
+    assert_eq!(
+        evaluate("class A { get #x() { return 1; } run() { return this.#x; } } (new A()).run()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate(
+            "class A {
+                 get #x() { return this.v; }
+                 constructor() { this.v = 3; }
+                 run() { return this.#x; }
+             }
+             (new A()).run()"
+        ),
+        "3"
+    );
+}
+
+#[test]
+fn a_private_setter_runs_on_write() {
+    assert_eq!(
+        evaluate(
+            "class A { #v = 0; set #x(v) { this.#v = v; } run() { this.#x = 5; return this.#v; } }
+             (new A()).run()"
+        ),
+        "5"
+    );
+}
+
+#[test]
+fn a_private_getter_and_setter_share_one_name() {
+    assert_eq!(
+        evaluate(
+            "class A {
+                 #v = 1;
+                 get #x() { return this.#v; }
+                 set #x(v) { this.#v = v; }
+                 run() { this.#x = 9; return this.#x; }
+             }
+             (new A()).run()"
+        ),
+        "9"
+    );
+    assert_eq!(
+        evaluate(
+            "class A {
+                 set #x(v) { this.seen = v; }
+                 get #x() { return 7; }
+                 run() { this.#x = 4; return this.#x + ',' + this.seen; }
+             }
+             (new A()).run()"
+        ),
+        "7,4"
+    );
+}
+
+#[test]
+fn a_half_defined_private_accessor_refuses_the_other_half() {
+    assert_eq!(
+        evaluate(
+            "class A { get #x() { return 1; } run() { this.#x = 2; } }
+             var caught = 'no';
+             try { (new A()).run(); } catch (e) { caught = e; }
+             caught"
+        ),
+        "'#x' was defined without a setter"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { set #x(v) {} run() { return this.#x; } }
+             var caught = 'no';
+             try { (new A()).run(); } catch (e) { caught = e; }
+             caught"
+        ),
+        "'#x' was defined without a getter"
+    );
+}
+
+#[test]
+fn a_private_accessor_is_brand_checked_too() {
+    assert!(
+        error("class A { get #x() { return 1; } run(o) { return o.#x; } } (new A()).run({})")
+            .contains("Receiver must be an instance of class A")
+    );
+}
+
+#[test]
+fn a_private_accessor_is_not_a_visible_property() {
+    assert_eq!(
+        evaluate("class A { get #x() { return 1; } y = 2; } Object.keys(new A()).join('')"),
+        "y"
+    );
+}
+
+#[test]
+fn a_private_accessor_can_reach_other_private_members() {
+    assert_eq!(
+        evaluate(
+            "class A { #m() { return 1; } get #x() { return this.#m(); } run() { return this.#x; } }
+             (new A()).run()"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn two_getters_for_one_private_name_are_a_syntax_error() {
+    assert!(error("class A { get #x() { return 1; } get #x() { return 2; } }")
+        .contains("already declared"));
+    assert!(error("class A { set #x(v) {} set #x(v) {} }").contains("already declared"));
+    assert!(error("class A { #x = 1; get #x() { return 2; } }").contains("already declared"));
+}
