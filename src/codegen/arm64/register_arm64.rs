@@ -189,6 +189,11 @@ impl CPURegister {
     }
 
     #[inline]
+    pub fn is_even(self) -> bool {
+        (self.code() % 2) == 0
+    }
+
+    #[inline]
     pub fn aliases(self, other: CPURegister) -> bool {
         self.reg_code == other.reg_code && self.reg_type == other.reg_type
     }
@@ -384,6 +389,310 @@ define_v_registers!(
     (B30, H30, S30, D30, Q30, V30, 30),
     (B31, H31, S31, D31, Q31, V31, 31),
 );
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum VectorFormat {
+    FormatUndefined,
+    Format8B,
+    Format16B,
+    Format4H,
+    Format8H,
+    Format2S,
+    Format4S,
+    Format1D,
+    Format2D,
+    FormatB,
+    FormatH,
+    FormatS,
+    FormatD,
+    Format1Q,
+}
+
+pub fn vector_format_half_width(vform: VectorFormat) -> VectorFormat {
+    match vform {
+        VectorFormat::Format8H => VectorFormat::Format8B,
+        VectorFormat::Format4S => VectorFormat::Format4H,
+        VectorFormat::Format2D => VectorFormat::Format2S,
+        VectorFormat::Format1Q => VectorFormat::Format1D,
+        VectorFormat::FormatH => VectorFormat::FormatB,
+        VectorFormat::FormatS => VectorFormat::FormatH,
+        VectorFormat::FormatD => VectorFormat::FormatS,
+        _ => unreachable!(),
+    }
+}
+
+pub fn vector_format_double_width(vform: VectorFormat) -> VectorFormat {
+    match vform {
+        VectorFormat::Format8B => VectorFormat::Format8H,
+        VectorFormat::Format4H => VectorFormat::Format4S,
+        VectorFormat::Format2S => VectorFormat::Format2D,
+        VectorFormat::FormatB => VectorFormat::FormatH,
+        VectorFormat::FormatH => VectorFormat::FormatS,
+        VectorFormat::FormatS => VectorFormat::FormatD,
+        _ => unreachable!(),
+    }
+}
+
+pub fn vector_format_fill_q(vform: VectorFormat) -> VectorFormat {
+    match vform {
+        VectorFormat::FormatB | VectorFormat::Format8B | VectorFormat::Format16B => {
+            VectorFormat::Format16B
+        }
+        VectorFormat::FormatH | VectorFormat::Format4H | VectorFormat::Format8H => {
+            VectorFormat::Format8H
+        }
+        VectorFormat::FormatS | VectorFormat::Format2S | VectorFormat::Format4S => {
+            VectorFormat::Format4S
+        }
+        VectorFormat::FormatD | VectorFormat::Format1D | VectorFormat::Format2D => {
+            VectorFormat::Format2D
+        }
+        _ => unreachable!(),
+    }
+}
+
+pub fn vector_format_half_width_double_lanes(vform: VectorFormat) -> VectorFormat {
+    match vform {
+        VectorFormat::Format4H => VectorFormat::Format8B,
+        VectorFormat::Format8H => VectorFormat::Format16B,
+        VectorFormat::Format2S => VectorFormat::Format4H,
+        VectorFormat::Format4S => VectorFormat::Format8H,
+        VectorFormat::Format1D => VectorFormat::Format2S,
+        VectorFormat::Format2D => VectorFormat::Format4S,
+        VectorFormat::Format1Q => VectorFormat::Format2D,
+        _ => unreachable!(),
+    }
+}
+
+pub fn scalar_format_from_lane_size(lane_size: u32) -> VectorFormat {
+    match lane_size {
+        8 => VectorFormat::FormatB,
+        16 => VectorFormat::FormatH,
+        32 => VectorFormat::FormatS,
+        64 => VectorFormat::FormatD,
+        _ => unreachable!(),
+    }
+}
+
+pub fn scalar_format_from_format(vform: VectorFormat) -> VectorFormat {
+    scalar_format_from_lane_size(lane_size_in_bits_from_format(vform))
+}
+
+pub fn register_size_in_bits_from_format(vform: VectorFormat) -> u32 {
+    debug_assert_ne!(vform, VectorFormat::FormatUndefined);
+    match vform {
+        VectorFormat::FormatB => K_B_REG_SIZE_IN_BITS as u32,
+        VectorFormat::FormatH => K_H_REG_SIZE_IN_BITS as u32,
+        VectorFormat::FormatS => K_S_REG_SIZE_IN_BITS as u32,
+        VectorFormat::FormatD => K_D_REG_SIZE_IN_BITS as u32,
+        VectorFormat::Format8B
+        | VectorFormat::Format4H
+        | VectorFormat::Format2S
+        | VectorFormat::Format1D => K_D_REG_SIZE_IN_BITS as u32,
+        _ => K_Q_REG_SIZE_IN_BITS as u32,
+    }
+}
+
+pub fn register_size_in_bytes_from_format(vform: VectorFormat) -> u32 {
+    let size_in_bits = register_size_in_bits_from_format(vform);
+    debug_assert_eq!(size_in_bits % 8, 0);
+    size_in_bits / 8
+}
+
+pub fn lane_size_in_bits_from_format(vform: VectorFormat) -> u32 {
+    debug_assert_ne!(vform, VectorFormat::FormatUndefined);
+    match vform {
+        VectorFormat::FormatB | VectorFormat::Format8B | VectorFormat::Format16B => 8,
+        VectorFormat::FormatH | VectorFormat::Format4H | VectorFormat::Format8H => 16,
+        VectorFormat::FormatS | VectorFormat::Format2S | VectorFormat::Format4S => 32,
+        VectorFormat::FormatD | VectorFormat::Format1D | VectorFormat::Format2D => 64,
+        VectorFormat::Format1Q => 128,
+        _ => unreachable!(),
+    }
+}
+
+pub fn lane_size_in_bytes_from_format(vform: VectorFormat) -> u32 {
+    lane_size_in_bits_from_format(vform) / 8
+}
+
+pub fn lane_size_in_bytes_log2_from_format(vform: VectorFormat) -> u32 {
+    debug_assert_ne!(vform, VectorFormat::FormatUndefined);
+    match vform {
+        VectorFormat::FormatB | VectorFormat::Format8B | VectorFormat::Format16B => 0,
+        VectorFormat::FormatH | VectorFormat::Format4H | VectorFormat::Format8H => 1,
+        VectorFormat::FormatS | VectorFormat::Format2S | VectorFormat::Format4S => 2,
+        VectorFormat::FormatD | VectorFormat::Format1D | VectorFormat::Format2D => 3,
+        _ => unreachable!(),
+    }
+}
+
+pub fn lane_count_from_format(vform: VectorFormat) -> i32 {
+    debug_assert_ne!(vform, VectorFormat::FormatUndefined);
+    match vform {
+        VectorFormat::Format16B => 16,
+        VectorFormat::Format8B | VectorFormat::Format8H => 8,
+        VectorFormat::Format4H | VectorFormat::Format4S => 4,
+        VectorFormat::Format2S | VectorFormat::Format2D => 2,
+        VectorFormat::Format1D
+        | VectorFormat::Format1Q
+        | VectorFormat::FormatB
+        | VectorFormat::FormatH
+        | VectorFormat::FormatS
+        | VectorFormat::FormatD => 1,
+        _ => unreachable!(),
+    }
+}
+
+pub fn max_lane_count_from_format(vform: VectorFormat) -> i32 {
+    debug_assert_ne!(vform, VectorFormat::FormatUndefined);
+    match vform {
+        VectorFormat::FormatB | VectorFormat::Format8B | VectorFormat::Format16B => 16,
+        VectorFormat::FormatH | VectorFormat::Format4H | VectorFormat::Format8H => 8,
+        VectorFormat::FormatS | VectorFormat::Format2S | VectorFormat::Format4S => 4,
+        VectorFormat::FormatD | VectorFormat::Format1D | VectorFormat::Format2D => 2,
+        _ => unreachable!(),
+    }
+}
+
+pub fn is_vector_format(vform: VectorFormat) -> bool {
+    debug_assert_ne!(vform, VectorFormat::FormatUndefined);
+    !matches!(
+        vform,
+        VectorFormat::FormatB
+            | VectorFormat::FormatH
+            | VectorFormat::FormatS
+            | VectorFormat::FormatD
+    )
+}
+
+impl CPURegister {
+    pub fn v8b(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 8)
+    }
+
+    pub fn v16b(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 16)
+    }
+
+    pub fn v4h(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 4)
+    }
+
+    pub fn v8h(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 8)
+    }
+
+    pub fn v2s(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 2)
+    }
+
+    pub fn v4s(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 4)
+    }
+
+    pub fn v2d(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 2)
+    }
+
+    pub fn v1d(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_D_REG_SIZE_IN_BITS as u32, 1)
+    }
+
+    pub fn v1q(self) -> VRegister {
+        CPURegister::create_v_register(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 1)
+    }
+
+    pub fn format(self, f: VectorFormat) -> VRegister {
+        let reg_size = register_size_in_bits_from_format(f);
+        let reg_count = if is_vector_format(f) {
+            lane_count_from_format(f)
+        } else {
+            1
+        };
+        CPURegister::create_v_register(self.code(), reg_size, reg_count)
+    }
+
+    #[inline]
+    pub fn is_128_bits(self) -> bool {
+        debug_assert!(self.is_valid());
+        self.size_in_bits() == 128
+    }
+
+    #[inline]
+    pub fn is_8b(self) -> bool {
+        self.is_64_bits() && (self.lane_count() == 8)
+    }
+
+    #[inline]
+    pub fn is_16b(self) -> bool {
+        self.is_128_bits() && (self.lane_count() == 16)
+    }
+
+    #[inline]
+    pub fn is_4h(self) -> bool {
+        self.is_64_bits() && (self.lane_count() == 4)
+    }
+
+    #[inline]
+    pub fn is_8h(self) -> bool {
+        self.is_128_bits() && (self.lane_count() == 8)
+    }
+
+    #[inline]
+    pub fn is_2s(self) -> bool {
+        self.is_64_bits() && (self.lane_count() == 2)
+    }
+
+    #[inline]
+    pub fn is_4s(self) -> bool {
+        self.is_128_bits() && (self.lane_count() == 4)
+    }
+
+    #[inline]
+    pub fn is_2d(self) -> bool {
+        self.is_128_bits() && (self.lane_count() == 2)
+    }
+
+    #[inline]
+    pub fn is_1q(self) -> bool {
+        self.is_128_bits() && (self.lane_count() == 1)
+    }
+
+    #[inline]
+    pub fn lane_size_in_bits(self) -> u32 {
+        self.size_in_bits() / self.lane_count() as u32
+    }
+
+    #[inline]
+    pub fn is_lane_size_b(self) -> bool {
+        self.lane_size_in_bits() == K_B_REG_SIZE_IN_BITS as u32
+    }
+
+    #[inline]
+    pub fn is_lane_size_h(self) -> bool {
+        self.lane_size_in_bits() == K_H_REG_SIZE_IN_BITS as u32
+    }
+
+    #[inline]
+    pub fn is_lane_size_s(self) -> bool {
+        self.lane_size_in_bits() == K_S_REG_SIZE_IN_BITS as u32
+    }
+
+    #[inline]
+    pub fn is_lane_size_d(self) -> bool {
+        self.lane_size_in_bits() == K_D_REG_SIZE_IN_BITS as u32
+    }
+
+    #[inline]
+    pub fn is_same_format(self, other: VRegister) -> bool {
+        (self.size_in_bits() == other.size_in_bits())
+            && (self.lane_count() == other.lane_count())
+    }
+}
+
+pub fn are_same_format(reg1: VRegister, regs: &[VRegister]) -> bool {
+    regs.iter().all(|reg| reg.is_valid() && reg1.is_same_format(*reg))
+}
 
 pub const FP_ZERO: VRegister = D15;
 pub const FP_FIXED1: VRegister = D27;

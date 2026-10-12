@@ -482,7 +482,7 @@ impl Assembler {
         offset_is_size_multiple && is_uint12(offset >> size_log2)
     }
 
-    fn appropriate_zero_reg_for(reg: CPURegister) -> Register {
+    pub fn appropriate_zero_reg_for(reg: CPURegister) -> Register {
         if reg.is_64_bits() {
             XZR
         } else {
@@ -2015,6 +2015,208 @@ impl Assembler {
         Assembler::calc_ls_data_size_log2(op)
     }
 
+    fn rs(rs: CPURegister) -> Instr {
+        debug_assert_ne!(rs.code(), K_SP_REG_INTERNAL_CODE);
+        (rs.code() as Instr) << RS_OFFSET
+    }
+
+    pub fn are_even(reg1: CPURegister, reg2: CPURegister) -> bool {
+        reg1.is_even() && reg2.is_even()
+    }
+
+    pub fn are_consecutive(reg1: CPURegister, reg2: CPURegister) -> bool {
+        (reg1.code() + 1) % K_NUMBER_OF_REGISTERS == reg2.code()
+    }
+
+    pub fn ldar(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rn.is_64_bits());
+        let op = if rt.is_32_bits() { LDAR_W } else { LDAR_X };
+        let instruction = op
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn ldaxr(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rn.is_64_bits());
+        let op = if rt.is_32_bits() { LDAXR_W } else { LDAXR_X };
+        let instruction = op
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn stlr(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rn.is_64_bits());
+        let op = if rt.is_32_bits() { STLR_W } else { STLR_X };
+        let instruction = op
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn stlxr(&mut self, rs: Register, rt: Register, rn: Register) {
+        debug_assert!(rn.is_64_bits());
+        debug_assert!(rs != rt && rs != rn);
+        let op = if rt.is_32_bits() { STLXR_W } else { STLXR_X };
+        let instruction = op
+            | Assembler::rs(rs)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn ldarb(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        let instruction = LDAR_B
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn ldaxrb(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        let instruction = LDAXR_B
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn stlrb(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        let instruction = STLR_B
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn stlxrb(&mut self, rs: Register, rt: Register, rn: Register) {
+        debug_assert!(rs.is_32_bits());
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        debug_assert!(rs != rt && rs != rn);
+        let instruction = STLXR_B
+            | Assembler::rs(rs)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn ldarh(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        let instruction = LDAR_H
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn ldaxrh(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        let instruction = LDAXR_H
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn stlrh(&mut self, rt: Register, rn: Register) {
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        let instruction = STLR_H
+            | Assembler::rs(X31)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn stlxrh(&mut self, rs: Register, rt: Register, rn: Register) {
+        debug_assert!(rs.is_32_bits());
+        debug_assert!(rt.is_32_bits());
+        debug_assert!(rn.is_64_bits());
+        debug_assert!(rs != rt && rs != rn);
+        let instruction = STLXR_H
+            | Assembler::rs(rs)
+            | Assembler::rt2(X31)
+            | Assembler::rn_sp(rn)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    fn v_format(vd: VRegister) -> Instr {
+        if vd.is_64_bits() {
+            return match vd.lane_count() {
+                1 => NEON_1D,
+                2 => NEON_2S,
+                4 => NEON_4H,
+                8 => NEON_8B,
+                _ => unreachable!(),
+            };
+        }
+        debug_assert!(vd.is_128_bits());
+        match vd.lane_count() {
+            2 => NEON_2D,
+            4 => NEON_4S,
+            8 => NEON_8H,
+            16 => NEON_16B,
+            _ => unreachable!(),
+        }
+    }
+
+    fn s_format(vd: VRegister) -> Instr {
+        debug_assert!(vd.is_scalar());
+        match vd.size_in_bytes() {
+            1 => NEON_B,
+            2 => NEON_H,
+            4 => NEON_S,
+            8 => NEON_D,
+            _ => unreachable!(),
+        }
+    }
+
+    fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
+        debug_assert!(are_same_format(vd, &[vn, vm]));
+        debug_assert!(vd.is_vector() || !vd.is_q());
+
+        let format;
+        let mut op = vop;
+        if vd.is_scalar() {
+            op |= NEON_Q | NEON_SCALAR;
+            format = Assembler::s_format(vd);
+        } else {
+            format = Assembler::v_format(vd);
+        }
+
+        let instruction = format
+            | op
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
     fn add_sub(
         &mut self,
         rd: Register,
@@ -2315,4 +2517,352 @@ define_fp_2_reg_misc!(
     (frintx, FRINTX),
     (frintz, FRINTZ),
     (frinti, FRINTI),
+);
+
+macro_rules! define_compare_and_swap_w_x {
+    ($(($name:ident, $op_x:ident, $op_w:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, rs: Register, rt: Register, src: MemOperand) {
+                    debug_assert!(src.is_immediate_offset() && (src.offset() == 0));
+                    let op = if rt.is_64_bits() { $op_x } else { $op_w };
+                    let instruction = op
+                        | Assembler::rs(rs)
+                        | Assembler::rt(rt)
+                        | RT2_MASK
+                        | Assembler::rn_sp(src.base());
+                    self.emit(instruction);
+                }
+            )*
+        }
+    };
+}
+
+define_compare_and_swap_w_x!(
+    (cas, CAS_X, CAS_W),
+    (casa, CASA_X, CASA_W),
+    (casl, CASL_X, CASL_W),
+    (casal, CASAL_X, CASAL_W),
+);
+
+macro_rules! define_compare_and_swap_w {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, rs: Register, rt: Register, src: MemOperand) {
+                    debug_assert!(src.is_immediate_offset() && (src.offset() == 0));
+                    let instruction = $op
+                        | Assembler::rs(rs)
+                        | Assembler::rt(rt)
+                        | RT2_MASK
+                        | Assembler::rn_sp(src.base());
+                    self.emit(instruction);
+                }
+            )*
+        }
+    };
+}
+
+define_compare_and_swap_w!(
+    (casb, CASB),
+    (casab, CASAB),
+    (caslb, CASLB),
+    (casalb, CASALB),
+    (cash, CASH),
+    (casah, CASAH),
+    (caslh, CASLH),
+    (casalh, CASALH),
+);
+
+macro_rules! define_compare_and_swap_pair {
+    ($(($name:ident, $op_x:ident, $op_w:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    rs: Register,
+                    rs1: Register,
+                    rt: Register,
+                    rt1: Register,
+                    src: MemOperand,
+                ) {
+                    debug_assert!(src.is_immediate_offset() && (src.offset() == 0));
+                    debug_assert!(Assembler::are_even(rs, rt));
+                    debug_assert!(Assembler::are_consecutive(rs, rs1));
+                    debug_assert!(Assembler::are_consecutive(rt, rt1));
+                    let op = if rt.is_64_bits() { $op_x } else { $op_w };
+                    let instruction = op
+                        | Assembler::rs(rs)
+                        | Assembler::rt(rt)
+                        | RT2_MASK
+                        | Assembler::rn_sp(src.base());
+                    self.emit(instruction);
+                }
+            )*
+        }
+    };
+}
+
+define_compare_and_swap_pair!(
+    (casp, CASP_X, CASP_W),
+    (caspa, CASPA_X, CASPA_W),
+    (caspl, CASPL_X, CASPL_W),
+    (caspal, CASPAL_X, CASPAL_W),
+);
+
+macro_rules! define_atomic_memory_load {
+    ($(($name:ident, $op_x:ident, $op_w:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, rs: Register, rt: Register, src: MemOperand) {
+                    debug_assert!(src.is_immediate_offset() && (src.offset() == 0));
+                    let op = if rt.is_64_bits() { $op_x } else { $op_w };
+                    let instruction = op
+                        | Assembler::rs(rs)
+                        | Assembler::rt(rt)
+                        | Assembler::rn_sp(src.base());
+                    self.emit(instruction);
+                }
+            )*
+        }
+    };
+}
+
+define_atomic_memory_load!(
+    (ldadd, LDADD_X, LDADD_W),
+    (ldaddl, LDADDL_X, LDADDL_W),
+    (ldaddb, LDADDB, LDADDB),
+    (ldaddlb, LDADDLB, LDADDLB),
+    (ldaddh, LDADDH, LDADDH),
+    (ldaddlh, LDADDLH, LDADDLH),
+    (ldadda, LDADDA_X, LDADDA_W),
+    (ldaddal, LDADDAL_X, LDADDAL_W),
+    (ldaddab, LDADDAB, LDADDAB),
+    (ldaddalb, LDADDALB, LDADDALB),
+    (ldaddah, LDADDAH, LDADDAH),
+    (ldaddalh, LDADDALH, LDADDALH),
+    (ldclr, LDCLR_X, LDCLR_W),
+    (ldclrl, LDCLRL_X, LDCLRL_W),
+    (ldclrb, LDCLRB, LDCLRB),
+    (ldclrlb, LDCLRLB, LDCLRLB),
+    (ldclrh, LDCLRH, LDCLRH),
+    (ldclrlh, LDCLRLH, LDCLRLH),
+    (ldclra, LDCLRA_X, LDCLRA_W),
+    (ldclral, LDCLRAL_X, LDCLRAL_W),
+    (ldclrab, LDCLRAB, LDCLRAB),
+    (ldclralb, LDCLRALB, LDCLRALB),
+    (ldclrah, LDCLRAH, LDCLRAH),
+    (ldclralh, LDCLRALH, LDCLRALH),
+    (ldeor, LDEOR_X, LDEOR_W),
+    (ldeorl, LDEORL_X, LDEORL_W),
+    (ldeorb, LDEORB, LDEORB),
+    (ldeorlb, LDEORLB, LDEORLB),
+    (ldeorh, LDEORH, LDEORH),
+    (ldeorlh, LDEORLH, LDEORLH),
+    (ldeora, LDEORA_X, LDEORA_W),
+    (ldeoral, LDEORAL_X, LDEORAL_W),
+    (ldeorab, LDEORAB, LDEORAB),
+    (ldeoralb, LDEORALB, LDEORALB),
+    (ldeorah, LDEORAH, LDEORAH),
+    (ldeoralh, LDEORALH, LDEORALH),
+    (ldset, LDSET_X, LDSET_W),
+    (ldsetl, LDSETL_X, LDSETL_W),
+    (ldsetb, LDSETB, LDSETB),
+    (ldsetlb, LDSETLB, LDSETLB),
+    (ldseth, LDSETH, LDSETH),
+    (ldsetlh, LDSETLH, LDSETLH),
+    (ldseta, LDSETA_X, LDSETA_W),
+    (ldsetal, LDSETAL_X, LDSETAL_W),
+    (ldsetab, LDSETAB, LDSETAB),
+    (ldsetalb, LDSETALB, LDSETALB),
+    (ldsetah, LDSETAH, LDSETAH),
+    (ldsetalh, LDSETALH, LDSETALH),
+    (ldsmax, LDSMAX_X, LDSMAX_W),
+    (ldsmaxl, LDSMAXL_X, LDSMAXL_W),
+    (ldsmaxb, LDSMAXB, LDSMAXB),
+    (ldsmaxlb, LDSMAXLB, LDSMAXLB),
+    (ldsmaxh, LDSMAXH, LDSMAXH),
+    (ldsmaxlh, LDSMAXLH, LDSMAXLH),
+    (ldsmaxa, LDSMAXA_X, LDSMAXA_W),
+    (ldsmaxal, LDSMAXAL_X, LDSMAXAL_W),
+    (ldsmaxab, LDSMAXAB, LDSMAXAB),
+    (ldsmaxalb, LDSMAXALB, LDSMAXALB),
+    (ldsmaxah, LDSMAXAH, LDSMAXAH),
+    (ldsmaxalh, LDSMAXALH, LDSMAXALH),
+    (ldsmin, LDSMIN_X, LDSMIN_W),
+    (ldsminl, LDSMINL_X, LDSMINL_W),
+    (ldsminb, LDSMINB, LDSMINB),
+    (ldsminlb, LDSMINLB, LDSMINLB),
+    (ldsminh, LDSMINH, LDSMINH),
+    (ldsminlh, LDSMINLH, LDSMINLH),
+    (ldsmina, LDSMINA_X, LDSMINA_W),
+    (ldsminal, LDSMINAL_X, LDSMINAL_W),
+    (ldsminab, LDSMINAB, LDSMINAB),
+    (ldsminalb, LDSMINALB, LDSMINALB),
+    (ldsminah, LDSMINAH, LDSMINAH),
+    (ldsminalh, LDSMINALH, LDSMINALH),
+    (ldumax, LDUMAX_X, LDUMAX_W),
+    (ldumaxl, LDUMAXL_X, LDUMAXL_W),
+    (ldumaxb, LDUMAXB, LDUMAXB),
+    (ldumaxlb, LDUMAXLB, LDUMAXLB),
+    (ldumaxh, LDUMAXH, LDUMAXH),
+    (ldumaxlh, LDUMAXLH, LDUMAXLH),
+    (ldumaxa, LDUMAXA_X, LDUMAXA_W),
+    (ldumaxal, LDUMAXAL_X, LDUMAXAL_W),
+    (ldumaxab, LDUMAXAB, LDUMAXAB),
+    (ldumaxalb, LDUMAXALB, LDUMAXALB),
+    (ldumaxah, LDUMAXAH, LDUMAXAH),
+    (ldumaxalh, LDUMAXALH, LDUMAXALH),
+    (ldumin, LDUMIN_X, LDUMIN_W),
+    (lduminl, LDUMINL_X, LDUMINL_W),
+    (lduminb, LDUMINB, LDUMINB),
+    (lduminlb, LDUMINLB, LDUMINLB),
+    (lduminh, LDUMINH, LDUMINH),
+    (lduminlh, LDUMINLH, LDUMINLH),
+    (ldumina, LDUMINA_X, LDUMINA_W),
+    (lduminal, LDUMINAL_X, LDUMINAL_W),
+    (lduminab, LDUMINAB, LDUMINAB),
+    (lduminalb, LDUMINALB, LDUMINALB),
+    (lduminah, LDUMINAH, LDUMINAH),
+    (lduminalh, LDUMINALH, LDUMINALH),
+);
+
+macro_rules! define_atomic_memory_store {
+    ($(($name:ident, $load:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, rs: Register, src: MemOperand) {
+                    let zr = Assembler::appropriate_zero_reg_for(rs);
+                    self.$load(rs, zr, src);
+                }
+            )*
+        }
+    };
+}
+
+define_atomic_memory_store!(
+    (stadd, ldadd),
+    (staddl, ldaddl),
+    (staddb, ldaddb),
+    (staddlb, ldaddlb),
+    (staddh, ldaddh),
+    (staddlh, ldaddlh),
+    (stclr, ldclr),
+    (stclrl, ldclrl),
+    (stclrb, ldclrb),
+    (stclrlb, ldclrlb),
+    (stclrh, ldclrh),
+    (stclrlh, ldclrlh),
+    (steor, ldeor),
+    (steorl, ldeorl),
+    (steorb, ldeorb),
+    (steorlb, ldeorlb),
+    (steorh, ldeorh),
+    (steorlh, ldeorlh),
+    (stset, ldset),
+    (stsetl, ldsetl),
+    (stsetb, ldsetb),
+    (stsetlb, ldsetlb),
+    (stseth, ldseth),
+    (stsetlh, ldsetlh),
+    (stsmax, ldsmax),
+    (stsmaxl, ldsmaxl),
+    (stsmaxb, ldsmaxb),
+    (stsmaxlb, ldsmaxlb),
+    (stsmaxh, ldsmaxh),
+    (stsmaxlh, ldsmaxlh),
+    (stsmin, ldsmin),
+    (stsminl, ldsminl),
+    (stsminb, ldsminb),
+    (stsminlb, ldsminlb),
+    (stsminh, ldsminh),
+    (stsminlh, ldsminlh),
+    (stumax, ldumax),
+    (stumaxl, ldumaxl),
+    (stumaxb, ldumaxb),
+    (stumaxlb, ldumaxlb),
+    (stumaxh, ldumaxh),
+    (stumaxlh, ldumaxlh),
+    (stumin, ldumin),
+    (stuminl, lduminl),
+    (stuminb, lduminb),
+    (stuminlb, lduminlb),
+    (stuminh, lduminh),
+    (stuminlh, lduminlh),
+);
+
+define_atomic_memory_load!(
+    (swp, SWP_X, SWP_W),
+    (swpl, SWPL_X, SWPL_W),
+    (swpb, SWPB, SWPB),
+    (swplb, SWPLB, SWPLB),
+    (swph, SWPH, SWPH),
+    (swplh, SWPLH, SWPLH),
+    (swpa, SWPA_X, SWPA_W),
+    (swpal, SWPAL_X, SWPAL_W),
+    (swpab, SWPAB, SWPAB),
+    (swpalb, SWPALB, SWPALB),
+    (swpah, SWPAH, SWPAH),
+    (swpalh, SWPALH, SWPALH),
+);
+
+macro_rules! define_neon_3_same {
+    ($(($name:ident, $op:ident, $vd:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, vn: VRegister, vm: VRegister) {
+                    debug_assert!($as);
+                    self.neon_3_same($vd, vn, vm, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_3_same!(
+    (addp, NEON_ADDP, vd, vd.is_vector() || vd.is_1d()),
+    (cmeq, NEON_CMEQ, vd, vd.is_vector() || vd.is_1d()),
+    (cmge, NEON_CMGE, vd, vd.is_vector() || vd.is_1d()),
+    (cmgt, NEON_CMGT, vd, vd.is_vector() || vd.is_1d()),
+    (cmhi, NEON_CMHI, vd, vd.is_vector() || vd.is_1d()),
+    (cmhs, NEON_CMHS, vd, vd.is_vector() || vd.is_1d()),
+    (cmtst, NEON_CMTST, vd, vd.is_vector() || vd.is_1d()),
+    (sshl, NEON_SSHL, vd, vd.is_vector() || vd.is_1d()),
+    (ushl, NEON_USHL, vd, vd.is_vector() || vd.is_1d()),
+    (srshl, NEON_SRSHL, vd, vd.is_vector() || vd.is_1d()),
+    (urshl, NEON_URSHL, vd, vd.is_vector() || vd.is_1d()),
+    (sqdmulh, NEON_SQDMULH, vd, vd.is_lane_size_h() || vd.is_lane_size_s()),
+    (sqrdmulh, NEON_SQRDMULH, vd, vd.is_lane_size_h() || vd.is_lane_size_s()),
+    (shadd, NEON_SHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (uhadd, NEON_UHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (srhadd, NEON_SRHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (urhadd, NEON_URHADD, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (shsub, NEON_SHSUB, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (uhsub, NEON_UHSUB, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (smax, NEON_SMAX, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (smaxp, NEON_SMAXP, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (smin, NEON_SMIN, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (sminp, NEON_SMINP, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (umax, NEON_UMAX, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (umaxp, NEON_UMAXP, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (umin, NEON_UMIN, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (uminp, NEON_UMINP, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (saba, NEON_SABA, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (sabd, NEON_SABD, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (uaba, NEON_UABA, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (uabd, NEON_UABD, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (mla, NEON_MLA, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (mls, NEON_MLS, vd, vd.is_vector() && !vd.is_lane_size_d()),
+    (bit, NEON_BIT, vd, vd.is_8b() || vd.is_16b()),
+    (bif, NEON_BIF, vd, vd.is_8b() || vd.is_16b()),
+    (bsl, NEON_BSL, vd, vd.is_8b() || vd.is_16b()),
+    (pmul, NEON_PMUL, vd, vd.is_8b() || vd.is_16b()),
+    (uqadd, NEON_UQADD, vd, true),
+    (sqadd, NEON_SQADD, vd, true),
+    (uqsub, NEON_UQSUB, vd, true),
+    (sqsub, NEON_SQSUB, vd, true),
+    (sqshl, NEON_SQSHL, vd, true),
+    (uqshl, NEON_UQSHL, vd, true),
+    (sqrshl, NEON_SQRSHL, vd, true),
+    (uqrshl, NEON_UQRSHL, vd, true),
 );
