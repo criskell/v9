@@ -1610,6 +1610,7 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    #[allow(dead_code)]
     fn fp_data_processing_2_source(
         &mut self,
         fd: VRegister,
@@ -2651,6 +2652,243 @@ impl Assembler {
         debug_assert!(are_same_format(vd, &[vn]));
         let instruction =
             Assembler::fp_format(vd) | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_xtn(&mut self, vd: VRegister, vn: VRegister, vop: Instr) {
+        let format;
+        let mut op = vop;
+        if vd.is_scalar() {
+            debug_assert!(
+                (vd.is_1b() && vn.is_1h())
+                    || (vd.is_1h() && vn.is_1s())
+                    || (vd.is_1s() && vn.is_1d())
+            );
+            op |= NEON_Q | NEON_SCALAR;
+            format = Assembler::s_format(vd);
+        } else {
+            debug_assert!(
+                (vd.is_8b() && vn.is_8h())
+                    || (vd.is_4h() && vn.is_4s())
+                    || (vd.is_2s() && vn.is_2d())
+                    || (vd.is_16b() && vn.is_8h())
+                    || (vd.is_8h() && vn.is_4s())
+                    || (vd.is_4s() && vn.is_2d())
+            );
+            format = Assembler::v_format(vd);
+        }
+        let instruction = format | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_across_lanes_l(&mut self, vd: VRegister, vn: VRegister, op: Instr) {
+        debug_assert!(
+            (vn.is_8b() && vd.is_1h())
+                || (vn.is_16b() && vd.is_1h())
+                || (vn.is_4h() && vd.is_1s())
+                || (vn.is_8h() && vd.is_1s())
+                || (vn.is_4s() && vd.is_1d())
+        );
+        let instruction =
+            Assembler::v_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_table(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, op: Instr) {
+        debug_assert!(vd.is_16b() || vd.is_8b());
+        debug_assert!(vn.is_16b());
+        debug_assert!(are_same_format(vd, &[vm]));
+        let instruction = op
+            | (if vd.is_q() { NEON_Q } else { 0 })
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn tbl(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+        self.neon_table(vd, vn, vm, NEON_TBL_1V);
+    }
+
+    pub fn tbx(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+        self.neon_table(vd, vn, vm, NEON_TBX_1V);
+    }
+
+    pub fn shll(&mut self, vd: VRegister, vn: VRegister, shift: i32) {
+        debug_assert!(
+            (vd.is_8h() && vn.is_8b() && shift == 8)
+                || (vd.is_4s() && vn.is_4h() && shift == 16)
+                || (vd.is_2d() && vn.is_2s() && shift == 32)
+        );
+        let instruction =
+            Assembler::v_format(vn) | NEON_SHLL | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn shll2(&mut self, vd: VRegister, vn: VRegister, shift: i32) {
+        debug_assert!(
+            (vd.is_8h() && vn.is_16b() && shift == 8)
+                || (vd.is_4s() && vn.is_8h() && shift == 16)
+                || (vd.is_2d() && vn.is_4s() && shift == 32)
+        );
+        let instruction =
+            Assembler::v_format(vn) | NEON_SHLL | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn sxtl(&mut self, vd: VRegister, vn: VRegister) {
+        self.sshll(vd, vn, 0);
+    }
+
+    pub fn sxtl2(&mut self, vd: VRegister, vn: VRegister) {
+        self.sshll2(vd, vn, 0);
+    }
+
+    pub fn uxtl(&mut self, vd: VRegister, vn: VRegister) {
+        self.ushll(vd, vn, 0);
+    }
+
+    pub fn uxtl2(&mut self, vd: VRegister, vn: VRegister) {
+        self.ushll2(vd, vn, 0);
+    }
+
+    pub fn fcvtl(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!((vd.is_4s() && vn.is_4h()) || (vd.is_2d() && vn.is_2s()));
+        let format = if vd.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let instruction = format | NEON_FCVTL | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn fcvtl2(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!((vd.is_4s() && vn.is_8h()) || (vd.is_2d() && vn.is_4s()));
+        let format = if vd.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let instruction =
+            NEON_Q | format | NEON_FCVTL | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn fcvtn(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!((vn.is_4s() && vd.is_4h()) || (vn.is_2d() && vd.is_2s()));
+        let format = if vn.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let instruction = format | NEON_FCVTN | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn fcvtn2(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!((vn.is_4s() && vd.is_8h()) || (vn.is_2d() && vd.is_4s()));
+        let format = if vn.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let instruction =
+            NEON_Q | format | NEON_FCVTN | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn fcvtxn(&mut self, vd: VRegister, vn: VRegister) {
+        let format = 1 << NEON_SIZE_OFFSET;
+        if vd.is_scalar() {
+            debug_assert!(vd.is_1s() && vn.is_1d());
+            let instruction =
+                format | NEON_FCVTXN_SCALAR | Assembler::rn(vn) | Assembler::rd(vd);
+            self.emit(instruction);
+        } else {
+            debug_assert!(vd.is_2s() && vn.is_2d());
+            let instruction = format | NEON_FCVTXN | Assembler::rn(vn) | Assembler::rd(vd);
+            self.emit(instruction);
+        }
+    }
+
+    pub fn fcvtxn2(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!(vd.is_4s() && vn.is_2d());
+        let format = 1 << NEON_SIZE_OFFSET;
+        let instruction =
+            NEON_Q | format | NEON_FCVTXN | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn not_(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        let instruction =
+            Assembler::v_format(vd) | NEON_RBIT_NOT | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn saddlv(&mut self, vd: VRegister, vn: VRegister) {
+        self.neon_across_lanes_l(vd, vn, NEON_SADDLV);
+    }
+
+    pub fn uaddlv(&mut self, vd: VRegister, vn: VRegister) {
+        self.neon_across_lanes_l(vd, vn, NEON_UADDLV);
+    }
+
+    pub fn urecpe(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        debug_assert!(vd.is_2s() || vd.is_4s());
+        let instruction =
+            Assembler::v_format(vn) | NEON_URECPE | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn ursqrte(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        debug_assert!(vd.is_2s() || vd.is_4s());
+        let instruction =
+            Assembler::v_format(vn) | NEON_URSQRTE | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn frecpx(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert!(vd.is_scalar());
+        debug_assert!(are_same_format(vd, &[vn]));
+        debug_assert!(vd.is_1s() || vd.is_1d());
+        let instruction = Assembler::fp_format(vd)
+            | NEON_FRECPX_SCALAR
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn pmull(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(are_same_format(vn, &[vm]));
+        debug_assert!((vn.is_8b() && vd.is_8h()) || (vn.is_1d() && vd.is_1q()));
+        let instruction = Assembler::v_format(vn)
+            | NEON_PMULL
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn pmull2(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(are_same_format(vn, &[vm]));
+        debug_assert!((vn.is_16b() && vd.is_8h()) || (vn.is_2d() && vd.is_1q()));
+        let instruction = Assembler::v_format(vn)
+            | NEON_PMULL2
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn fcsel(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, cond: Condition) {
+        debug_assert_eq!(fd.size_in_bits(), fn_.size_in_bits());
+        debug_assert_eq!(fd.size_in_bits(), fm.size_in_bits());
+        let instruction = Assembler::fp_type(fd)
+            | FCSEL
+            | Assembler::rm(fm)
+            | Assembler::cond(cond)
+            | Assembler::rn(fn_)
+            | Assembler::rd(fd);
+        self.emit(instruction);
+    }
+
+    pub fn fccmp(&mut self, fn_: VRegister, fm: VRegister, nzcv: u32, cond: Condition) {
+        debug_assert_eq!(fn_.size_in_bits(), fm.size_in_bits());
+        let instruction = Assembler::fp_type(fn_)
+            | FCCMP
+            | Assembler::rm(fm)
+            | Assembler::cond(cond)
+            | Assembler::rn(fn_)
+            | Assembler::nzcv(nzcv);
         self.emit(instruction);
     }
 
@@ -4051,3 +4289,27 @@ impl Assembler {
         self.neon_fp_3_same(vd, vn, vm, op);
     }
 }
+
+macro_rules! define_neon_xtn {
+    ($(($name:ident, $op:ident, $vd:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, vn: VRegister) {
+                    debug_assert!($as);
+                    self.neon_xtn($vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_xtn!(
+    (xtn, NEON_XTN, vd, vd.is_vector() && vd.is_d()),
+    (xtn2, NEON_XTN, vd, vd.is_vector() && vd.is_q()),
+    (sqxtn, NEON_SQXTN, vd, vd.is_scalar() || vd.is_d()),
+    (sqxtn2, NEON_SQXTN, vd, vd.is_vector() && vd.is_q()),
+    (uqxtn, NEON_UQXTN, vd, vd.is_scalar() || vd.is_d()),
+    (uqxtn2, NEON_UQXTN, vd, vd.is_vector() && vd.is_q()),
+    (sqxtun, NEON_SQXTUN, vd, vd.is_scalar() || vd.is_d()),
+    (sqxtun2, NEON_SQXTUN, vd, vd.is_vector() && vd.is_q()),
+);
