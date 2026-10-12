@@ -2496,6 +2496,126 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    fn neon_shift_immediate(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        op: Instr,
+        immh_immb: i32,
+    ) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        let q;
+        let scalar;
+        if vn.is_scalar() {
+            q = NEON_Q;
+            scalar = NEON_SCALAR;
+        } else {
+            q = if vd.is_d() { 0 } else { NEON_Q };
+            scalar = 0;
+        }
+        let instruction = q
+            | op
+            | scalar
+            | (immh_immb as Instr)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_shift_left_immediate(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        shift: i32,
+        op: Instr,
+    ) {
+        let lane_size_in_bits = vn.lane_size_in_bits() as i32;
+        debug_assert!((shift >= 0) && (shift < lane_size_in_bits));
+        self.neon_shift_immediate(vd, vn, op, (lane_size_in_bits + shift) << 16);
+    }
+
+    fn neon_shift_right_immediate(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        shift: i32,
+        op: Instr,
+    ) {
+        let lane_size_in_bits = vn.lane_size_in_bits() as i32;
+        debug_assert!((shift >= 1) && (shift <= lane_size_in_bits));
+        self.neon_shift_immediate(vd, vn, op, ((2 * lane_size_in_bits) - shift) << 16);
+    }
+
+    fn neon_shift_immediate_l(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        shift: i32,
+        op: Instr,
+    ) {
+        let lane_size_in_bits = vn.lane_size_in_bits() as i32;
+        debug_assert!((shift >= 0) && (shift < lane_size_in_bits));
+        let immh_immb = (lane_size_in_bits + shift) << 16;
+
+        debug_assert!(
+            (vn.is_8b() && vd.is_8h())
+                || (vn.is_4h() && vd.is_4s())
+                || (vn.is_2s() && vd.is_2d())
+                || (vn.is_16b() && vd.is_8h())
+                || (vn.is_8h() && vd.is_4s())
+                || (vn.is_4s() && vd.is_2d())
+        );
+        let q = if vn.is_d() { 0 } else { NEON_Q };
+        let instruction = q
+            | op
+            | (immh_immb as Instr)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_shift_immediate_n(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        shift: i32,
+        op: Instr,
+    ) {
+        let q;
+        let scalar;
+        let lane_size_in_bits = vd.lane_size_in_bits() as i32;
+        debug_assert!((shift >= 1) && (shift <= lane_size_in_bits));
+        let immh_immb = (2 * lane_size_in_bits - shift) << 16;
+
+        if vn.is_scalar() {
+            debug_assert!(
+                (vd.is_1b() && vn.is_1h())
+                    || (vd.is_1h() && vn.is_1s())
+                    || (vd.is_1s() && vn.is_1d())
+            );
+            q = NEON_Q;
+            scalar = NEON_SCALAR;
+        } else {
+            debug_assert!(
+                (vd.is_8b() && vn.is_8h())
+                    || (vd.is_4h() && vn.is_4s())
+                    || (vd.is_2s() && vn.is_2d())
+                    || (vd.is_16b() && vn.is_8h())
+                    || (vd.is_8h() && vn.is_4s())
+                    || (vd.is_4s() && vn.is_2d())
+            );
+            scalar = 0;
+            q = if vd.is_d() { 0 } else { NEON_Q };
+        }
+        let instruction = q
+            | op
+            | scalar
+            | (immh_immb as Instr)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         debug_assert!(vd.is_vector() || !vd.is_q());
@@ -3157,8 +3277,6 @@ define_neon_3_same!(
     (sqadd, NEON_SQADD, vd, true),
     (uqsub, NEON_UQSUB, vd, true),
     (sqsub, NEON_SQSUB, vd, true),
-    (sqshl, NEON_SQSHL, vd, true),
-    (uqshl, NEON_UQSHL, vd, true),
     (sqrshl, NEON_SQRSHL, vd, true),
     (uqrshl, NEON_UQRSHL, vd, true),
 );
@@ -3666,3 +3784,134 @@ define_neon_fp_by_element!(
     (fmls, NEON_FMLS_BYELEMENT),
     (fmulx, NEON_FMULX_BYELEMENT),
 );
+
+macro_rules! define_neon_shift_left {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, $vn: VRegister, shift: i32) {
+                    debug_assert!($as);
+                    self.neon_shift_left_immediate($vd, $vn, shift, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_shift_left!(
+    (shl, NEON_SHL, vd, vn, vd.is_vector() || vd.is_1d()),
+    (sli, NEON_SLI, vd, vn, vd.is_vector() || vd.is_1d()),
+    (sqshlu, NEON_SQSHLU, vd, vn, true),
+);
+
+macro_rules! define_neon_shift_right {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, $vn: VRegister, shift: i32) {
+                    debug_assert!($as);
+                    self.neon_shift_right_immediate($vd, $vn, shift, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_shift_right!(
+    (sri, NEON_SRI, vd, vn, vd.is_vector() || vd.is_1d()),
+    (sshr, NEON_SSHR, vd, vn, vd.is_vector() || vd.is_1d()),
+    (ushr, NEON_USHR, vd, vn, vd.is_vector() || vd.is_1d()),
+    (srshr, NEON_SRSHR, vd, vn, vd.is_vector() || vd.is_1d()),
+    (urshr, NEON_URSHR, vd, vn, vd.is_vector() || vd.is_1d()),
+    (ssra, NEON_SSRA, vd, vn, vd.is_vector() || vd.is_1d()),
+    (usra, NEON_USRA, vd, vn, vd.is_vector() || vd.is_1d()),
+    (srsra, NEON_SRSRA, vd, vn, vd.is_vector() || vd.is_1d()),
+    (ursra, NEON_URSRA, vd, vn, vd.is_vector() || vd.is_1d()),
+);
+
+macro_rules! define_neon_shift_l {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, $vn: VRegister, shift: i32) {
+                    debug_assert!($as);
+                    self.neon_shift_immediate_l($vd, $vn, shift, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_shift_l!(
+    (sshll, NEON_SSHLL, vd, vn, vn.is_d()),
+    (sshll2, NEON_SSHLL, vd, vn, vn.is_q()),
+    (ushll, NEON_USHLL, vd, vn, vn.is_d()),
+    (ushll2, NEON_USHLL, vd, vn, vn.is_q()),
+);
+
+macro_rules! define_neon_shift_n {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, $vn: VRegister, shift: i32) {
+                    debug_assert!($as);
+                    self.neon_shift_immediate_n($vd, $vn, shift, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_shift_n!(
+    (shrn, NEON_SHRN, vd, vn, vn.is_vector() && vd.is_d()),
+    (shrn2, NEON_SHRN, vd, vn, vn.is_vector() && vd.is_q()),
+    (rshrn, NEON_RSHRN, vd, vn, vn.is_vector() && vd.is_d()),
+    (rshrn2, NEON_RSHRN, vd, vn, vn.is_vector() && vd.is_q()),
+    (sqshrn, NEON_SQSHRN, vd, vn, vd.is_d() || (vn.is_scalar() && vd.is_scalar())),
+    (sqshrn2, NEON_SQSHRN, vd, vn, vn.is_vector() && vd.is_q()),
+    (sqrshrn, NEON_SQRSHRN, vd, vn, vd.is_d() || (vn.is_scalar() && vd.is_scalar())),
+    (sqrshrn2, NEON_SQRSHRN, vd, vn, vn.is_vector() && vd.is_q()),
+    (sqshrun, NEON_SQSHRUN, vd, vn, vd.is_d() || (vn.is_scalar() && vd.is_scalar())),
+    (sqshrun2, NEON_SQSHRUN, vd, vn, vn.is_vector() && vd.is_q()),
+    (sqrshrun, NEON_SQRSHRUN, vd, vn, vd.is_d() || (vn.is_scalar() && vd.is_scalar())),
+    (sqrshrun2, NEON_SQRSHRUN, vd, vn, vn.is_vector() && vd.is_q()),
+    (uqshrn, NEON_UQSHRN, vd, vn, vd.is_d() || (vn.is_scalar() && vd.is_scalar())),
+    (uqshrn2, NEON_UQSHRN, vd, vn, vn.is_vector() && vd.is_q()),
+    (uqrshrn, NEON_UQRSHRN, vd, vn, vd.is_d() || (vn.is_scalar() && vd.is_scalar())),
+    (uqrshrn2, NEON_UQRSHRN, vd, vn, vn.is_vector() && vd.is_q()),
+);
+
+pub trait NeonShift: Copy {
+    fn sqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: Self);
+    fn uqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, operand: Self);
+}
+
+impl NeonShift for VRegister {
+    fn sqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        asm.neon_3_same(vd, vn, vm, NEON_SQSHL);
+    }
+
+    fn uqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        asm.neon_3_same(vd, vn, vm, NEON_UQSHL);
+    }
+}
+
+impl NeonShift for i32 {
+    fn sqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, shift: i32) {
+        asm.neon_shift_left_immediate(vd, vn, shift, NEON_SQSHL_IMM);
+    }
+
+    fn uqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, shift: i32) {
+        asm.neon_shift_left_immediate(vd, vn, shift, NEON_UQSHL_IMM);
+    }
+}
+
+impl Assembler {
+    pub fn sqshl<T: NeonShift>(&mut self, vd: VRegister, vn: VRegister, operand: T) {
+        T::sqshl(self, vd, vn, operand);
+    }
+
+    pub fn uqshl<T: NeonShift>(&mut self, vd: VRegister, vn: VRegister, operand: T) {
+        T::uqshl(self, vd, vn, operand);
+    }
+}
