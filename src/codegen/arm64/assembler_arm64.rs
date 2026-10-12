@@ -2232,6 +2232,135 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    fn imm_barrier_domain(imm2: u32) -> Instr {
+        debug_assert!(is_uint2(imm2 as i64));
+        imm2 << IMM_BARRIER_DOMAIN_OFFSET
+    }
+
+    fn imm_barrier_type(imm2: u32) -> Instr {
+        debug_assert!(is_uint2(imm2 as i64));
+        imm2 << IMM_BARRIER_TYPE_OFFSET
+    }
+
+    fn imm_system_register(imm15: u32) -> Instr {
+        debug_assert!(crate::utils::utils::is_uintn(imm15 as i64, 15));
+        imm15 << IMM_SYSTEM_REGISTER_OFFSET
+    }
+
+    pub fn dmb(&mut self, domain: BarrierDomain, barrier_type: BarrierType) {
+        let instruction = DMB
+            | Assembler::imm_barrier_domain(domain as u32)
+            | Assembler::imm_barrier_type(barrier_type as u32);
+        self.emit(instruction);
+    }
+
+    pub fn dsb(&mut self, domain: BarrierDomain, barrier_type: BarrierType) {
+        let instruction = DSB
+            | Assembler::imm_barrier_domain(domain as u32)
+            | Assembler::imm_barrier_type(barrier_type as u32);
+        self.emit(instruction);
+    }
+
+    pub fn isb(&mut self) {
+        let instruction = ISB
+            | Assembler::imm_barrier_domain(BarrierDomain::FullSystem as u32)
+            | Assembler::imm_barrier_type(BarrierType::BarrierAll as u32);
+        self.emit(instruction);
+    }
+
+    pub fn csdb(&mut self) {
+        self.hint(SystemHint::Csdb);
+    }
+
+    pub fn mrs(&mut self, rt: Register, sysreg: SystemRegister) {
+        debug_assert!(rt.is_64_bits());
+        let instruction =
+            MRS | Assembler::imm_system_register(sysreg as u32) | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn msr(&mut self, sysreg: SystemRegister, rt: Register) {
+        debug_assert!(rt.is_64_bits());
+        let instruction =
+            MSR | Assembler::rt(rt) | Assembler::imm_system_register(sysreg as u32);
+        self.emit(instruction);
+    }
+
+    pub fn pacib1716(&mut self) {
+        self.emit(PACIB1716);
+    }
+
+    pub fn autib1716(&mut self) {
+        self.emit(AUTIB1716);
+    }
+
+    pub fn pacibsp(&mut self) {
+        self.emit(PACIBSP);
+    }
+
+    pub fn autibsp(&mut self) {
+        self.emit(AUTIBSP);
+    }
+
+    pub fn bti(&mut self, id: BranchTargetIdentifier) {
+        let op = match id {
+            BranchTargetIdentifier::Bti => SystemHint::Bti,
+            BranchTargetIdentifier::BtiCall => SystemHint::BtiC,
+            BranchTargetIdentifier::BtiJump => SystemHint::BtiJ,
+            BranchTargetIdentifier::BtiJumpCall => SystemHint::BtiJc,
+            BranchTargetIdentifier::Pacibsp | BranchTargetIdentifier::None => unreachable!(),
+        };
+        self.hint(op);
+    }
+
+    fn neon_2_reg_misc(&mut self, vd: VRegister, vn: VRegister, vop: Instr) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        let format;
+        let mut op = vop;
+        if vd.is_scalar() {
+            op |= NEON_Q | NEON_SCALAR;
+            format = Assembler::s_format(vd);
+        } else {
+            format = Assembler::v_format(vd);
+        }
+        let instruction = format | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_across_lanes(&mut self, vd: VRegister, vn: VRegister, op: Instr) {
+        debug_assert!(
+            (vn.is_8b() && vd.is_1h())
+                || (vn.is_16b() && vd.is_1h())
+                || (vn.is_4h() && vd.is_1s())
+                || (vn.is_8h() && vd.is_1s())
+                || (vn.is_4s() && vd.is_1d())
+                || (vn.is_4s() && vd.is_1s())
+        );
+        let instruction = if op & NEON_ACROSS_LANES_FP_FIXED == NEON_ACROSS_LANES_FP_FIXED {
+            Assembler::fp_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd)
+        } else {
+            Assembler::v_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd)
+        };
+        self.emit(instruction);
+    }
+
+    fn fp_format(vd: VRegister) -> Instr {
+        if vd.lane_count() == 1 {
+            debug_assert!(vd.is_32_bits() || vd.is_64_bits());
+            return if vd.is_64_bits() { FP64 } else { FP32 };
+        }
+        if vd.lane_count() == 2 {
+            debug_assert!(vd.is_64_bits() || vd.is_128_bits());
+            return if vd.is_128_bits() { NEON_FP_2D } else { NEON_FP_2S };
+        }
+        if vd.lane_count() == 4 {
+            debug_assert!(vd.is_64_bits() || vd.is_128_bits());
+            return if vd.is_128_bits() { NEON_FP_4S } else { NEON_FP_4H };
+        }
+        debug_assert!((vd.lane_count() == 8) && vd.is_128_bits());
+        NEON_FP_8H
+    }
+
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         debug_assert!(vd.is_vector() || !vd.is_q());
@@ -3197,4 +3326,56 @@ define_neon_perm!(
     (uzp2, NEON_UZP2),
     (zip1, NEON_ZIP1),
     (zip2, NEON_ZIP2),
+);
+
+macro_rules! define_neon_across_lanes {
+    ($(($name:ident, $op:ident, $vd:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, vn: VRegister) {
+                    debug_assert!($as);
+                    self.neon_across_lanes($vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_across_lanes!(
+    (fmaxv, NEON_FMAXV, vd, vd.is_1s()),
+    (fminv, NEON_FMINV, vd, vd.is_1s()),
+    (fmaxnmv, NEON_FMAXNMV, vd, vd.is_1s()),
+    (fminnmv, NEON_FMINNMV, vd, vd.is_1s()),
+    (addv, NEON_ADDV, vd, true),
+    (smaxv, NEON_SMAXV, vd, true),
+    (sminv, NEON_SMINV, vd, true),
+    (umaxv, NEON_UMAXV, vd, true),
+    (uminv, NEON_UMINV, vd, true),
+);
+
+macro_rules! define_neon_2_reg_misc {
+    ($(($name:ident, $op:ident, $vd:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, $vd: VRegister, vn: VRegister) {
+                    debug_assert!($as);
+                    self.neon_2_reg_misc($vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_2_reg_misc!(
+    (suqadd, NEON_SUQADD, vd, true),
+    (usqadd, NEON_USQADD, vd, true),
+    (abs, NEON_ABS, vd, vd.is_vector() || vd.is_1d()),
+    (sqabs, NEON_SQABS, vd, true),
+    (sqneg, NEON_SQNEG, vd, true),
+    (rev64, NEON_REV64, vd, !vd.is_1d()),
+    (saddlp, NEON_SADDLP, vd, true),
+    (uaddlp, NEON_UADDLP, vd, true),
+    (sadalp, NEON_SADALP, vd, true),
+    (uadalp, NEON_UADALP, vd, true),
+    (cnt, NEON_CNT, vd, vd.is_8b() || vd.is_16b()),
 );

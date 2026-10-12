@@ -148,6 +148,9 @@ pub enum SystemHint {
     Sevl = 5,
     Csdb = 20,
     Bti = 32,
+    BtiC = 34,
+    BtiJ = 36,
+    BtiJc = 38,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1079,3 +1082,124 @@ pub const NEON_ZIP1: Instr = NEON_PERM_FIXED | 0x00003000;
 pub const NEON_UZP2: Instr = NEON_PERM_FIXED | 0x00005000;
 pub const NEON_TRN2: Instr = NEON_PERM_FIXED | 0x00006000;
 pub const NEON_ZIP2: Instr = NEON_PERM_FIXED | 0x00007000;
+
+pub const NEON_2_REG_MISC_FIXED: Instr = 0x0E200800;
+pub const NEON_2_REG_MISC_F_MASK: Instr = 0x9F3E0C00;
+pub const NEON_2_REG_MISC_MASK: Instr = 0xBF3FFC00;
+pub const NEON_2_REG_MISC_U_BIT: Instr = 0x20000000;
+pub const NEON_REV64: Instr = NEON_2_REG_MISC_FIXED | 0x00000000;
+pub const NEON_REV32: Instr = NEON_2_REG_MISC_FIXED | 0x20000000;
+pub const NEON_REV16: Instr = NEON_2_REG_MISC_FIXED | 0x00001000;
+pub const NEON_SADDLP: Instr = NEON_2_REG_MISC_FIXED | 0x00002000;
+pub const NEON_UADDLP: Instr = NEON_SADDLP | NEON_2_REG_MISC_U_BIT;
+pub const NEON_SUQADD: Instr = NEON_2_REG_MISC_FIXED | 0x00003000;
+pub const NEON_USQADD: Instr = NEON_SUQADD | NEON_2_REG_MISC_U_BIT;
+pub const NEON_CLS: Instr = NEON_2_REG_MISC_FIXED | 0x00004000;
+pub const NEON_CLZ: Instr = NEON_2_REG_MISC_FIXED | 0x20004000;
+pub const NEON_CNT: Instr = NEON_2_REG_MISC_FIXED | 0x00005000;
+pub const NEON_RBIT_NOT: Instr = NEON_2_REG_MISC_FIXED | 0x20005000;
+pub const NEON_SADALP: Instr = NEON_2_REG_MISC_FIXED | 0x00006000;
+pub const NEON_UADALP: Instr = NEON_SADALP | NEON_2_REG_MISC_U_BIT;
+pub const NEON_SQABS: Instr = NEON_2_REG_MISC_FIXED | 0x00007000;
+pub const NEON_SQNEG: Instr = NEON_2_REG_MISC_FIXED | 0x20007000;
+pub const NEON_CMGT_ZERO: Instr = NEON_2_REG_MISC_FIXED | 0x00008000;
+pub const NEON_CMGE_ZERO: Instr = NEON_2_REG_MISC_FIXED | 0x20008000;
+pub const NEON_CMEQ_ZERO: Instr = NEON_2_REG_MISC_FIXED | 0x00009000;
+pub const NEON_CMLE_ZERO: Instr = NEON_2_REG_MISC_FIXED | 0x20009000;
+pub const NEON_CMLT_ZERO: Instr = NEON_2_REG_MISC_FIXED | 0x0000A000;
+pub const NEON_ABS: Instr = NEON_2_REG_MISC_FIXED | 0x0000B000;
+pub const NEON_NEG: Instr = NEON_2_REG_MISC_FIXED | 0x2000B000;
+pub const NEON_XTN: Instr = NEON_2_REG_MISC_FIXED | 0x00012000;
+pub const NEON_SQXTUN: Instr = NEON_2_REG_MISC_FIXED | 0x20012000;
+pub const NEON_SHLL: Instr = NEON_2_REG_MISC_FIXED | 0x20013000;
+pub const NEON_SQXTN: Instr = NEON_2_REG_MISC_FIXED | 0x00014000;
+pub const NEON_UQXTN: Instr = NEON_SQXTN | NEON_2_REG_MISC_U_BIT;
+
+pub const NEON_ACROSS_LANES_FIXED: Instr = 0x0E300800;
+pub const NEON_ACROSS_LANES_F_MASK: Instr = 0x9F3E0C00;
+pub const NEON_ACROSS_LANES_MASK: Instr = 0xBF3FFC00;
+pub const NEON_ADDV: Instr = NEON_ACROSS_LANES_FIXED | 0x0001B000;
+pub const NEON_SADDLV: Instr = NEON_ACROSS_LANES_FIXED | 0x00003000;
+pub const NEON_UADDLV: Instr = NEON_ACROSS_LANES_FIXED | 0x20003000;
+pub const NEON_SMAXV: Instr = NEON_ACROSS_LANES_FIXED | 0x0000A000;
+pub const NEON_SMINV: Instr = NEON_ACROSS_LANES_FIXED | 0x0001A000;
+pub const NEON_UMAXV: Instr = NEON_ACROSS_LANES_FIXED | 0x2000A000;
+pub const NEON_UMINV: Instr = NEON_ACROSS_LANES_FIXED | 0x2001A000;
+pub const NEON_ACROSS_LANES_FP_FIXED: Instr = NEON_ACROSS_LANES_FIXED | 0x0000C000;
+pub const NEON_FMAXV: Instr = NEON_ACROSS_LANES_FP_FIXED | 0x2000F000;
+pub const NEON_FMINV: Instr = NEON_ACROSS_LANES_FP_FIXED | 0x2080F000;
+pub const NEON_FMAXNMV: Instr = NEON_ACROSS_LANES_FP_FIXED | 0x2000C000;
+pub const NEON_FMINNMV: Instr = NEON_ACROSS_LANES_FP_FIXED | 0x2080C000;
+
+pub const SYSTEM_SYS_REG_FIXED: Instr = 0xD5100000;
+pub const MRS: Instr = SYSTEM_SYS_REG_FIXED | 0x00200000;
+pub const MSR: Instr = SYSTEM_SYS_REG_FIXED | 0x00000000;
+
+pub const MEM_BARRIER_FIXED: Instr = 0xD503309F;
+pub const MEM_BARRIER_F_MASK: Instr = 0xFFFFF09F;
+pub const MEM_BARRIER_MASK: Instr = 0xFFFFF0FF;
+pub const DSB: Instr = MEM_BARRIER_FIXED | 0x00000000;
+pub const DMB: Instr = MEM_BARRIER_FIXED | 0x00000020;
+pub const ISB: Instr = MEM_BARRIER_FIXED | 0x00000040;
+
+pub const SYSTEM_PAUTH_FIXED: Instr = 0xD503211F;
+pub const PACIB1716: Instr = SYSTEM_PAUTH_FIXED | 0x00000140;
+pub const AUTIB1716: Instr = SYSTEM_PAUTH_FIXED | 0x000001C0;
+pub const PACIBSP: Instr = SYSTEM_PAUTH_FIXED | 0x00000360;
+pub const AUTIBSP: Instr = SYSTEM_PAUTH_FIXED | 0x000003E0;
+
+pub const IMM_BARRIER_DOMAIN_OFFSET: u32 = 10;
+pub const IMM_BARRIER_TYPE_OFFSET: u32 = 8;
+pub const IMM_SYSTEM_REGISTER_OFFSET: u32 = 5;
+
+pub const BTI_C: Instr = 34;
+pub const BTI_J: Instr = 36;
+pub const BTI_JC: Instr = 38;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum BarrierDomain {
+    OuterShareable = 0,
+    NonShareable = 1,
+    InnerShareable = 2,
+    FullSystem = 3,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum BarrierType {
+    BarrierOther = 0,
+    BarrierReads = 1,
+    BarrierWrites = 2,
+    BarrierAll = 3,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum BranchTargetIdentifier {
+    Bti,
+    BtiCall,
+    BtiJump,
+    BtiJumpCall,
+    None,
+    Pacibsp,
+}
+
+pub const SYS_O0_OFFSET: u32 = 19;
+pub const SYS_OP1_OFFSET: u32 = 16;
+pub const SYS_OP2_OFFSET: u32 = 5;
+pub const CRN_OFFSET: u32 = 12;
+pub const CRM_OFFSET: u32 = 8;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SystemRegister {
+    NZCV = (((0x1 << SYS_O0_OFFSET)
+        | (0x3 << SYS_OP1_OFFSET)
+        | (0x4 << CRN_OFFSET)
+        | (0x2 << CRM_OFFSET)
+        | (0x0 << SYS_OP2_OFFSET))
+        >> IMM_SYSTEM_REGISTER_OFFSET) as isize,
+    FPCR = (((0x1 << SYS_O0_OFFSET)
+        | (0x3 << SYS_OP1_OFFSET)
+        | (0x4 << CRN_OFFSET)
+        | (0x4 << CRM_OFFSET)
+        | (0x0 << SYS_OP2_OFFSET))
+        >> IMM_SYSTEM_REGISTER_OFFSET) as isize,
+}
