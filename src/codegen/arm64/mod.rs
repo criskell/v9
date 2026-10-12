@@ -4,3 +4,4 @@ pub mod instructions_arm64;
 pub mod register_arm64;
 pub mod utils_arm64;
 pub mod constant_pool_arm64;
+pub mod decoder_arm64;

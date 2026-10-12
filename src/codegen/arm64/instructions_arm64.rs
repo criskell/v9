@@ -1,8 +1,60 @@
 use crate::codegen::arm64::constants_arm64::*;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Reg31Mode {
+    Reg31IsStackPointer,
+    Reg31IsZeroRegister,
+}
+
 #[inline]
 pub fn signed_bitextract_32(msb: u32, lsb: u32, x: u32) -> i32 {
     ((x as i32) << (31 - msb)) >> (lsb + 31 - msb)
+}
+
+#[inline]
+pub fn unsigned_bitextract_32(msb: u32, lsb: u32, x: u32) -> u32 {
+    (x >> lsb) & ((1 << (msb - lsb + 1)) - 1)
+}
+
+#[inline]
+pub fn rotate_right(value: u64, rotate: u32, width: u32) -> u64 {
+    debug_assert!(width <= 64);
+    let rotate = rotate & 63;
+    (value & ((1u128 << width) - 1) as u64)
+        .wrapping_shr(rotate)
+        | ((value.wrapping_shl(width - rotate)) & ((1u128 << width) - 1) as u64)
+}
+
+#[inline]
+pub fn repeat_bits_across_reg(reg_size: u32, value: u64, width: u32) -> u64 {
+    debug_assert!(width == 2 || width == 4 || width == 8 || width == 16 || width == 32);
+    debug_assert!(reg_size == 32 || reg_size == 64);
+    let mut result = value & ((1u128 << width) - 1) as u64;
+    let mut i = width;
+    while i < reg_size {
+        result |= result << i;
+        i *= 2;
+    }
+    result
+}
+
+pub fn calc_ls_data_size_log2(op: Instr) -> u32 {
+    let mut size_log2 = op >> LS_SIZE_OFFSET;
+    if (op & LS_VECTOR_MASK) != 0
+        && size_log2 == 0
+        && ((op & LS_OPC_MASK) >> LS_OPC_OFFSET) >= 2
+    {
+        size_log2 = K_Q_REG_SIZE_LOG2 as u32;
+    }
+    size_log2
+}
+
+pub fn calc_ls_pair_data_size(op: Instr) -> u32 {
+    match op {
+        STP_Q | LDP_Q => K_Q_REG_SIZE_LOG2 as u32,
+        STP_X | LDP_X | STP_D | LDP_D => K_X_REG_SIZE_LOG2 as u32,
+        _ => K_W_REG_SIZE_LOG2 as u32,
+    }
 }
 
 pub fn imm_pc_rel_address(imm21: i32) -> Instr {
@@ -77,6 +129,295 @@ impl Instruction {
             | (self.imm_pc_rel_lo() as u32);
         let width = IMM_PC_REL_LO_WIDTH + IMM_PC_REL_HI_WIDTH;
         signed_bitextract_32(width - 1, 0, offset)
+    }
+
+    #[inline]
+    pub fn bits(self, msb: u32, lsb: u32) -> u32 {
+        unsigned_bitextract_32(msb, lsb, self.0)
+    }
+
+    #[inline]
+    pub fn bit(self, pos: u32) -> u32 {
+        (self.0 >> pos) & 1
+    }
+
+    #[inline]
+    pub fn rd(self) -> u32 {
+        self.bits(4, 0)
+    }
+
+    #[inline]
+    pub fn rn(self) -> u32 {
+        self.bits(9, 5)
+    }
+
+    #[inline]
+    pub fn rm(self) -> u32 {
+        self.bits(20, 16)
+    }
+
+    #[inline]
+    pub fn ra(self) -> u32 {
+        self.bits(14, 10)
+    }
+
+    #[inline]
+    pub fn rt(self) -> u32 {
+        self.bits(4, 0)
+    }
+
+    #[inline]
+    pub fn rt2(self) -> u32 {
+        self.bits(14, 10)
+    }
+
+    #[inline]
+    pub fn sixty_four_bits(self) -> u32 {
+        self.bit(31)
+    }
+
+    #[inline]
+    pub fn flags_update(self) -> u32 {
+        self.bit(29)
+    }
+
+    #[inline]
+    pub fn shift_dp(self) -> u32 {
+        self.bits(23, 22)
+    }
+
+    #[inline]
+    pub fn imm_dp_shift(self) -> u32 {
+        self.bits(15, 10)
+    }
+
+    #[inline]
+    pub fn imm_add_sub(self) -> u32 {
+        self.bits(21, 10)
+    }
+
+    #[inline]
+    pub fn shift_add_sub(self) -> u32 {
+        self.bits(23, 22)
+    }
+
+    #[inline]
+    pub fn extend_mode(self) -> u32 {
+        self.bits(15, 13)
+    }
+
+    #[inline]
+    pub fn imm_extend_shift(self) -> u32 {
+        self.bits(12, 10)
+    }
+
+    #[inline]
+    pub fn imm_move_wide(self) -> u32 {
+        self.bits(20, 5)
+    }
+
+    #[inline]
+    pub fn shift_move_wide(self) -> u32 {
+        self.bits(22, 21)
+    }
+
+    #[inline]
+    pub fn condition(self) -> u32 {
+        self.bits(15, 12)
+    }
+
+    #[inline]
+    pub fn condition_branch(self) -> u32 {
+        self.bits(3, 0)
+    }
+
+    #[inline]
+    pub fn nzcv(self) -> u32 {
+        self.bits(3, 0)
+    }
+
+    #[inline]
+    pub fn imm_cond_cmp(self) -> u32 {
+        self.bits(20, 16)
+    }
+
+    #[inline]
+    pub fn bit_n(self) -> u32 {
+        self.bit(22)
+    }
+
+    #[inline]
+    pub fn imm_rotate(self) -> u32 {
+        self.bits(21, 16)
+    }
+
+    #[inline]
+    pub fn imm_set_bits(self) -> u32 {
+        self.bits(15, 10)
+    }
+
+    #[inline]
+    pub fn imm_r(self) -> u32 {
+        self.bits(21, 16)
+    }
+
+    #[inline]
+    pub fn imm_s(self) -> u32 {
+        self.bits(15, 10)
+    }
+
+    #[inline]
+    pub fn imm_ls(self) -> i32 {
+        self.signed_bits(20, 12)
+    }
+
+    #[inline]
+    pub fn imm_ls_unsigned(self) -> u32 {
+        self.bits(21, 10)
+    }
+
+    #[inline]
+    pub fn imm_ls_pair(self) -> i32 {
+        self.signed_bits(21, 15)
+    }
+
+    #[inline]
+    pub fn imm_shift_ls(self) -> u32 {
+        self.bit(12)
+    }
+
+    #[inline]
+    pub fn imm_test_branch_bit40(self) -> u32 {
+        self.bits(23, 19)
+    }
+
+    #[inline]
+    pub fn imm_test_branch_bit5(self) -> u32 {
+        self.bit(31)
+    }
+
+    #[inline]
+    pub fn imm_exception(self) -> u32 {
+        self.bits(20, 5)
+    }
+
+    #[inline]
+    pub fn size_ls(self) -> u32 {
+        calc_ls_data_size_log2(self.mask(LOAD_STORE_MASK))
+    }
+
+    #[inline]
+    pub fn size_lsp(self) -> u32 {
+        calc_ls_pair_data_size(self.mask(LOAD_STORE_PAIR_MASK))
+    }
+
+    pub fn imm_logical(self) -> u64 {
+        let reg_size = if self.sixty_four_bits() != 0 {
+            K_X_REG_SIZE_IN_BITS as u32
+        } else {
+            K_W_REG_SIZE_IN_BITS as u32
+        };
+        let n = self.bit_n();
+        let imm_s = self.imm_set_bits();
+        let imm_r = self.imm_rotate();
+
+        if n == 1 {
+            if imm_s == 0x3F {
+                return 0;
+            }
+            let bits = (1u64 << (imm_s + 1)) - 1;
+            return rotate_right(bits, imm_r, 64);
+        }
+        if (imm_s >> 1) == 0x1F {
+            return 0;
+        }
+        let mut width = 0x20u32;
+        while width >= 0x2 {
+            if (imm_s & width) == 0 {
+                let mask = width - 1;
+                if (imm_s & mask) == mask {
+                    return 0;
+                }
+                let bits = (1u64 << ((imm_s & mask) + 1)) - 1;
+                return repeat_bits_across_reg(
+                    reg_size,
+                    rotate_right(bits, imm_r & mask, width),
+                    width,
+                );
+            }
+            width >>= 1;
+        }
+        unreachable!()
+    }
+
+    pub fn is_add_sub_immediate(self) -> bool {
+        self.mask(ADD_SUB_IMMEDIATE_F_MASK) == ADD_SUB_IMMEDIATE_FIXED
+    }
+
+    pub fn is_add_sub_extended(self) -> bool {
+        self.mask(ADD_SUB_EXTENDED_F_MASK) == ADD_SUB_EXTENDED_FIXED
+    }
+
+    pub fn is_logical_immediate(self) -> bool {
+        self.mask(LOGICAL_IMMEDIATE_F_MASK) == LOGICAL_IMMEDIATE_FIXED
+    }
+
+    pub fn rd_mode(self) -> Reg31Mode {
+        if self.is_add_sub_immediate() || self.is_add_sub_extended() {
+            if self.mask(ADD_SUB_SET_FLAGS_BIT) != 0 {
+                return Reg31Mode::Reg31IsZeroRegister;
+            }
+            return Reg31Mode::Reg31IsStackPointer;
+        }
+        if self.is_logical_immediate() {
+            if self.mask(LOGICAL_IMMEDIATE_MASK & LOGICAL_OP_MASK) == ANDS {
+                return Reg31Mode::Reg31IsZeroRegister;
+            }
+            return Reg31Mode::Reg31IsStackPointer;
+        }
+        Reg31Mode::Reg31IsZeroRegister
+    }
+
+    pub fn rn_mode(self) -> Reg31Mode {
+        if self.is_add_sub_immediate()
+            || self.is_add_sub_extended()
+            || self.is_logical_immediate()
+            || self.is_load_store()
+        {
+            return Reg31Mode::Reg31IsStackPointer;
+        }
+        Reg31Mode::Reg31IsZeroRegister
+    }
+
+    pub fn is_load_store(self) -> bool {
+        self.mask(LOAD_STORE_ANY_F_MASK) == LOAD_STORE_ANY_FIXED
+    }
+
+    pub fn is_load(self) -> bool {
+        if self.mask(LOAD_STORE_ANY_F_MASK) != LOAD_STORE_ANY_FIXED {
+            return false;
+        }
+        if self.mask(LOAD_STORE_PAIR_ANY_F_MASK) == LOAD_STORE_PAIR_ANY_FIXED {
+            return self.mask(LOAD_STORE_PAIR_L_BIT) != 0;
+        }
+        matches!(
+            self.mask(LOAD_STORE_MASK),
+            LDRB_W | LDRH_W | LDR_W | LDR_X | LDRSB_W | LDRSB_X | LDRSH_W | LDRSH_X
+                | LDRSW_X | LDR_B | LDR_H | LDR_S | LDR_D | LDR_Q
+        )
+    }
+
+    pub fn is_store(self) -> bool {
+        if self.mask(LOAD_STORE_ANY_F_MASK) != LOAD_STORE_ANY_FIXED {
+            return false;
+        }
+        if self.mask(LOAD_STORE_PAIR_ANY_F_MASK) == LOAD_STORE_PAIR_ANY_FIXED {
+            return self.mask(LOAD_STORE_PAIR_L_BIT) == 0;
+        }
+        matches!(
+            self.mask(LOAD_STORE_MASK),
+            STRB_W | STRH_W | STR_W | STR_X | STR_B | STR_H | STR_S | STR_D | STR_Q
+        )
     }
 
     pub fn is_ldr_literal(self) -> bool {
