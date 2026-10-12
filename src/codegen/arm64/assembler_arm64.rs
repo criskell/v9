@@ -2616,6 +2616,44 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    fn neon_fp_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, op: Instr) {
+        debug_assert!(are_same_format(vd, &[vn, vm]));
+        let mut op = op;
+        if vd.is_4h() || vd.is_8h() {
+            op |= NEON_SZ;
+            op ^= NEON_3_SAME_HP_MASK;
+        }
+        let instruction = Assembler::fp_format(vd)
+            | op
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_fp_2_reg_misc_zero(&mut self, vd: VRegister, vn: VRegister, vop: Instr) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        let mut op = vop;
+        if vd.is_scalar() {
+            debug_assert!(vd.is_1s() || vd.is_1d());
+            op |= NEON_Q | NEON_SCALAR;
+        } else if vd.is_4h() || vd.is_8h() {
+            op |= NEON_SZ | NEON_2_REG_MISC_HP_FIXED;
+        } else {
+            debug_assert!(vd.is_2s() || vd.is_2d() || vd.is_4s());
+        }
+        let instruction =
+            Assembler::fp_format(vd) | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_fp_2_reg_misc(&mut self, vd: VRegister, vn: VRegister, op: Instr) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        let instruction =
+            Assembler::fp_format(vd) | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         debug_assert!(vd.is_vector() || !vd.is_q());
@@ -2890,54 +2928,6 @@ impl Assembler {
     }
 }
 
-macro_rules! define_fp_3_same {
-    ($(($name:ident, $op:ident)),* $(,)?) => {
-        impl Assembler {
-            $(
-                pub fn $name(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
-                    debug_assert!(vd.is_1s() || vd.is_1d());
-                    self.fp_data_processing_2_source(vd, vn, vm, $op);
-                }
-            )*
-        }
-    };
-}
-
-define_fp_3_same!(
-    (fadd, FADD),
-    (fsub, FSUB),
-    (fdiv, FDIV),
-    (fmax, FMAX),
-    (fmaxnm, FMAXNM),
-    (fmin, FMIN),
-    (fminnm, FMINNM),
-);
-
-macro_rules! define_fp_2_reg_misc {
-    ($(($name:ident, $op:ident)),* $(,)?) => {
-        impl Assembler {
-            $(
-                pub fn $name(&mut self, vd: VRegister, vn: VRegister) {
-                    debug_assert!(vd.is_1s() || vd.is_1d());
-                    self.fp_data_processing_1_source(vd, vn, $op);
-                }
-            )*
-        }
-    };
-}
-
-define_fp_2_reg_misc!(
-    (fabs, FABS),
-    (fneg, FNEG),
-    (fsqrt, FSQRT),
-    (frintn, FRINTN),
-    (frinta, FRINTA),
-    (frintp, FRINTP),
-    (frintm, FRINTM),
-    (frintx, FRINTX),
-    (frintz, FRINTZ),
-    (frinti, FRINTI),
-);
 
 macro_rules! define_compare_and_swap_w_x {
     ($(($name:ident, $op_x:ident, $op_w:ident)),* $(,)?) => {
@@ -3734,7 +3724,7 @@ define_neon_dual_3_different_l!(
 );
 
 macro_rules! define_neon_dual_fp {
-    ($(($name:ident, $op:ident, $op_byelement:ident)),* $(,)?) => {
+    ($(($name:ident, $op:ident, $vec_op:ident, $op_byelement:ident)),* $(,)?) => {
         impl Assembler {
             $(
                 pub fn $name<T: Into<VOperand>>(
@@ -3747,10 +3737,17 @@ macro_rules! define_neon_dual_fp {
                     let vm = operand.reg();
                     if operand.has_lane() {
                         self.neon_fp_by_element(vd, vn, vm, operand.index(), $op_byelement);
-                    } else {
-                        debug_assert!(vd.is_1s() || vd.is_1d());
-                        self.fp_data_processing_2_source(vd, vn, vm, $op);
+                        return;
                     }
+                    let op;
+                    if vd.is_scalar() {
+                        debug_assert!(vd.is_1s() || vd.is_1d());
+                        op = $op;
+                    } else {
+                        debug_assert!(vd.is_vector());
+                        op = $vec_op;
+                    }
+                    self.neon_fp_3_same(vd, vn, vm, op);
                 }
             )*
         }
@@ -3758,7 +3755,7 @@ macro_rules! define_neon_dual_fp {
 }
 
 define_neon_dual_fp!(
-    (fmul, FMUL, NEON_FMUL_BYELEMENT),
+    (fmul, FMUL, NEON_FMUL, NEON_FMUL_BYELEMENT),
 );
 
 macro_rules! define_neon_fp_by_element {
@@ -3782,7 +3779,6 @@ macro_rules! define_neon_fp_by_element {
 define_neon_fp_by_element!(
     (fmla, NEON_FMLA_BYELEMENT),
     (fmls, NEON_FMLS_BYELEMENT),
-    (fmulx, NEON_FMULX_BYELEMENT),
 );
 
 macro_rules! define_neon_shift_left {
@@ -3913,5 +3909,145 @@ impl Assembler {
 
     pub fn uqshl<T: NeonShift>(&mut self, vd: VRegister, vn: VRegister, operand: T) {
         T::uqshl(self, vd, vn, operand);
+    }
+}
+
+macro_rules! define_neon_fp_3_same {
+    ($(($name:ident, $vec_op:ident, $sca_op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+                    let op;
+                    if vd.is_scalar() {
+                        debug_assert!(vd.is_1s() || vd.is_1d());
+                        op = $sca_op;
+                    } else {
+                        debug_assert!(vd.is_vector());
+                        debug_assert!(
+                            vd.is_2s() || vd.is_2d() || vd.is_4s() || vd.is_4h() || vd.is_8h()
+                        );
+                        op = $vec_op;
+                    }
+                    self.neon_fp_3_same(vd, vn, vm, op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_fp_3_same!(
+    (fadd, NEON_FADD, FADD),
+    (fsub, NEON_FSUB, FSUB),
+    (fdiv, NEON_FDIV, FDIV),
+    (fmax, NEON_FMAX, FMAX),
+    (fmaxnm, NEON_FMAXNM, FMAXNM),
+    (fmin, NEON_FMIN, FMIN),
+    (fminnm, NEON_FMINNM, FMINNM),
+    (frecps, NEON_FRECPS, NEON_FRECPS_SCALAR),
+    (frsqrts, NEON_FRSQRTS, NEON_FRSQRTS_SCALAR),
+    (fabd, NEON_FABD, NEON_FABD_SCALAR),
+    (facge, NEON_FACGE, NEON_FACGE_SCALAR),
+    (facgt, NEON_FACGT, NEON_FACGT_SCALAR),
+    (fcmeq, NEON_FCMEQ, NEON_FCMEQ_SCALAR),
+    (fcmge, NEON_FCMGE, NEON_FCMGE_SCALAR),
+    (fcmgt, NEON_FCMGT, NEON_FCMGT_SCALAR),
+);
+
+macro_rules! define_neon_fp_3_same_vector_only {
+    ($(($name:ident, $vec_op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+                    debug_assert!(vd.is_vector());
+                    debug_assert!(
+                        vd.is_2s() || vd.is_2d() || vd.is_4s() || vd.is_4h() || vd.is_8h()
+                    );
+                    self.neon_fp_3_same(vd, vn, vm, $vec_op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_fp_3_same_vector_only!(
+    (faddp, NEON_FADDP),
+    (fmaxp, NEON_FMAXP),
+    (fminp, NEON_FMINP),
+    (fmaxnmp, NEON_FMAXNMP),
+    (fminnmp, NEON_FMINNMP),
+);
+
+macro_rules! define_neon_fp_2_reg_misc {
+    ($(($name:ident, $vec_op:ident, $sca_op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister) {
+                    if vd.is_scalar() {
+                        debug_assert!(vd.is_1s() || vd.is_1d());
+                        self.neon_fp_2_reg_misc(vd, vn, $sca_op);
+                    } else {
+                        self.neon_fp_2_reg_misc_zero(vd, vn, $vec_op);
+                    }
+                }
+            )*
+        }
+    };
+}
+
+define_neon_fp_2_reg_misc!(
+    (fabs, NEON_FABS_V, FABS),
+    (fneg, NEON_FNEG_V, FNEG),
+    (fsqrt, NEON_FSQRT_V, FSQRT),
+    (frintn, NEON_FRINTN, FRINTN),
+    (frinta, NEON_FRINTA, FRINTA),
+    (frintp, NEON_FRINTP, FRINTP),
+    (frintm, NEON_FRINTM, FRINTM),
+    (frintx, NEON_FRINTX, FRINTX),
+    (frintz, NEON_FRINTZ, FRINTZ),
+    (frinti, NEON_FRINTI, FRINTI),
+    (frsqrte, NEON_FRSQRTE, NEON_FRSQRTE_SCALAR),
+    (frecpe, NEON_FRECPE, NEON_FRECPE_SCALAR),
+);
+
+macro_rules! define_neon_fp_convert {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister) {
+                    self.neon_fp_2_reg_misc_zero(vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_fp_convert!(
+    (fcvtns, NEON_FCVTNS_V),
+    (fcvtnu, NEON_FCVTNU_V),
+    (fcvtps, NEON_FCVTPS_V),
+    (fcvtpu, NEON_FCVTPU_V),
+    (fcvtms, NEON_FCVTMS_V),
+    (fcvtmu, NEON_FCVTMU_V),
+    (fcvtas, NEON_FCVTAS_V),
+    (fcvtau, NEON_FCVTAU_V),
+);
+
+impl Assembler {
+    pub fn fmulx<T: Into<VOperand>>(&mut self, vd: VRegister, vn: VRegister, operand: T) {
+        let operand = operand.into();
+        let vm = operand.reg();
+        if operand.has_lane() {
+            self.neon_fp_by_element(vd, vn, vm, operand.index(), NEON_FMULX_BYELEMENT);
+            return;
+        }
+        let op;
+        if vd.is_scalar() {
+            debug_assert!(vd.is_1s() || vd.is_1d());
+            op = NEON_FMULX_SCALAR;
+        } else {
+            debug_assert!(vd.is_vector());
+            op = NEON_FMULX;
+        }
+        self.neon_fp_3_same(vd, vn, vm, op);
     }
 }
