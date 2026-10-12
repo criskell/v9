@@ -211,6 +211,16 @@ class Draft:
             return []
         if kind.startswith("preproc"):
             return []
+        nested = [
+            child
+            for child in node.named_children
+            if child.type in ("compound_statement", "if_statement", "switch_statement")
+        ]
+        if nested:
+            out = [f"{pad}{self.text(node).split(chr(10))[0]}"]
+            for child in nested:
+                out.extend(self.statement(child, indent))
+            return out
         return [f"{pad}{line}" for line in self.text(node).split("\n")]
 
     def statement_compound_statement(self, node, indent):
@@ -280,6 +290,26 @@ class Draft:
         out.extend(self.block(self.field(node, "body"), indent))
         out.append(f"{pad}}}")
         return out
+
+    def statement_do_statement(self, node, indent):
+        pad = "    " * indent
+        condition = self.expression(self.field(node, "condition"))
+        out = [f"{pad}loop {{"]
+        out.extend(self.block(self.field(node, "body"), indent))
+        out.append("    " * (indent + 1) + f"if !({condition}) {{")
+        out.append("    " * (indent + 2) + "break;")
+        out.append("    " * (indent + 1) + "}")
+        out.append(f"{pad}}}")
+        return out
+
+    def statement_labeled_statement(self, node, indent):
+        return self.statement(node.named_children[-1], indent) if node.named_children else []
+
+    def statement_break_statement(self, node, indent):
+        return ["    " * indent + "break;"]
+
+    def statement_continue_statement(self, node, indent):
+        return ["    " * indent + "continue;"]
 
     def statement_while_statement(self, node, indent):
         pad = "    " * indent
@@ -370,7 +400,8 @@ def definitions(tree, source, name):
 
 def main():
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("name")
+    parser.add_argument("name", nargs="?")
+    parser.add_argument("--file", help="draft every definition in this V8 source file")
     parser.add_argument(
         "--v8", default=os.environ.get("V8_ROOT", os.path.expanduser("~/devel/v8"))
     )
@@ -380,6 +411,33 @@ def main():
 
     language = Language(tree_sitter_cpp.language())
     cpp = Parser(language)
+
+    if arguments.file:
+        path = arguments.file
+        if not os.path.isabs(path):
+            path = os.path.join(arguments.v8, path)
+        source = open(path, "rb").read()
+        tree = cpp.parse(source)
+        draft = Draft(source)
+        stack = [tree.root_node]
+        definitions_found = []
+        while stack:
+            node = stack.pop()
+            if node.type == "function_definition":
+                definitions_found.append(node)
+            stack.extend(node.children)
+        for node in sorted(definitions_found, key=lambda n: n.start_byte):
+            line = source[: node.start_byte].count(b"\n") + 1
+            print(f"=== {os.path.relpath(path, arguments.v8)}:{line} ===")
+            print(draft.signature(node))
+            for rendered in draft.block(node.child_by_field_name("body"), 0):
+                print(rendered)
+            print("}")
+            print()
+        return
+
+    if not arguments.name:
+        sys.exit(f"usage: {sys.argv[0]} <Name> | --file <v8-source-file>")
     found = 0
     for directory, _, files in os.walk(os.path.join(arguments.v8, "src")):
         for base in sorted(files):
