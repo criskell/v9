@@ -439,7 +439,7 @@ impl crate::execution::isolate::Isolate {
         use crate::objects::dictionary::NameDictionary;
         use crate::objects::elements_kind::is_transitionable_fast_elements_kind;
         use crate::objects::property_details::{
-            accessor_constant, data_field_with_attributes, PropertyConstness, PropertyKind,
+            accessor_constant, data_field, PropertyConstness, PropertyKind,
             PropertyLocation, Representation, K_MAX_NUMBER_OF_DESCRIPTORS,
         };
 
@@ -518,7 +518,7 @@ impl crate::execution::isolate::Isolate {
                 } else {
                     PropertyConstness::Const
                 };
-                let details = data_field_with_attributes(
+                let details = data_field(
                     field_index as u32,
                     Representation::Tagged,
                     details.attributes(),

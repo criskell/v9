@@ -72,7 +72,7 @@ impl Scanner {
             error: None,
         };
         scanner.advance();
-        scanner.scan_into_next();
+        scanner.scan();
         scanner
     }
 
@@ -92,7 +92,7 @@ impl Scanner {
         }
         let saved_line_terminator = self.has_line_terminator_before_next;
         self.has_line_terminator_before_next = false;
-        let desc = self.scan_token();
+        let desc = self.scan_single_token();
         self.has_line_terminator_after_next = self.has_line_terminator_before_next;
         self.has_line_terminator_before_next = saved_line_terminator;
         self.next_next = desc;
@@ -108,13 +108,13 @@ impl Scanner {
             self.has_line_terminator_after_next = false;
         } else {
             self.has_line_terminator_before_next = false;
-            self.scan_into_next();
+            self.scan();
         }
         self.current.token
     }
 
-    fn scan_into_next(&mut self) {
-        self.next = self.scan_token();
+    fn scan(&mut self) {
+        self.next = self.scan_single_token();
     }
 
     #[inline]
@@ -185,7 +185,7 @@ impl Scanner {
         self.has_line_terminator_after_next = false;
         self.error = None;
         self.advance();
-        self.scan_into_next();
+        self.scan();
         debug_assert_eq!(self.next.location.beg_pos, position);
     }
 
@@ -295,7 +295,7 @@ impl Scanner {
     }
 
 
-    fn scan_token(&mut self) -> TokenDesc {
+    fn scan_single_token(&mut self) -> TokenDesc {
         self.skip_whitespace_and_comments();
         let beg_pos = self.position();
 

@@ -684,10 +684,10 @@ impl Isolate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::objects::property_details::{default_data_field, Representation};
+    use crate::objects::property_details::{data_field, Representation, NONE};
 
     fn details() -> PropertyDetails {
-        default_data_field(0, Representation::Tagged)
+        data_field(0, Representation::Tagged, NONE)
     }
 
     #[test]

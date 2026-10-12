@@ -8,7 +8,7 @@ use crate::objects::hash_table::{HashTableBase, K_NOT_FOUND};
 use crate::objects::heap_number;
 use crate::objects::js_array::JSArray;
 use crate::objects::js_objects::JSObject;
-use crate::objects::property_details::{default_data_field, Representation};
+use crate::objects::property_details::{data_field, Representation, NONE};
 use crate::objects::tagged::Tagged;
 
 // Abstract base class for handles that can operate on objects with differing
@@ -95,7 +95,7 @@ impl ElementsAccessor {
             .expect("a backing store");
         if elements_kind::is_dictionary_elements_kind(self.kind) {
             let dictionary = NumberDictionary::unchecked_cast(store);
-            let details = default_data_field(0, Representation::Tagged);
+            let details = data_field(0, Representation::Tagged, NONE);
             let updated = isolate.dictionary_set(dictionary, index, value, details);
             holder.set_elements(&mut isolate.heap, updated.tagged());
             return;
@@ -270,7 +270,7 @@ impl Isolate {
         let scope = self.handle_scope();
         let elements_handle = self.create_handle(elements);
         let mut dictionary = self.new_number_dictionary(used.max(1));
-        let details = default_data_field(0, Representation::Tagged);
+        let details = data_field(0, Representation::Tagged, NONE);
         for index in 0..capacity {
             let elements = elements_handle.get(self);
             if !accessor.has_entry(&self.heap, elements, index) {

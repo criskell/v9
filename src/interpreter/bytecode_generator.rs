@@ -748,27 +748,6 @@ impl BytecodeGenerator {
         }
     }
 
-    fn visit_private_accessor(
-        &mut self,
-        accessor: Option<&FunctionLiteral>,
-        value_out: Register,
-    ) -> Result<()> {
-        match accessor {
-            Some(accessor) => {
-                let index = self.compile_function(accessor)?;
-                self.builder
-                    .create_closure(index)
-                    .store_accumulator_in_register(value_out);
-            }
-            None => {
-                self.builder
-                    .load_null()
-                    .store_accumulator_in_register(value_out);
-            }
-        }
-        Ok(())
-    }
-
     fn build_private_getter_access(&mut self, object: Register, accessor_pair: Register) {
         let mark = self.builder.register_allocator().next_register_index();
         let accessor = self.builder.register_allocator().new_register();
@@ -955,7 +934,12 @@ impl BytecodeGenerator {
             } => self.visit_compare_operation(*op, left, right),
             Expression::Logical {
                 op, left, right, ..
-            } => self.visit_logical_operation(*op, left, right),
+            } => match op {
+                Token::Or => self.visit_logical_or_expression(left, right),
+                Token::And => self.visit_logical_and_expression(left, right),
+                Token::Nullish => self.visit_nullish_expression(left, right),
+                other => unreachable!("{other} is not a logical operator"),
+            },
             Expression::Unary { op, expression, .. } => self.visit_unary_operation(*op, expression),
             Expression::Count {
                 op,
@@ -1375,18 +1359,6 @@ impl BytecodeGenerator {
         Ok(())
     }
 
-    fn visit_logical_operation(
-        &mut self,
-        op: Token,
-        left: &Expression,
-        right: &Expression,
-    ) -> Result<()> {
-        if self.is_test() {
-            return self.visit_logical_test(op, left, right);
-        }
-        self.visit_logical_operation_for_value(op, left, right)
-    }
-
     fn visit_logical_test(
         &mut self,
         op: Token,
@@ -1424,39 +1396,53 @@ impl BytecodeGenerator {
         result
     }
 
-    fn visit_logical_operation_for_value(
+    fn visit_logical_or_expression(&mut self, left: &Expression, right: &Expression) -> Result<()> {
+        if self.is_test() {
+            self.visit_logical_test(Token::Or, left, right)?;
+            self.set_result_consumed_by_test();
+            return Ok(());
+        }
+        let mut end_labels = BytecodeLabels::new();
+        self.visit_for_accumulator_value(left)?;
+        let label = end_labels.new_label();
+        self.builder
+            .jump_if_to_boolean_true(end_labels.label_mut(label));
+        self.visit_for_accumulator_value(right)?;
+        self.builder.bind_labels(&mut end_labels);
+        Ok(())
+    }
+
+    fn visit_logical_and_expression(
         &mut self,
-        op: Token,
         left: &Expression,
         right: &Expression,
     ) -> Result<()> {
+        if self.is_test() {
+            self.visit_logical_test(Token::And, left, right)?;
+            self.set_result_consumed_by_test();
+            return Ok(());
+        }
         let mut end_labels = BytecodeLabels::new();
         self.visit_for_accumulator_value(left)?;
-        match op {
-            Token::And => {
-                let label = end_labels.new_label();
-                self.builder
-                    .jump_if_to_boolean_false(end_labels.label_mut(label));
-                self.visit_for_accumulator_value(right)?;
-            }
-            Token::Or => {
-                let label = end_labels.new_label();
-                self.builder
-                    .jump_if_to_boolean_true(end_labels.label_mut(label));
-                self.visit_for_accumulator_value(right)?;
-            }
-            Token::Nullish => {
-                let mut right_labels = BytecodeLabels::new();
-                let to_right = right_labels.new_label();
-                self.builder
-                    .jump_if_undefined_or_null(right_labels.label_mut(to_right));
-                let to_end = end_labels.new_label();
-                self.builder.jump(end_labels.label_mut(to_end));
-                self.builder.bind_labels(&mut right_labels);
-                self.visit_for_accumulator_value(right)?;
-            }
-            other => unreachable!("{other} is not a logical operator"),
-        }
+        let label = end_labels.new_label();
+        self.builder
+            .jump_if_to_boolean_false(end_labels.label_mut(label));
+        self.visit_for_accumulator_value(right)?;
+        self.builder.bind_labels(&mut end_labels);
+        Ok(())
+    }
+
+    fn visit_nullish_expression(&mut self, left: &Expression, right: &Expression) -> Result<()> {
+        let mut end_labels = BytecodeLabels::new();
+        self.visit_for_accumulator_value(left)?;
+        let mut right_labels = BytecodeLabels::new();
+        let to_right = right_labels.new_label();
+        self.builder
+            .jump_if_undefined_or_null(right_labels.label_mut(to_right));
+        let to_end = end_labels.new_label();
+        self.builder.jump(end_labels.label_mut(to_end));
+        self.builder.bind_labels(&mut right_labels);
+        self.visit_for_accumulator_value(right)?;
         self.builder.bind_labels(&mut end_labels);
         Ok(())
     }
@@ -2073,10 +2059,8 @@ impl BytecodeGenerator {
                 continue;
             };
             let register = self.builder.register_allocator().grow_register_list(&mut args);
-            let index = self.compile_function(value)?;
-            self.builder
-                .create_closure(index)
-                .store_accumulator_in_register(register);
+            self.visit_for_accumulator_value(value)?;
+            self.builder.store_accumulator_in_register(register);
         }
 
         if class.has_private_brand {
@@ -2093,8 +2077,7 @@ impl BytecodeGenerator {
             self.builder.register_allocator().release_registers(mark);
         }
 
-        let mut accessor_table: Vec<(String, Option<FunctionLiteral>, Option<FunctionLiteral>)> =
-            Vec::new();
+        let mut accessor_table: Vec<(String, Option<Expression>, Option<Expression>)> = Vec::new();
         for property in &class.private_members {
             if !matches!(
                 property.kind,
@@ -2127,8 +2110,8 @@ impl BytecodeGenerator {
         for (name, getter, setter) in accessor_table {
             let mark = self.builder.register_allocator().next_register_index();
             let accessors = self.builder.register_allocator().new_register_list(2);
-            self.visit_private_accessor(getter.as_ref(), accessors.first_register())?;
-            self.visit_private_accessor(
+            self.visit_literal_accessor(getter.as_ref(), accessors.first_register())?;
+            self.visit_literal_accessor(
                 setter.as_ref(),
                 Register::new(accessors.first_register().index() + 1),
             )?;
@@ -2153,8 +2136,7 @@ impl BytecodeGenerator {
             let name = name.clone();
             match &property.value {
                 Some(value) => {
-                    let index = self.compile_function(value)?;
-                    self.builder.create_closure(index);
+                    self.visit_for_accumulator_value(value)?;
                     self.build_variable_assignment(&name);
                 }
                 None => {

@@ -39,7 +39,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::objects::property_details::default_data_field;
+    use crate::objects::property_details::{data_field, NONE};
     use crate::objects::smi::Smi;
 
     #[test]
@@ -98,7 +98,7 @@ mod tests {
                 .representation(),
             Representation::Smi
         );
-        let _ = default_data_field(0, Representation::Smi);
+        let _ = data_field(0, Representation::Smi, NONE);
         let _: Option<DescriptorArray> = None;
         let _: i32 = K_NOT_FOUND;
         let _: Tagged = b;

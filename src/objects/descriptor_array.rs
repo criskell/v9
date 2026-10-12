@@ -213,7 +213,7 @@ impl EnumCache {
 mod tests {
     use super::*;
     use crate::heap::heap::AllocationType;
-    use crate::objects::property_details::{default_data_field, Representation};
+    use crate::objects::property_details::{data_field, Representation, NONE};
     use crate::objects::smi::Smi;
 
     fn raw_descriptor_array(heap: &mut Heap, capacity: i32) -> DescriptorArray {
@@ -255,7 +255,7 @@ mod tests {
         let index = array.append(
             &mut heap,
             x,
-            default_data_field(0, Representation::Smi),
+            data_field(0, Representation::Smi, NONE),
             Smi::zero(),
         );
         assert_eq!(index, 0);
@@ -274,7 +274,7 @@ mod tests {
             array.append(
                 &mut heap,
                 *name,
-                default_data_field(i as u32, Representation::Tagged),
+                data_field(i as u32, Representation::Tagged, NONE),
                 Smi::from_int(100 + i as i32),
             );
         }
@@ -299,13 +299,13 @@ mod tests {
         array.append(
             &mut heap,
             x,
-            default_data_field(0, Representation::Smi),
+            data_field(0, Representation::Smi, NONE),
             Smi::zero(),
         );
         array.append(
             &mut heap,
             y,
-            default_data_field(1, Representation::Smi),
+            data_field(1, Representation::Smi, NONE),
             Smi::zero(),
         );
 
@@ -323,7 +323,7 @@ mod tests {
             &mut heap,
             2,
             x,
-            default_data_field(2, Representation::Smi),
+            data_field(2, Representation::Smi, NONE),
             Smi::zero(),
         );
         assert_eq!(
@@ -341,7 +341,7 @@ mod tests {
         array.append(
             &mut heap,
             x,
-            default_data_field(0, Representation::Smi),
+            data_field(0, Representation::Smi, NONE),
             Smi::zero(),
         );
         assert_eq!(
@@ -375,13 +375,13 @@ mod tests {
         array.append(
             &mut heap,
             x,
-            default_data_field(0, Representation::Smi),
+            data_field(0, Representation::Smi, NONE),
             Smi::zero(),
         );
         array.append(
             &mut heap,
             y,
-            default_data_field(1, Representation::Smi),
+            data_field(1, Representation::Smi, NONE),
             Smi::zero(),
         );
     }

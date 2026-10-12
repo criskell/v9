@@ -482,7 +482,7 @@ impl Isolate {
         }
     }
 
-    pub fn loose_equals(&mut self, left: Tagged, right: Tagged) -> Result<bool, Thrown> {
+    pub fn equals(&mut self, left: Tagged, right: Tagged) -> Result<bool, Thrown> {
         let mut left = left;
         let mut right = right;
         loop {
@@ -800,7 +800,7 @@ mod tests {
         let one = Smi::from_int(1);
         let text = isolate.new_string("1").tagged();
         assert!(!isolate.strict_equals(one, text));
-        assert!(isolate.loose_equals(one, text).unwrap(), "but == does");
+        assert!(isolate.equals(one, text).unwrap(), "but == does");
     }
 
     #[test]
@@ -808,18 +808,18 @@ mod tests {
         let mut isolate = Isolate::new();
         let null = isolate.null_value();
         let undefined = isolate.undefined_value();
-        assert!(isolate.loose_equals(null, undefined).unwrap());
-        assert!(isolate.loose_equals(null, null).unwrap());
-        assert!(!isolate.loose_equals(null, Smi::from_int(0)).unwrap());
-        assert!(!isolate.loose_equals(undefined, Smi::from_int(0)).unwrap());
-        assert!(!isolate.loose_equals(null, isolate.false_value()).unwrap());
+        assert!(isolate.equals(null, undefined).unwrap());
+        assert!(isolate.equals(null, null).unwrap());
+        assert!(!isolate.equals(null, Smi::from_int(0)).unwrap());
+        assert!(!isolate.equals(undefined, Smi::from_int(0)).unwrap());
+        assert!(!isolate.equals(null, isolate.false_value()).unwrap());
     }
 
     #[test]
     fn the_empty_string_loosely_equals_zero() {
         let mut isolate = Isolate::new();
         let empty = isolate.new_string("").tagged();
-        assert!(isolate.loose_equals(empty, Smi::from_int(0)).unwrap());
+        assert!(isolate.equals(empty, Smi::from_int(0)).unwrap());
         assert!(!isolate.strict_equals(empty, Smi::from_int(0)));
     }
 

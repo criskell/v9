@@ -490,7 +490,12 @@ impl Isolate {
         let name_handle = self.create_handle(name);
         let value_handle = self.create_handle(value);
 
-        let new_map = self.transition_to_data_property(map, name, representation);
+        let new_map = self.transition_to_data_property(
+            map,
+            name,
+            representation,
+            crate::objects::property_details::NONE,
+        );
         let new_map_handle = self.create_object_handle(new_map.object());
         let name = name_handle.get(self);
         let field_index = new_map
@@ -550,7 +555,7 @@ impl Isolate {
         }
         let dictionary_handle = self.create_object_handle(dictionary.object());
         let map = Map::unchecked_cast(map_handle.object(self));
-        let new_map = self.normalize_map(map);
+        let new_map = self.normalize(map);
         let object = JSObject::unchecked_cast(object_handle.object(self));
         self.heap.set_map(object.object(), new_map.object());
         let dictionary = dictionary_handle.get(self);
@@ -669,7 +674,7 @@ impl Isolate {
         let name_handle = self.create_handle(name);
 
         let new_map =
-            self.transition_to_data_property_with_attributes(map, name, representation, attributes);
+            self.transition_to_data_property(map, name, representation, attributes);
         let new_map_handle = self.create_object_handle(new_map.object());
         let name = name_handle.get(self);
         let field_index = new_map

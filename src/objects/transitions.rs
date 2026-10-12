@@ -307,7 +307,7 @@ mod tests {
     use super::*;
     use crate::objects::descriptor_array::DescriptorArray;
     use crate::objects::instance_type::{JS_OBJECT_TYPE, MAP_TYPE};
-    use crate::objects::property_details::{default_data_field, Representation};
+    use crate::objects::property_details::{data_field, Representation, NONE};
 
     struct World {
         heap: Heap,
@@ -373,7 +373,7 @@ mod tests {
             descriptors.append(
                 &mut self.heap,
                 name,
-                default_data_field(0, Representation::Tagged),
+                data_field(0, Representation::Tagged, NONE),
                 Smi::zero(),
             );
             let object = self

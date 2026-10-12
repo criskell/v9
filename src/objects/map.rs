@@ -482,21 +482,8 @@ impl Heap {
 }
 
 impl Isolate {
-    pub fn transition_to_data_property(
-        &mut self,
-        map: Map,
-        name: Tagged,
-        representation: Representation,
-    ) -> Map {
-        self.transition_to_data_property_with_attributes(
-            map,
-            name,
-            representation,
-            crate::objects::property_details::NONE,
-        )
-    }
 
-    pub fn transition_to_data_property_with_attributes(
+    pub fn transition_to_data_property(
         &mut self,
         map: Map,
         name: Tagged,
@@ -514,7 +501,7 @@ impl Isolate {
         }
 
         let new_map =
-            self.copy_add_descriptor_with_attributes(map, name, representation, attributes);
+            self.copy_add_descriptor(map, name, representation, attributes);
 
         let transition_array_map = self.roots.transition_array_map();
         let _recorded =
@@ -640,12 +627,12 @@ impl Isolate {
         result
     }
 
-    pub(crate) fn normalize_map(&mut self, fast_map: Map) -> Map {
+    pub(crate) fn normalize(&mut self, fast_map: Map) -> Map {
         debug_assert!(!fast_map.is_dictionary_map(&self.heap));
         self.copy_normalized(fast_map)
     }
 
-    pub(crate) fn copy_add_descriptor_with_attributes(
+    pub(crate) fn copy_add_descriptor(
         &mut self,
         map: Map,
         name: Tagged,
@@ -654,7 +641,7 @@ impl Isolate {
     ) -> Map {
         let number_of_own = map.number_of_own_descriptors(&self.heap);
         let field_index = number_of_own as u32;
-        let details = crate::objects::property_details::data_field_with_attributes(
+        let details = crate::objects::property_details::data_field(
             field_index,
             representation,
             attributes,

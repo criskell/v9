@@ -367,11 +367,7 @@ pub fn accessor_constant(attributes: PropertyAttributes) -> PropertyDetails {
     PropertyDetails::new_descriptor(PropertyKind::Accessor, attributes)
 }
 
-pub fn default_data_field(field_index: u32, representation: Representation) -> PropertyDetails {
-    data_field_with_attributes(field_index, representation, NONE)
-}
-
-pub fn data_field_with_attributes(
+pub fn data_field(
     field_index: u32,
     representation: Representation,
     attributes: PropertyAttributes,
@@ -409,7 +405,7 @@ mod tests {
     #[test]
     fn field_index_survives_a_trip_through_a_smi() {
         for index in [0u32, 1, 3, 255, 1023] {
-            let d = default_data_field(index, Representation::Smi);
+            let d = data_field(index, Representation::Smi, NONE);
             let round_tripped = PropertyDetails::from_smi(d.as_smi());
             assert_eq!(round_tripped.field_index(), index);
             assert_eq!(round_tripped.representation(), Representation::Smi);
@@ -419,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_plain_assignment_produces_a_writable_enumerable_field() {
-        let d = default_data_field(0, Representation::Smi);
+        let d = data_field(0, Representation::Smi, NONE);
         assert!(!d.is_read_only());
         assert!(d.is_enumerable());
         assert!(d.is_configurable());
@@ -444,7 +440,7 @@ mod tests {
 
     #[test]
     fn widening_a_representation_only_changes_that_field() {
-        let d = default_data_field(5, Representation::Smi);
+        let d = data_field(5, Representation::Smi, NONE);
         let widened = d.with_representation(Representation::Tagged);
         assert_eq!(widened.representation(), Representation::Tagged);
         assert_eq!(widened.field_index(), 5, "index must survive widening");
@@ -472,7 +468,7 @@ mod tests {
         assert_eq!(cell.kind(), PropertyKind::Data);
         assert_eq!(cell.attributes(), NONE);
 
-        let fast = default_data_field(0, Representation::Smi);
+        let fast = data_field(0, Representation::Smi, NONE);
         assert_ne!(
             fast.cell_type(),
             PropertyCellType::Mutable,

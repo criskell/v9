@@ -96,7 +96,7 @@ pub struct CaseClause {
 #[derive(Clone, Debug)]
 pub struct ClassLiteralProperty {
     pub key: PropertyKey,
-    pub value: Option<FunctionLiteral>,
+    pub value: Option<Expression>,
     pub kind: ClassLiteralPropertyKind,
     pub is_static: bool,
     pub computed_name_var: Option<String>,

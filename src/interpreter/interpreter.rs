@@ -858,7 +858,7 @@ impl Isolate {
     ) -> Result<bool, Thrown> {
         use Bytecode::*;
         match bytecode {
-            TestEqual => self.loose_equals(left, right),
+            TestEqual => self.equals(left, right),
             TestEqualStrict => Ok(self.strict_equals(left, right)),
             TestLessThan => self.less_than(left, right),
             TestGreaterThan => self.greater_than(left, right),

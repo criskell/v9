@@ -1247,7 +1247,7 @@ impl Parser {
         self.expect(Token::LeftBrace)?;
         let mut properties = Vec::new();
         while self.peek() != Token::RightBrace {
-            properties.push(self.parse_object_property()?);
+            properties.push(self.parse_object_property_definition()?);
             if !self.check(Token::Comma) {
                 break;
             }
@@ -1310,8 +1310,8 @@ impl Parser {
             .declare(crate::ast::scopes::K_STATIC_HOME_OBJECT, VariableMode::Const);
 
         let mut class_info = ClassInfo {
-            instance_members_scope: self.new_field_initializer_scope(),
-            static_members_scope: self.new_field_initializer_scope(),
+            instance_members_scope: None,
+            static_members_scope: None,
             computed_field_count: 0,
             private_members: Vec::new(),
             has_private_brand: false,
@@ -1378,20 +1378,28 @@ impl Parser {
         let instance_members_initializer_function = if instance_fields.is_empty() {
             None
         } else {
-            Some(self.field_initializer_function(
-                &instance_fields,
-                class_info.instance_members_scope.take().expect("the field scope"),
+            let scope = class_info
+                .instance_members_scope
+                .take()
+                .expect("the instance members scope");
+            let statement = Statement::InitializeClassMembers {
+                fields: instance_fields.clone(),
                 position,
-            ))
+            };
+            Some(self.create_initializer_function(scope, statement, position))
         };
         let static_initializer = if static_elements.is_empty() {
             None
         } else {
-            Some(self.static_elements_initializer_function(
-                static_elements,
-                class_info.static_members_scope.take().expect("the field scope"),
+            let scope = class_info
+                .static_members_scope
+                .take()
+                .expect("the static elements scope");
+            let statement = Statement::InitializeClassStaticElements {
+                elements: static_elements,
                 position,
-            ))
+            };
+            Some(self.create_initializer_function(scope, statement, position))
         };
         let scope = self.scope_chain.pop();
 
@@ -1471,7 +1479,10 @@ impl Parser {
             let value = self.parse_method_literal(None, is_static, position)?;
             return Ok(ClassMember::Property(ClassLiteralProperty {
                 key: PropertyKey::Computed(key),
-                value: Some(value),
+                value: Some(Expression::FunctionLiteral {
+                    function: Box::new(value),
+                    position,
+                }),
                 kind,
                 is_static,
                 computed_name_var: None,
@@ -1496,7 +1507,10 @@ impl Parser {
         }
         Ok(ClassMember::Property(ClassLiteralProperty {
             key: PropertyKey::Name(name),
-            value: Some(value),
+            value: Some(Expression::FunctionLiteral {
+                function: Box::new(value),
+                position,
+            }),
             kind,
             is_static,
             computed_name_var: None,
@@ -1552,7 +1566,10 @@ impl Parser {
         let value = self.parse_method_literal(Some(name.clone()), is_static, position)?;
         class_info.private_members.push(ClassLiteralProperty {
             key: PropertyKey::Name(name),
-            value: Some(value),
+            value: Some(Expression::FunctionLiteral {
+                function: Box::new(value),
+                position,
+            }),
             kind: ClassLiteralPropertyKind::Method,
             is_static,
             computed_name_var: None,
@@ -1588,7 +1605,10 @@ impl Parser {
         let value = self.parse_method_literal(Some(name.clone()), is_static, position)?;
         class_info.private_members.push(ClassLiteralProperty {
             key: PropertyKey::Name(name),
-            value: Some(value),
+            value: Some(Expression::FunctionLiteral {
+                function: Box::new(value),
+                position,
+            }),
             kind,
             is_static,
             computed_name_var: None,
@@ -1690,13 +1710,18 @@ impl Parser {
         is_static: bool,
         position: Position,
     ) -> Result<Expression> {
+        if is_static {
+            self.ensure_static_elements_scope(class_info);
+        } else {
+            self.ensure_instance_members_scope(class_info);
+        }
         let slot = if is_static {
             &mut class_info.static_members_scope
         } else {
             &mut class_info.instance_members_scope
         };
         self.scope_chain
-            .push_scope(slot.take().expect("the field initializer scope"));
+            .push_scope(slot.take().expect("the members initializer scope"));
 
         let value = if self.check(Token::Assign) {
             self.parse_assignment_expression()
@@ -1789,7 +1814,7 @@ impl Parser {
         })
     }
 
-    fn parse_object_property(&mut self) -> Result<ObjectLiteralProperty> {
+    fn parse_object_property_definition(&mut self) -> Result<ObjectLiteralProperty> {
         if self.peek() == Token::Ellipsis {
             return Err(self.unexpected_token_with_hint("spread is not implemented"));
         }
@@ -1879,14 +1904,27 @@ impl Parser {
         self.parse_function_body(name, FunctionKind::NormalFunction, parameters, position)
     }
 
-    fn new_field_initializer_scope(&mut self) -> Option<crate::ast::scopes::Scope> {
+    fn ensure_instance_members_scope(&mut self, class_info: &mut ClassInfo) {
+        if class_info.instance_members_scope.is_none() {
+            class_info.instance_members_scope = Some(self.new_members_initializer_scope());
+        }
+    }
+
+    fn ensure_static_elements_scope(&mut self, class_info: &mut ClassInfo) {
+        if class_info.static_members_scope.is_none() {
+            class_info.static_members_scope = Some(self.new_members_initializer_scope());
+        }
+    }
+
+    fn new_members_initializer_scope(&mut self) -> crate::ast::scopes::Scope {
         self.scope_chain.push(ScopeKind::Function);
         self.declare_receiver();
-        Some(self.scope_chain.detach())
+        self.scope_chain.detach()
     }
 
     fn parse_class_static_block(&mut self, class_info: &mut ClassInfo) -> Result<Vec<Statement>> {
         self.consume(Token::Static);
+        self.ensure_static_elements_scope(class_info);
         self.scope_chain.push_scope(
             class_info
                 .static_members_scope
@@ -1901,14 +1939,12 @@ impl Parser {
         block
     }
 
-    fn static_elements_initializer_function(
+    fn create_initializer_function(
         &mut self,
-        elements: Vec<ClassLiteralStaticElement>,
         scope: crate::ast::scopes::Scope,
+        initializer_statement: Statement,
         position: Position,
     ) -> FunctionLiteral {
-        let body = vec![Statement::InitializeClassStaticElements { elements, position }];
-
         self.scope_chain.push_scope(scope);
         let scope = self.scope_chain.pop();
         FunctionLiteral {
@@ -1917,33 +1953,7 @@ impl Parser {
             requires_instance_members_initializer: false,
             class_scope_has_private_brand: false,
             parameters: Vec::new(),
-            body,
-            scope,
-            hoisted_functions: Vec::new(),
-            position,
-        }
-    }
-
-    fn field_initializer_function(
-        &mut self,
-        fields: &[ClassLiteralField],
-        scope: crate::ast::scopes::Scope,
-        position: Position,
-    ) -> FunctionLiteral {
-        let body = vec![Statement::InitializeClassMembers {
-            fields: fields.to_vec(),
-            position,
-        }];
-
-        self.scope_chain.push_scope(scope);
-        let scope = self.scope_chain.pop();
-        FunctionLiteral {
-            name: None,
-            kind: FunctionKind::NormalFunction,
-            requires_instance_members_initializer: false,
-            class_scope_has_private_brand: false,
-            parameters: Vec::new(),
-            body,
+            body: vec![initializer_statement],
             scope,
             hoisted_functions: Vec::new(),
             position,
