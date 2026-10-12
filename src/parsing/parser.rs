@@ -43,6 +43,7 @@ struct ClassInfo {
     instance_members_scope: Option<crate::ast::scopes::Scope>,
     static_members_scope: Option<crate::ast::scopes::Scope>,
     computed_field_count: usize,
+    private_members: Vec<String>,
 }
 
 enum ClassMember {
@@ -87,6 +88,19 @@ impl Parser {
         parser.expect(Token::Eos)?;
         parser.check_scanner_error()?;
         let state = parser.function_state.pop().expect("the top-level state");
+        if let Some(name) = parser
+            .scope_chain
+            .current()
+            .unresolved_names()
+            .iter()
+            .find(|name| name.starts_with('#'))
+            .cloned()
+        {
+            return Err(ParserError {
+                message: format!("Private field '{name}' must be declared in an enclosing class"),
+                location: parser.scanner.location(),
+            });
+        }
         let scope = parser.scope_chain.pop_root();
         Ok(Program {
             body,
@@ -956,6 +970,19 @@ impl Parser {
         match self.peek() {
             Token::Period => {
                 self.consume(Token::Period);
+                if self.peek() == Token::PrivateName {
+                    self.next();
+                    let name = self.scanner.current_literal().to_string();
+                    self.record_reference(&name);
+                    return Ok(Expression::Property {
+                        object: Box::new(object),
+                        key: Box::new(PropertyAccess::Keyed(Expression::VariableProxy {
+                            name,
+                            position,
+                        })),
+                        position,
+                    });
+                }
                 let token = self.peek();
                 if !token.is_property_name() {
                     return Err(self.unexpected_token_with_hint("expected a property name"));
@@ -1283,6 +1310,7 @@ impl Parser {
             instance_members_scope: self.new_field_initializer_scope(),
             static_members_scope: self.new_field_initializer_scope(),
             computed_field_count: 0,
+            private_members: Vec::new(),
         };
 
         self.expect(Token::LeftBrace)?;
@@ -1361,6 +1389,7 @@ impl Parser {
             extends,
             constructor,
             public_members,
+            private_members: class_info.private_members.clone(),
             instance_members_initializer_function,
             static_initializer,
             scope,
@@ -1393,6 +1422,21 @@ impl Parser {
         }
 
         let position = self.peek_position();
+        if self.peek() == Token::PrivateName {
+            self.next();
+            let name = self.scanner.current_literal().to_string();
+            if kind != ClassLiteralPropertyKind::Method {
+                return Err(
+                    self.unexpected_token_with_hint("private accessors are not implemented")
+                );
+            }
+            if self.peek() == Token::LeftParen {
+                return Err(self.unexpected_token_with_hint("private methods are not implemented"));
+            }
+            return self.parse_private_class_field_initializer(
+                class_info, name, is_static, position,
+            );
+        }
         if self.peek() == Token::LeftBracket {
             self.consume(Token::LeftBracket);
             let saved = self.accept_in;
@@ -1444,6 +1488,37 @@ impl Parser {
         }))
     }
 
+    fn parse_private_class_field_initializer(
+        &mut self,
+        class_info: &mut ClassInfo,
+        name: String,
+        is_static: bool,
+        position: Position,
+    ) -> Result<ClassMember> {
+        if self
+            .scope_chain
+            .current()
+            .lookup_local(&name)
+            .is_some()
+        {
+            return Err(self.unexpected_token_with_hint("a private name is already declared"));
+        }
+        self.scope_chain
+            .current()
+            .declare(&name, VariableMode::Const);
+        class_info.private_members.push(name.clone());
+
+        let value = self.parse_field_initializer_value(class_info, is_static, position, &name)?;
+        self.expect_semicolon()?;
+        Ok(ClassMember::Field(ClassLiteralField {
+            name,
+            value,
+            is_static,
+            is_computed_name: false,
+            is_private: true,
+        }))
+    }
+
     fn class_field_variable_name(index: usize) -> String {
         format!(".class-field-{index}")
     }
@@ -1476,6 +1551,7 @@ impl Parser {
                 value,
                 is_static,
                 is_computed_name: true,
+                is_private: false,
             },
         ))
     }
@@ -1530,6 +1606,7 @@ impl Parser {
             value,
             is_static,
             is_computed_name: false,
+            is_private: false,
         }))
     }
 

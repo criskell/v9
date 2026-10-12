@@ -1057,3 +1057,147 @@ fn each_class_keeps_its_own_computed_field_name() {
         "1,2"
     );
 }
+
+#[test]
+fn a_private_field_is_readable_from_inside_the_class() {
+    assert_eq!(
+        evaluate("class A { #x = 1; get() { return this.#x; } } (new A()).get()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { #x = 1; bump() { this.#x = this.#x + 1; return this.#x; } }
+             var a = new A();
+             a.bump() + ',' + a.bump()"
+        ),
+        "2,3"
+    );
+    assert_eq!(
+        evaluate("class A { #x; set(v) { this.#x = v; return this.#x; } } (new A()).set(9)"),
+        "9"
+    );
+}
+
+#[test]
+fn a_private_field_is_not_a_visible_property() {
+    assert_eq!(
+        evaluate(
+            "class A { #x = 1; y = 2; m() { return Object.keys(this).join('') + ',' + (this.x === undefined); } }
+             (new A()).m()"
+        ),
+        "y,true"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { #x = 1; y = 2; m() { var s = ''; for (var k in this) { s = s + k; } return s; } }
+             (new A()).m()"
+        ),
+        "y"
+    );
+}
+
+#[test]
+fn each_instance_gets_its_own_private_field() {
+    assert_eq!(
+        evaluate(
+            "class A { #x = 0; bump() { this.#x = this.#x + 1; return this.#x; } }
+             var a = new A();
+             var b = new A();
+             a.bump() + ',' + a.bump() + ',' + b.bump()"
+        ),
+        "1,2,1"
+    );
+}
+
+#[test]
+fn reading_a_private_field_of_a_foreign_object_throws() {
+    assert!(
+        error("class A { #x = 1; get(o) { return o.#x; } } (new A()).get({})")
+            .contains("Cannot read private member #x from an object whose class did not declare it")
+    );
+    assert_eq!(
+        evaluate(
+            "class A { #x = 1; set(o) { o.#x = 2; } }
+             var caught = 'no';
+             try { (new A()).set({}); } catch (e) { caught = e; }
+             caught"
+        ),
+        "Cannot write private member #x to an object whose class did not declare it"
+    );
+}
+
+#[test]
+fn two_classes_can_declare_the_same_private_name() {
+    assert_eq!(
+        evaluate(
+            "class A { #x = 1; get() { return this.#x; } }
+             class B { #x = 2; get() { return this.#x; } getFrom(o) { return o.#x; } }
+             var a = new A();
+             var b = new B();
+             a.get() + ',' + b.get() + ',' + b.getFrom(b)"
+        ),
+        "1,2,2"
+    );
+    assert!(error(
+        "class A { #x = 1; } class B { #x = 2; take(o) { return o.#x; } } (new B()).take(new A())"
+    )
+    .contains("Cannot read private member #x"));
+}
+
+#[test]
+fn a_private_field_is_reachable_through_inheritance_and_arrows() {
+    assert_eq!(
+        evaluate("class A { #x = 1; m() { return this.#x; } } class B extends A {} (new B()).m()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate("class A { #x = 7; m() { var f = () => this.#x; return f(); } } (new A()).m()"),
+        "7"
+    );
+}
+
+#[test]
+fn a_static_private_field_lives_on_the_constructor() {
+    assert_eq!(
+        evaluate("class A { static #x = 5; static get() { return A.#x; } } A.get()"),
+        "5"
+    );
+}
+
+#[test]
+fn an_inner_class_sees_its_own_and_the_outer_private_names() {
+    assert_eq!(
+        evaluate(
+            "class A {
+                 #x = 1;
+                 m() {
+                     class B { #x = 2; n() { return this.#x; } }
+                     return (new B()).n() + ',' + this.#x;
+                 }
+             }
+             (new A()).m()"
+        ),
+        "2,1"
+    );
+    assert_eq!(
+        evaluate(
+            "class A {
+                 #x = 1;
+                 m() {
+                     var self = this;
+                     class B { n() { return self.#x; } }
+                     return (new B()).n();
+                 }
+             }
+             (new A()).m()"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn an_undeclared_private_name_is_a_syntax_error() {
+    assert!(error("class A { m() { return this.#z; } }")
+        .contains("Private field '#z' must be declared in an enclosing class"));
+    assert!(error("class A { #x = 1; #x = 2; }").contains("already declared"));
+}

@@ -86,6 +86,10 @@ impl Scope {
         index
     }
 
+    pub fn unresolved_names(&self) -> &[String] {
+        &self.unresolved
+    }
+
     pub fn record_reference(&mut self, name: &str) {
         if self.lookup_local(name).is_some() {
             return;

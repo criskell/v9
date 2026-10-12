@@ -26,6 +26,7 @@ pub enum ValueKind {
     Undefined,
     Object,
     Function,
+    Symbol,
     Hole,
 }
 
@@ -55,6 +56,9 @@ impl Isolate {
         if instance_type::is_callable(instance_type) {
             return ValueKind::Function;
         }
+        if instance_type == instance_type::SYMBOL_TYPE {
+            return ValueKind::Symbol;
+        }
         ValueKind::Object
     }
 
@@ -71,7 +75,7 @@ impl Isolate {
             }
             ValueKind::Boolean => value == self.true_value(),
             ValueKind::Null | ValueKind::Undefined | ValueKind::Hole => false,
-            ValueKind::Object | ValueKind::Function => true,
+            ValueKind::Object | ValueKind::Function | ValueKind::Symbol => true,
         }
     }
 
@@ -80,6 +84,20 @@ impl Isolate {
             self.value_kind(value),
             ValueKind::Object | ValueKind::Function
         )
+    }
+
+    fn symbol_to_number_message(&mut self) -> Thrown {
+        let message = self
+            .new_string("Cannot convert a Symbol value to a number")
+            .tagged();
+        Thrown(message)
+    }
+
+    fn symbol_to_string_message(&mut self) -> Thrown {
+        let message = self
+            .new_string("Cannot convert a Symbol value to a string")
+            .tagged();
+        Thrown(message)
     }
 
     pub fn to_primitive(
@@ -97,6 +115,9 @@ impl Isolate {
     pub fn convert_to_number(&mut self, input: Tagged) -> Result<f64, Thrown> {
         let mut input = input;
         loop {
+            if self.value_kind(input) == ValueKind::Symbol {
+                return Err(self.symbol_to_number_message());
+            }
             if self.is_primitive(input) {
                 return Ok(self.to_number(input));
             }
@@ -109,6 +130,9 @@ impl Isolate {
         input: Tagged,
     ) -> crate::interpreter::interpreter::ExecutionResult {
         let input = self.to_primitive(input, ToPrimitiveHint::String)?;
+        if self.value_kind(input) == ValueKind::Symbol {
+            return Ok(input);
+        }
         if let Some(string) = VxString::try_cast(&self.heap, input) {
             if string.is_internalized(&self.heap) {
                 return Ok(input);
@@ -130,6 +154,9 @@ impl Isolate {
 
     pub fn convert_to_string(&mut self, input: Tagged) -> Result<std::string::String, Thrown> {
         let input = self.to_primitive(input, ToPrimitiveHint::String)?;
+        if self.value_kind(input) == ValueKind::Symbol {
+            return Err(self.symbol_to_string_message());
+        }
         Ok(self.to_string(input))
     }
 
@@ -153,7 +180,9 @@ impl Isolate {
                 Oddball::unchecked_cast(value.to_strong_heap_object().unwrap())
                     .to_number_raw(&self.heap)
             }
-            ValueKind::Object | ValueKind::Function | ValueKind::Hole => f64::NAN,
+            ValueKind::Object | ValueKind::Function | ValueKind::Symbol | ValueKind::Hole => {
+                f64::NAN
+            }
         }
     }
 
@@ -171,6 +200,16 @@ impl Isolate {
             }
             ValueKind::Function => "function () { [native code] }".to_string(),
             ValueKind::Object => "[object Object]".to_string(),
+            ValueKind::Symbol => {
+                let symbol = crate::objects::name::Symbol::unchecked_cast(
+                    value.to_strong_heap_object().unwrap(),
+                );
+                let description = symbol.description(&self.heap);
+                match VxString::try_cast(&self.heap, description) {
+                    Some(string) => format!("Symbol({})", string.to_rust_string(&self.heap)),
+                    None => "Symbol()".to_string(),
+                }
+            }
             ValueKind::Hole => "<hole>".to_string(),
         }
     }
@@ -184,6 +223,7 @@ impl Isolate {
             ValueKind::Null => "object",
             ValueKind::Function => "function",
             ValueKind::Object => "object",
+            ValueKind::Symbol => "symbol",
         };
         self.internalize_string(name).tagged()
     }
@@ -208,8 +248,10 @@ impl Isolate {
         let left_is_string = self.value_kind(left) == ValueKind::String;
         let right_is_string = self.value_kind(right) == ValueKind::String;
         let result = if left_is_string || right_is_string {
+            let left_text = self.convert_to_string(left)?;
             let right = right_handle.get(self);
-            let text = format!("{}{}", self.to_string(left), self.to_string(right));
+            let right_text = self.convert_to_string(right)?;
+            let text = format!("{left_text}{right_text}");
             self.new_string(&text).tagged()
         } else {
             let right = right_handle.get(self);
@@ -637,6 +679,34 @@ mod tests {
         ] {
             assert!(isolate.to_boolean(value), "{value:?} should be truthy");
         }
+    }
+
+    #[test]
+    fn a_symbol_is_a_primitive_that_refuses_to_convert() {
+        use crate::heap::heap::AllocationType;
+        let mut isolate = Isolate::new();
+        let description = isolate.new_string("#x").tagged();
+        let description = isolate.create_handle(description);
+        let symbol = isolate.new_private_symbol(AllocationType::Old);
+        let value = description.get(&isolate);
+        symbol.set_description(&mut isolate.heap, value);
+        let symbol = symbol.tagged();
+
+        assert_eq!(isolate.value_kind(symbol), ValueKind::Symbol);
+        assert!(isolate.is_primitive(symbol));
+        assert!(isolate.to_boolean(symbol));
+        assert_eq!(isolate.to_string(symbol), "Symbol(#x)");
+
+        let type_of = isolate.type_of(symbol);
+        assert_eq!(isolate.to_string(type_of), "symbol");
+
+        assert!(isolate.convert_to_number(symbol).is_err());
+        assert!(isolate.convert_to_string(symbol).is_err());
+        assert_eq!(
+            isolate.convert_to_name(symbol).unwrap(),
+            symbol,
+            "a symbol is already a name"
+        );
     }
 
     #[test]

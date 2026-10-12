@@ -520,6 +520,8 @@ impl Scanner {
                 self.scan_template_span(beg_pos)
             }
 
+            '#' => self.scan_private_name(beg_pos),
+
             c if Self::is_identifier_start(c) => self.scan_identifier_or_keyword(beg_pos),
 
             other => {
@@ -541,6 +543,24 @@ impl Scanner {
             smi_value: 0,
             number_value: 0.0,
         }
+    }
+
+    fn scan_private_name(&mut self, beg_pos: usize) -> TokenDesc {
+        self.advance();
+        match self.c0 {
+            Some(c) if Self::is_identifier_start(c) => {}
+            _ => {
+                self.report_error(
+                    "Invalid or unexpected token",
+                    Location::new(beg_pos, self.position()),
+                );
+                return self.make(Token::Illegal, beg_pos);
+            }
+        }
+        let mut desc = self.scan_identifier_or_keyword(beg_pos);
+        desc.token = Token::PrivateName;
+        desc.literal.insert(0, '#');
+        desc
     }
 
     fn scan_identifier_or_keyword(&mut self, beg_pos: usize) -> TokenDesc {

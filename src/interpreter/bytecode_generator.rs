@@ -475,7 +475,7 @@ impl BytecodeGenerator {
     }
 
     fn build_class_property(&mut self, field: &ClassLiteralField) -> Result<()> {
-        if field.is_computed_name {
+        if field.is_computed_name || field.is_private {
             let mark = self.builder.register_allocator().next_register_index();
             let key = self.builder.register_allocator().new_register();
             self.build_variable_load(&field.name);
@@ -1605,6 +1605,21 @@ impl BytecodeGenerator {
             self.builder
                 .create_closure(index)
                 .store_accumulator_in_register(register);
+        }
+
+        for name in &class.private_members {
+            let name = name.clone();
+            let mark = self.builder.register_allocator().next_register_index();
+            let argument = self.builder.register_allocator().new_register_list(1);
+            self.builder
+                .load_literal_string(&name)
+                .store_accumulator_in_register(argument.first_register())
+                .call_runtime(
+                    crate::runtime::runtime::FunctionId::CreatePrivateNameSymbol,
+                    argument,
+                );
+            self.build_variable_assignment(&name);
+            self.builder.register_allocator().release_registers(mark);
         }
 
         let mut key_registers = Vec::new();

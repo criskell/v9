@@ -83,13 +83,40 @@ impl Isolate {
         }
     }
 
+    fn private_name_description(&self, name: Tagged) -> Option<std::string::String> {
+        use crate::objects::name::Symbol;
+        let object = name.to_strong_heap_object()?;
+        if self.heap.instance_type(object) != crate::objects::instance_type::SYMBOL_TYPE {
+            return None;
+        }
+        let symbol = Symbol::unchecked_cast(object);
+        if !symbol.is_private(&self.heap) {
+            return None;
+        }
+        let description = symbol.description(&self.heap);
+        match crate::objects::string::String::try_cast(&self.heap, description) {
+            Some(string) => Some(string.to_rust_string(&self.heap)),
+            None => Some(std::string::String::new()),
+        }
+    }
+
     pub(crate) fn get_property_with_accessors(
         &mut self,
         object: JSObject,
         name: Tagged,
     ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
         use crate::objects::property_details::PropertyKind;
         let Some(found) = self.lookup_property(object, name) else {
+            if let Some(description) = self.private_name_description(name) {
+                let message = self
+                    .new_string(&format!(
+                        "Cannot read private member {description} from an object whose class did \
+                         not declare it"
+                    ))
+                    .tagged();
+                return Err(Thrown(message));
+            }
             return Ok(self.undefined_value());
         };
         if found.details.kind() != PropertyKind::Accessor {
@@ -108,7 +135,19 @@ impl Isolate {
         value: Tagged,
         store_origin: StoreOrigin,
     ) -> crate::interpreter::interpreter::ExecutionResult {
+        use crate::interpreter::interpreter::Thrown;
         use crate::objects::property_details::PropertyKind;
+        if self.lookup_property(object, name).is_none() {
+            if let Some(description) = self.private_name_description(name) {
+                let message = self
+                    .new_string(&format!(
+                        "Cannot write private member {description} to an object whose class did \
+                         not declare it"
+                    ))
+                    .tagged();
+                return Err(Thrown(message));
+            }
+        }
         if let Some(found) = self.lookup_property(object, name) {
             if found.details.kind() == PropertyKind::Accessor {
                 let pair = self.property_value_at(&found);

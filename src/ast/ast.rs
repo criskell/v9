@@ -86,6 +86,7 @@ pub struct ClassLiteralField {
     pub value: Expression,
     pub is_static: bool,
     pub is_computed_name: bool,
+    pub is_private: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -102,6 +103,7 @@ pub struct ClassLiteral {
     pub extends: Option<Expression>,
     pub constructor: FunctionLiteral,
     pub public_members: Vec<ClassLiteralProperty>,
+    pub private_members: Vec<String>,
     pub instance_members_initializer_function: Option<FunctionLiteral>,
     pub static_initializer: Option<FunctionLiteral>,
     pub scope: crate::ast::scopes::Scope,
