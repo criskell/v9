@@ -3228,6 +3228,109 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    fn ls_v_format(vd: VRegister) -> Instr {
+        if vd.is_64_bits() {
+            return match vd.lane_count() {
+                1 => LS_NEON_1D,
+                2 => LS_NEON_2S,
+                4 => LS_NEON_4H,
+                8 => LS_NEON_8B,
+                _ => unreachable!(),
+            };
+        }
+        debug_assert!(vd.is_128_bits());
+        match vd.lane_count() {
+            2 => LS_NEON_2D,
+            4 => LS_NEON_4S,
+            8 => LS_NEON_8H,
+            16 => LS_NEON_16B,
+            _ => unreachable!(),
+        }
+    }
+
+    fn load_store_struct_addr_mode_field(addr: MemOperand) -> Instr {
+        let mut addr_field = Assembler::rn_sp(addr.base());
+        if addr.is_post_index() {
+            addr_field |= NEON_LOAD_STORE_MULTI_STRUCT_POST_INDEX;
+            if addr.offset() == 0 {
+                addr_field |= Assembler::rm_not31(addr.regoffset());
+            } else {
+                addr_field |= 0x1F << RM_OFFSET;
+            }
+        } else {
+            debug_assert!(addr.is_immediate_offset() && (addr.offset() == 0));
+        }
+        addr_field
+    }
+
+    fn rm_not31(rm: impl Into<CPURegister>) -> Instr {
+        let rm = rm.into();
+        debug_assert_ne!(rm.code(), K_SP_REG_INTERNAL_CODE);
+        debug_assert!(!rm.is_zero());
+        Assembler::rm(rm)
+    }
+
+    fn load_store_struct(&mut self, vt: VRegister, addr: MemOperand, op: Instr) {
+        debug_assert!(vt.is_vector() || vt.is_1d());
+        let instruction = op
+            | Assembler::load_store_struct_addr_mode_field(addr)
+            | Assembler::ls_v_format(vt)
+            | Assembler::rt(vt);
+        self.emit(instruction);
+    }
+
+    fn load_store_struct_single_all_lanes(
+        &mut self,
+        vt: VRegister,
+        addr: MemOperand,
+        op: Instr,
+    ) {
+        let instruction = op
+            | Assembler::load_store_struct_addr_mode_field(addr)
+            | Assembler::ls_v_format(vt)
+            | Assembler::rt(vt);
+        self.emit(instruction);
+    }
+
+    fn load_store_struct_single(
+        &mut self,
+        vt: VRegister,
+        lane: u32,
+        addr: MemOperand,
+        op: Instr,
+    ) {
+        let lane_size = vt.lane_size_in_bytes();
+        debug_assert!(lane < (K_Q_REG_SIZE as u32) / lane_size);
+
+        let mut lane = lane * lane_size;
+        if lane_size == 8 {
+            lane += 1;
+        }
+
+        let size = (lane << NEON_LS_SIZE_OFFSET) & NEON_LS_SIZE_MASK;
+        let s = (lane << (NEON_S_OFFSET - 2)) & NEON_S_MASK;
+        let q = (lane << (NEON_Q_OFFSET - 3)) & NEON_Q_MASK;
+
+        let mut instruction = op;
+        match lane_size {
+            1 => instruction |= NEON_LOAD_STORE_SINGLE_B,
+            2 => instruction |= NEON_LOAD_STORE_SINGLE_H,
+            4 => instruction |= NEON_LOAD_STORE_SINGLE_S,
+            _ => {
+                debug_assert_eq!(lane_size, 8);
+                instruction |= NEON_LOAD_STORE_SINGLE_D;
+            }
+        }
+
+        let instruction = instruction
+            | Assembler::load_store_struct_addr_mode_field(addr)
+            | q
+            | size
+            | s
+            | Assembler::rt(vt);
+        self.emit(instruction);
+    }
+
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         debug_assert!(vd.is_vector() || !vd.is_q());
@@ -4686,3 +4789,282 @@ define_neon_fp_compare_zero!(
     (fcmle, NEON_FCMLE_ZERO),
     (fcmlt, NEON_FCMLT_ZERO),
 );
+
+pub trait LoadStoreStructOperand {
+    fn load_store_struct(
+        asm: &mut Assembler,
+        regs: Self,
+        addr: MemOperand,
+        op1: Instr,
+        op2: Instr,
+        op3: Instr,
+        op4: Instr,
+    );
+}
+
+impl LoadStoreStructOperand for &[VRegister] {
+    fn load_store_struct(
+        asm: &mut Assembler,
+        regs: &[VRegister],
+        addr: MemOperand,
+        op1: Instr,
+        op2: Instr,
+        op3: Instr,
+        op4: Instr,
+    ) {
+        debug_assert!(!regs.is_empty() && regs.len() <= 4);
+        let vt = regs[0];
+        debug_assert!(are_same_format(vt, &regs[1..]));
+        for window in regs.windows(2) {
+            debug_assert!(Assembler::are_consecutive_v(window[0], window[1]));
+        }
+        let op = match regs.len() {
+            1 => op1,
+            2 => op2,
+            3 => op3,
+            _ => op4,
+        };
+        asm.load_store_struct(vt, addr, op);
+    }
+}
+
+macro_rules! define_load_store_struct {
+    ($(($name:ident, $op1:ident, $op2:ident, $op3:ident, $op4:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name<T: LoadStoreStructOperand>(&mut self, regs: T, addr: MemOperand) {
+                    T::load_store_struct(self, regs, addr, $op1, $op2, $op3, $op4);
+                }
+            )*
+        }
+    };
+}
+
+define_load_store_struct!(
+    (ld1, NEON_LD1_1V, NEON_LD1_2V, NEON_LD1_3V, NEON_LD1_4V),
+    (st1, NEON_ST1_1V, NEON_ST1_2V, NEON_ST1_3V, NEON_ST1_4V),
+);
+
+macro_rules! define_load_store_struct_fixed {
+    ($(($name:ident, $op:ident, $count:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, regs: &[VRegister], addr: MemOperand) {
+                    debug_assert_eq!(regs.len(), $count);
+                    let vt = regs[0];
+                    debug_assert!(are_same_format(vt, &regs[1..]));
+                    for window in regs.windows(2) {
+                        debug_assert!(Assembler::are_consecutive_v(window[0], window[1]));
+                    }
+                    self.load_store_struct(vt, addr, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_load_store_struct_fixed!(
+    (ld2, NEON_LD2, 2),
+    (ld3, NEON_LD3, 3),
+    (ld4, NEON_LD4, 4),
+    (st2, NEON_ST2, 2),
+    (st3, NEON_ST3, 3),
+    (st4, NEON_ST4, 4),
+);
+
+macro_rules! define_load_store_struct_all_lanes {
+    ($(($name:ident, $op:ident, $count:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, regs: &[VRegister], addr: MemOperand) {
+                    debug_assert_eq!(regs.len(), $count);
+                    let vt = regs[0];
+                    debug_assert!(are_same_format(vt, &regs[1..]));
+                    self.load_store_struct_single_all_lanes(vt, addr, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_load_store_struct_all_lanes!(
+    (ld1r, NEON_LD1R, 1),
+    (ld2r, NEON_LD2R, 2),
+    (ld3r, NEON_LD3R, 3),
+    (ld4r, NEON_LD4R, 4),
+);
+
+impl LoadStoreStructOperand for VOperand {
+    fn load_store_struct(
+        asm: &mut Assembler,
+        operand: VOperand,
+        addr: MemOperand,
+        op1: Instr,
+        _op2: Instr,
+        _op3: Instr,
+        _op4: Instr,
+    ) {
+        let single = if op1 == NEON_LD1_1V {
+            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD1
+        } else {
+            NEON_LOAD_STORE_SINGLE_STRUCT_STORE1
+        };
+        asm.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            addr,
+            single,
+        );
+    }
+}
+
+impl Assembler {
+    pub fn are_consecutive_v(reg1: VRegister, reg2: VRegister) -> bool {
+        (reg1.code() + 1) % K_NUMBER_OF_V_REGISTERS == reg2.code()
+    }
+
+    pub fn ld2_lane(&mut self, operand: VOperand, src: MemOperand) {
+        self.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            src,
+            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD2,
+        );
+    }
+
+    pub fn ld3_lane(&mut self, operand: VOperand, src: MemOperand) {
+        self.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            src,
+            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD3,
+        );
+    }
+
+    pub fn ld4_lane(&mut self, operand: VOperand, src: MemOperand) {
+        self.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            src,
+            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD4,
+        );
+    }
+
+    pub fn st2_lane(&mut self, operand: VOperand, dst: MemOperand) {
+        self.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            dst,
+            NEON_LOAD_STORE_SINGLE_STRUCT_STORE2,
+        );
+    }
+
+    pub fn st3_lane(&mut self, operand: VOperand, dst: MemOperand) {
+        self.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            dst,
+            NEON_LOAD_STORE_SINGLE_STRUCT_STORE3,
+        );
+    }
+
+    pub fn st4_lane(&mut self, operand: VOperand, dst: MemOperand) {
+        self.load_store_struct_single(
+            operand.reg(),
+            operand.index() as u32,
+            dst,
+            NEON_LOAD_STORE_SINGLE_STRUCT_STORE4,
+        );
+    }
+
+    pub fn bcax(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, va: VRegister) {
+        debug_assert!(vd.is_16b() && vn.is_16b() && vm.is_16b() && va.is_16b());
+        let instruction = NEON_BCAX
+            | Assembler::rm(vm)
+            | Assembler::ra(va)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn eor3(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, va: VRegister) {
+        debug_assert!(vd.is_16b() && vn.is_16b() && vm.is_16b() && va.is_16b());
+        let instruction = NEON_EOR3
+            | Assembler::rm(vm)
+            | Assembler::ra(va)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn xar(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, rotate: i32) {
+        debug_assert!(vd.is_2d() && vn.is_2d() && vm.is_2d());
+        debug_assert!(crate::utils::utils::is_uintn(rotate as i64, 6));
+        let instruction = NEON_XAR
+            | ((rotate as Instr) << IMM_NEON_IMM6_OFFSET)
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn dc8(&mut self, data: u8) {
+        self.base.emit_bytes(&[data]);
+    }
+
+    pub fn db(&mut self, data: u8) {
+        self.block_pools();
+        self.dc8(data);
+        self.release_pools();
+    }
+
+    pub fn dci(&mut self, raw_instr: Instr) {
+        self.block_pools();
+        self.emit(raw_instr);
+        self.release_pools();
+    }
+
+    pub fn dp(&mut self, data: u64) {
+        self.block_pools();
+        self.dc64(data);
+        self.release_pools();
+    }
+}
+
+impl Assembler {
+    fn cpy(&mut self, op: Instr, rd: Register, rs: Register, rn: Register) {
+        let instruction =
+            op | Assembler::rd(rd) | Assembler::rs(rs) | Assembler::rn(rn);
+        self.emit(instruction);
+    }
+
+    fn set(&mut self, op: Instr, rd: Register, rn: Register, rs: Register) {
+        let instruction =
+            op | Assembler::rd(rd) | Assembler::rn(rn) | Assembler::rs(rs);
+        self.emit(instruction);
+    }
+
+    pub fn cpyp(&mut self, rd: Register, rs: Register, rn: Register) {
+        self.cpy(CPYP, rd, rs, rn);
+    }
+
+    pub fn cpym(&mut self, rd: Register, rs: Register, rn: Register) {
+        self.cpy(CPYM, rd, rs, rn);
+    }
+
+    pub fn cpye(&mut self, rd: Register, rs: Register, rn: Register) {
+        self.cpy(CPYE, rd, rs, rn);
+    }
+
+    pub fn setp(&mut self, rd: Register, rn: Register, rs: Register) {
+        self.set(SETP, rd, rn, rs);
+    }
+
+    pub fn setm(&mut self, rd: Register, rn: Register, rs: Register) {
+        self.set(SETM, rd, rn, rs);
+    }
+
+    pub fn sete(&mut self, rd: Register, rn: Register, rs: Register) {
+        self.set(SETE, rd, rn, rs);
+    }
+}
