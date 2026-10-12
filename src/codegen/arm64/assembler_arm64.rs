@@ -7,7 +7,8 @@ use crate::codegen::arm64::utils_arm64::{count_leading_zeros, largest_power_of_2
 use crate::utils::utils::{
     checked_truncate_to_int14, checked_truncate_to_int19, checked_truncate_to_int26,
     checked_truncate_to_int7, checked_truncate_to_int9, is_int7,
-    is_int9, is_uint12, is_uint16, is_uint2, is_uint32, is_uint5, is_uint6, is_uint7,
+    is_int9, is_uint1, is_uint12, is_uint16, is_uint2, is_uint32, is_uint5, is_uint6,
+    is_uint7,
 };
 
 #[derive(Copy, Clone)]
@@ -392,10 +393,6 @@ impl Assembler {
         }
     }
 
-    fn cond(cond: Condition) -> Instr {
-        (cond as Instr) << CONDITION_BRANCH_OFFSET
-    }
-
     fn imm_uncond_branch(imm26: i32) -> Instr {
         (checked_truncate_to_int26(imm26 as i64) as Instr) << IMM_UNCOND_BRANCH_OFFSET
     }
@@ -418,11 +415,13 @@ impl Assembler {
 
     fn imm_add_sub(imm: i32) -> Instr {
         debug_assert!(Assembler::is_imm_add_sub(imm as i64));
+        let mut imm = imm;
         if is_uint12(imm as i64) {
-            (imm as Instr) << IMM_ADD_SUB_OFFSET
+            imm <<= IMM_ADD_SUB_OFFSET;
         } else {
-            (((imm >> 12) as Instr) << IMM_ADD_SUB_OFFSET) | (1 << SHIFT_ADD_SUB_OFFSET)
+            imm = ((imm >> 12) << IMM_ADD_SUB_OFFSET) | (1 << SHIFT_ADD_SUB_OFFSET);
         }
+        imm as Instr
     }
 
     fn shift_dp(shift: Shift) -> Instr {
@@ -547,7 +546,7 @@ impl Assembler {
     }
 
     pub fn b_cond(&mut self, imm19: i32, cond: Condition) {
-        let instruction = B_COND | Assembler::imm_cond_branch(imm19) | Assembler::cond(cond);
+        let instruction = B_COND | Assembler::imm_cond_branch(imm19) | (cond as Instr);
         self.emit(instruction);
     }
 
@@ -741,7 +740,7 @@ impl Assembler {
         (rt2.code() as Instr) << RT2_OFFSET
     }
 
-    fn condition(cond: Condition) -> Instr {
+    fn cond(cond: Condition) -> Instr {
         (cond as Instr) << CONDITION_OFFSET
     }
 
@@ -1224,7 +1223,7 @@ impl Assembler {
         let instruction = Assembler::sf(rd)
             | op
             | Assembler::rm(rm)
-            | Assembler::condition(cond)
+            | Assembler::cond(cond)
             | Assembler::rn(rn)
             | Assembler::rd(rd);
         self.emit(instruction);
@@ -1294,7 +1293,7 @@ impl Assembler {
         }
         let instruction = Assembler::sf(rn)
             | ccmpop
-            | Assembler::condition(cond)
+            | Assembler::cond(cond)
             | Assembler::rn(rn)
             | Assembler::nzcv(nzcv);
         self.emit(instruction);
@@ -2151,12 +2150,12 @@ impl Assembler {
     }
 
     fn extend_mode(extend: Extend) -> Instr {
-        (extend as Instr) << 13
+        (extend as Instr) << EXTEND_MODE_OFFSET
     }
 
     fn imm_extend_shift(left_shift: u32) -> Instr {
         debug_assert!(left_shift <= 4);
-        left_shift << 10
+        left_shift << IMM_EXTEND_SHIFT_OFFSET
     }
 
     fn move_wide(&mut self, rd: Register, imm: u64, shift: i32, mov_op: Instr) {
@@ -2250,8 +2249,8 @@ impl Assembler {
     }
 
     fn imm_shift_ls(shift_amount: u32) -> Instr {
-        debug_assert!(shift_amount <= 1);
-        shift_amount << 12
+        debug_assert!(is_uint1(shift_amount as i64));
+        shift_amount << IMM_SHIFT_LS_OFFSET
     }
 
     fn load_store_scaled_imm_offset(&mut self, memop: Instr, offset: i32, size: u32) {

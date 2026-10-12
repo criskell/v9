@@ -672,3 +672,7 @@ pub enum FPRounding {
     FPZero = 0x3,
     FPTieAway,
 }
+
+pub const EXTEND_MODE_OFFSET: u32 = 13;
+pub const IMM_EXTEND_SHIFT_OFFSET: u32 = 10;
+pub const IMM_SHIFT_LS_OFFSET: u32 = 12;
