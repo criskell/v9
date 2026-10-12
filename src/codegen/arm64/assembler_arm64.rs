@@ -1453,18 +1453,6 @@ impl Assembler {
         self.data_processing_3_source(rd, rn, rm, ra, UMSUBL_X);
     }
 
-    pub fn smull(&mut self, rd: Register, rn: Register, rm: Register) {
-        debug_assert!(rd.is_64_bits());
-        debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        self.data_processing_3_source(rd, rn, rm, XZR, SMADDL_X);
-    }
-
-    pub fn umull(&mut self, rd: Register, rn: Register, rm: Register) {
-        debug_assert!(rd.is_64_bits());
-        debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        self.data_processing_3_source(rd, rn, rm, XZR, UMADDL_X);
-    }
-
     pub fn smulh(&mut self, rd: Register, rn: Register, rm: Register) {
         debug_assert!(rd.is_64_bits());
         debug_assert!(rn.is_64_bits());
@@ -2177,6 +2165,73 @@ impl Assembler {
         }
     }
 
+    fn neon_3_different_l(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        vm: VRegister,
+        vop: Instr,
+    ) {
+        debug_assert!(are_same_format(vn, &[vm]));
+        let format;
+        let mut op = vop;
+        if vd.is_scalar() {
+            op |= NEON_Q | NEON_SCALAR;
+            format = Assembler::s_format(vn);
+        } else {
+            format = Assembler::v_format(vn);
+        }
+        let instruction = format
+            | op
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_3_different_w(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        vm: VRegister,
+        vop: Instr,
+    ) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        let instruction = Assembler::v_format(vm)
+            | vop
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_3_different_hn(
+        &mut self,
+        vd: VRegister,
+        vn: VRegister,
+        vm: VRegister,
+        vop: Instr,
+    ) {
+        debug_assert!(are_same_format(vm, &[vn]));
+        let instruction = Assembler::v_format(vd)
+            | vop
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_perm(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, op: Instr) {
+        debug_assert!(are_same_format(vd, &[vn, vm]));
+        debug_assert!(!vd.is_1d());
+        let instruction = Assembler::v_format(vd)
+            | op
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         debug_assert!(vd.is_vector() || !vd.is_q());
@@ -2860,6 +2915,8 @@ pub trait Arithmetic: Copy {
     fn orn(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
     fn eor(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
     fn bic(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn smull(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
+    fn umull(asm: &mut Assembler, rd: Self, rn: Self, operand: Self::Rhs);
 }
 
 impl Arithmetic for Register {
@@ -2897,6 +2954,20 @@ impl Arithmetic for Register {
 
     fn bic(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
         asm.logical(rd, rn, operand, BIC);
+    }
+
+    fn smull(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        let rm = operand.reg();
+        debug_assert!(rd.is_64_bits());
+        debug_assert!(rn.is_32_bits() && rm.is_32_bits());
+        asm.data_processing_3_source(rd, rn, rm, XZR, SMADDL_X);
+    }
+
+    fn umull(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
+        let rm = operand.reg();
+        debug_assert!(rd.is_64_bits());
+        debug_assert!(rn.is_32_bits() && rm.is_32_bits());
+        asm.data_processing_3_source(rd, rn, rm, XZR, UMADDL_X);
     }
 }
 
@@ -2942,6 +3013,16 @@ impl Arithmetic for VRegister {
         debug_assert!(vd.is_8b() || vd.is_16b());
         asm.neon_3_same(vd, vn, vm, NEON_BIC);
     }
+
+    fn smull(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vn.is_vector() && vn.is_d());
+        asm.neon_3_different_l(vd, vn, vm, NEON_SMULL);
+    }
+
+    fn umull(asm: &mut Assembler, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!(vn.is_vector() && vn.is_d());
+        asm.neon_3_different_l(vd, vn, vm, NEON_UMULL);
+    }
 }
 
 impl Assembler {
@@ -2976,4 +3057,144 @@ impl Assembler {
     pub fn bic<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
         T::bic(self, rd, rn, operand.into());
     }
+
+    pub fn smull<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::smull(self, rd, rn, operand.into());
+    }
+
+    pub fn umull<T: Arithmetic, R: Into<T::Rhs>>(&mut self, rd: T, rn: T, operand: R) {
+        T::umull(self, rd, rn, operand.into());
+    }
 }
+
+macro_rules! define_neon_3_different_l {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $vm:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    $vd: VRegister,
+                    $vn: VRegister,
+                    $vm: VRegister,
+                ) {
+                    debug_assert!($as);
+                    self.neon_3_different_l($vd, $vn, $vm, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_3_different_l!(
+    (saddl, NEON_SADDL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (saddl2, NEON_SADDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (sabal, NEON_SABAL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (sabal2, NEON_SABAL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (uabal, NEON_UABAL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (uabal2, NEON_UABAL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (sabdl, NEON_SABDL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (sabdl2, NEON_SABDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (uabdl, NEON_UABDL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (uabdl2, NEON_UABDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (smlal, NEON_SMLAL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (smlal2, NEON_SMLAL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (umlal, NEON_UMLAL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (umlal2, NEON_UMLAL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (smlsl, NEON_SMLSL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (smlsl2, NEON_SMLSL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (umlsl, NEON_UMLSL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (umlsl2, NEON_UMLSL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (smull2, NEON_SMULL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (umull2, NEON_UMULL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (ssubl, NEON_SSUBL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (ssubl2, NEON_SSUBL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (uaddl, NEON_UADDL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (uaddl2, NEON_UADDL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (usubl, NEON_USUBL, vd, vn, vm, vn.is_vector() && vn.is_d()),
+    (usubl2, NEON_USUBL2, vd, vn, vm, vn.is_vector() && vn.is_q()),
+    (sqdmlal, NEON_SQDMLAL, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s()),
+    (sqdmlal2, NEON_SQDMLAL2, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s()),
+    (sqdmlsl, NEON_SQDMLSL, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s()),
+    (sqdmlsl2, NEON_SQDMLSL2, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s()),
+    (sqdmull, NEON_SQDMULL, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s()),
+    (sqdmull2, NEON_SQDMULL2, vd, vn, vm, vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s()),
+);
+
+macro_rules! define_neon_3_different_hn {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $vm:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    $vd: VRegister,
+                    $vn: VRegister,
+                    $vm: VRegister,
+                ) {
+                    debug_assert!($as);
+                    self.neon_3_different_hn($vd, $vn, $vm, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_3_different_hn!(
+    (addhn, NEON_ADDHN, vd, vn, vm, vd.is_d()),
+    (addhn2, NEON_ADDHN2, vd, vn, vm, vd.is_q()),
+    (raddhn, NEON_RADDHN, vd, vn, vm, vd.is_d()),
+    (raddhn2, NEON_RADDHN2, vd, vn, vm, vd.is_q()),
+    (subhn, NEON_SUBHN, vd, vn, vm, vd.is_d()),
+    (subhn2, NEON_SUBHN2, vd, vn, vm, vd.is_q()),
+    (rsubhn, NEON_RSUBHN, vd, vn, vm, vd.is_d()),
+    (rsubhn2, NEON_RSUBHN2, vd, vn, vm, vd.is_q()),
+);
+
+macro_rules! define_neon_3_different_w {
+    ($(($name:ident, $op:ident, $vd:ident, $vn:ident, $vm:ident, $as:expr)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    $vd: VRegister,
+                    $vn: VRegister,
+                    $vm: VRegister,
+                ) {
+                    debug_assert!($as);
+                    self.neon_3_different_w($vd, $vn, $vm, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_3_different_w!(
+    (uaddw, NEON_UADDW, vd, vn, vm, vm.is_d()),
+    (uaddw2, NEON_UADDW2, vd, vn, vm, vm.is_q()),
+    (saddw, NEON_SADDW, vd, vn, vm, vm.is_d()),
+    (saddw2, NEON_SADDW2, vd, vn, vm, vm.is_q()),
+    (usubw, NEON_USUBW, vd, vn, vm, vm.is_d()),
+    (usubw2, NEON_USUBW2, vd, vn, vm, vm.is_q()),
+    (ssubw, NEON_SSUBW, vd, vn, vm, vm.is_d()),
+    (ssubw2, NEON_SSUBW2, vd, vn, vm, vm.is_q()),
+);
+
+macro_rules! define_neon_perm {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+                    self.neon_perm(vd, vn, vm, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_perm!(
+    (trn1, NEON_TRN1),
+    (trn2, NEON_TRN2),
+    (uzp1, NEON_UZP1),
+    (uzp2, NEON_UZP2),
+    (zip1, NEON_ZIP1),
+    (zip2, NEON_ZIP2),
+);
