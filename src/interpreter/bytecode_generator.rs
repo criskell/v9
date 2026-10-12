@@ -70,6 +70,27 @@ struct FinallyScope {
     finalization_sites: BytecodeLabels,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum TypeHint {
+    Boolean,
+    Unknown,
+}
+
+enum ExpressionResultScope {
+    Effect,
+    Value {
+        type_hint: TypeHint,
+    },
+    Test {
+        then_labels: BytecodeLabels,
+        else_labels: BytecodeLabels,
+        fallthrough: TestFallthrough,
+        result_consumed_by_test: bool,
+        type_hint: TypeHint,
+        inverted: bool,
+    },
+}
+
 pub struct BytecodeGenerator {
     builder: BytecodeArrayBuilder,
     scope_chain: Vec<Scope>,
@@ -79,6 +100,7 @@ pub struct BytecodeGenerator {
     class_scope_has_private_brand: bool,
     finally_stack: Vec<FinallyScope>,
     functions: Vec<CompiledFunction>,
+    execution_result: Vec<ExpressionResultScope>,
 }
 
 impl BytecodeGenerator {
@@ -92,6 +114,7 @@ impl BytecodeGenerator {
             class_scope_has_private_brand: false,
             finally_stack: Vec::new(),
             functions: Vec::new(),
+            execution_result: Vec::new(),
         };
         generator.functions.push(CompiledFunction {
             name: "<script>".to_string(),
@@ -591,7 +614,9 @@ impl BytecodeGenerator {
 
     fn visit_return_statement(&mut self, value: Option<&Expression>) -> Result<()> {
         match value {
-            Some(value) => self.visit_for_accumulator_value(value)?,
+            Some(value) => {
+                self.visit_for_accumulator_value(value)?;
+            }
             None => {
                 self.builder.load_undefined();
             }
@@ -907,21 +932,18 @@ impl BytecodeGenerator {
     }
 
 
-    fn visit_for_accumulator_value(&mut self, expression: &Expression) -> Result<()> {
+    fn visit(&mut self, expression: &Expression) -> Result<()> {
         self.builder.set_source_position(expression.position());
         match expression {
             Expression::Literal { value, .. } => {
-                self.builder.load_literal(value);
-                Ok(())
+                let value = value.clone();
+                self.visit_literal(&value)
             }
             Expression::VariableProxy { name, .. } => {
-                self.build_variable_load(name);
-                Ok(())
+                let name = name.clone();
+                self.visit_variable_proxy(&name)
             }
-            Expression::This { .. } => {
-                self.build_this_variable_load();
-                Ok(())
-            }
+            Expression::This { .. } => self.visit_this_expression(),
             Expression::Assignment {
                 op, target, value, ..
             } => self.visit_assignment(*op, target, value),
@@ -933,7 +955,7 @@ impl BytecodeGenerator {
             } => self.visit_compare_operation(*op, left, right),
             Expression::Logical {
                 op, left, right, ..
-            } => self.visit_logical_operation_for_value(*op, left, right),
+            } => self.visit_logical_operation(*op, left, right),
             Expression::Unary { op, expression, .. } => self.visit_unary_operation(*op, expression),
             Expression::Count {
                 op,
@@ -972,21 +994,52 @@ impl BytecodeGenerator {
                 self.unsupported("`super` outside a property access")
             }
             Expression::ArrayLiteral { values, .. } => self.visit_array_literal(values),
-            Expression::FunctionLiteral { function, .. } => {
-                let index = self.compile_function(function)?;
-                self.builder.create_closure(index);
-                Ok(())
-            }
-            Expression::Sequence { expressions, .. } => {
-                let (last, rest) = expressions
-                    .split_last()
-                    .expect("a sequence has at least one expression");
-                for expression in rest {
-                    self.visit_for_effect(expression)?;
-                }
-                self.visit_for_accumulator_value(last)
-            }
+            Expression::FunctionLiteral { function, .. } => self.visit_function_literal(function),
+            Expression::Sequence { expressions, .. } => self.visit_comma_expression(expressions),
         }
+    }
+
+    fn visit_literal(&mut self, value: &Literal) -> Result<()> {
+        if self.is_effect() {
+            return Ok(());
+        }
+        self.builder.load_literal(value);
+        if matches!(value, Literal::Boolean(_)) {
+            self.set_result_is_boolean();
+        }
+        Ok(())
+    }
+
+    fn visit_variable_proxy(&mut self, name: &str) -> Result<()> {
+        if self.is_effect() && !matches!(self.resolve(name), Resolution::Global) {
+            return Ok(());
+        }
+        self.build_variable_load(name);
+        Ok(())
+    }
+
+    fn visit_this_expression(&mut self) -> Result<()> {
+        if self.is_effect() {
+            return Ok(());
+        }
+        self.build_this_variable_load();
+        Ok(())
+    }
+
+    fn visit_function_literal(&mut self, function: &FunctionLiteral) -> Result<()> {
+        let index = self.compile_function(function)?;
+        self.builder.create_closure(index);
+        Ok(())
+    }
+
+    fn visit_comma_expression(&mut self, expressions: &[Expression]) -> Result<()> {
+        let (last, rest) = expressions
+            .split_last()
+            .expect("a sequence has at least one expression");
+        for expression in rest {
+            self.visit_for_effect(expression)?;
+        }
+        self.visit(last)
     }
 
     fn visit_for_register_value(&mut self, expression: &Expression) -> Result<Register> {
@@ -1004,44 +1057,189 @@ impl BytecodeGenerator {
         Ok(register)
     }
 
-    fn visit_for_effect(&mut self, expression: &Expression) -> Result<()> {
-        match expression {
-            Expression::Literal { .. } | Expression::This { .. } => Ok(()),
-            Expression::VariableProxy { name, .. } => match self.resolve(name) {
-                Resolution::Global => self.visit_for_accumulator_value(expression),
-                _ => Ok(()),
-            },
-            Expression::Sequence { expressions, .. } => {
-                for expression in expressions {
-                    self.visit_for_effect(expression)?;
-                }
-                Ok(())
+    fn execution_result(&self) -> &ExpressionResultScope {
+        self.execution_result
+            .last()
+            .expect("an expression result scope is open")
+    }
+
+    fn is_effect(&self) -> bool {
+        matches!(self.execution_result(), ExpressionResultScope::Effect)
+    }
+
+    fn is_test(&self) -> bool {
+        matches!(self.execution_result(), ExpressionResultScope::Test { .. })
+    }
+
+    fn set_result_is_boolean(&mut self) {
+        match self.execution_result.last_mut() {
+            Some(ExpressionResultScope::Value { type_hint })
+            | Some(ExpressionResultScope::Test { type_hint, .. }) => {
+                *type_hint = TypeHint::Boolean;
             }
-            Expression::Conditional {
-                condition,
-                then_expression,
-                else_expression,
-                ..
-            } => {
-                let mut conditional = ConditionalControlFlowBuilder::new();
-                let mut then_labels = BytecodeLabels::new();
-                let mut else_labels = BytecodeLabels::new();
-                self.visit_for_test(
-                    condition,
-                    &mut then_labels,
-                    &mut else_labels,
-                    TestFallthrough::Then,
-                )?;
-                self.builder.bind_labels(&mut then_labels);
-                self.visit_for_effect(then_expression)?;
-                conditional.jump_to_end(&mut self.builder);
-                self.builder.bind_labels(&mut else_labels);
-                self.visit_for_effect(else_expression)?;
-                conditional.finish(&mut self.builder);
-                Ok(())
-            }
-            _ => self.visit_for_accumulator_value(expression),
+            _ => {}
         }
+    }
+
+    fn result_consumed_by_test(&self) -> bool {
+        match self.execution_result() {
+            ExpressionResultScope::Test {
+                result_consumed_by_test,
+                ..
+            } => *result_consumed_by_test,
+            _ => false,
+        }
+    }
+
+    fn set_result_consumed_by_test(&mut self) {
+        if let Some(ExpressionResultScope::Test {
+            result_consumed_by_test,
+            ..
+        }) = self.execution_result.last_mut()
+        {
+            *result_consumed_by_test = true;
+        }
+    }
+
+    fn invert_control_flow(&mut self) {
+        if let Some(ExpressionResultScope::Test {
+            then_labels,
+            else_labels,
+            fallthrough,
+            inverted,
+            ..
+        }) = self.execution_result.last_mut()
+        {
+            std::mem::swap(then_labels, else_labels);
+            *fallthrough = fallthrough.inverted();
+            *inverted = !*inverted;
+        }
+    }
+
+    fn take_test_labels(&mut self) -> (BytecodeLabels, BytecodeLabels) {
+        match self.execution_result.last_mut() {
+            Some(ExpressionResultScope::Test {
+                then_labels,
+                else_labels,
+                ..
+            }) => (std::mem::take(then_labels), std::mem::take(else_labels)),
+            _ => unreachable!("not a test result scope"),
+        }
+    }
+
+    fn put_test_labels(&mut self, then: BytecodeLabels, otherwise: BytecodeLabels) {
+        match self.execution_result.last_mut() {
+            Some(ExpressionResultScope::Test {
+                then_labels,
+                else_labels,
+                ..
+            }) => {
+                *then_labels = then;
+                *else_labels = otherwise;
+            }
+            _ => unreachable!("not a test result scope"),
+        }
+    }
+
+    fn test_scope_parts(&self) -> (TestFallthrough, TypeHint) {
+        match self.execution_result() {
+            ExpressionResultScope::Test {
+                fallthrough,
+                type_hint,
+                ..
+            } => (*fallthrough, *type_hint),
+            _ => unreachable!("not a test result scope"),
+        }
+    }
+
+    fn build_test(
+        &mut self,
+        type_hint: TypeHint,
+        then_labels: &mut BytecodeLabels,
+        else_labels: &mut BytecodeLabels,
+        fallthrough: TestFallthrough,
+    ) {
+        let already_boolean = type_hint == TypeHint::Boolean;
+        match fallthrough {
+            TestFallthrough::Then => {
+                let label = else_labels.new_label();
+                if already_boolean {
+                    self.builder.jump_if_false(else_labels.label_mut(label));
+                } else {
+                    self.builder
+                        .jump_if_to_boolean_false(else_labels.label_mut(label));
+                }
+            }
+            TestFallthrough::Else => {
+                let label = then_labels.new_label();
+                if already_boolean {
+                    self.builder.jump_if_true(then_labels.label_mut(label));
+                } else {
+                    self.builder
+                        .jump_if_to_boolean_true(then_labels.label_mut(label));
+                }
+            }
+            TestFallthrough::None => {
+                let then_label = then_labels.new_label();
+                if already_boolean {
+                    self.builder.jump_if_true(then_labels.label_mut(then_label));
+                } else {
+                    self.builder
+                        .jump_if_to_boolean_true(then_labels.label_mut(then_label));
+                }
+                let else_label = else_labels.new_label();
+                self.builder.jump(else_labels.label_mut(else_label));
+            }
+        }
+    }
+
+    fn visit_for_accumulator_value_or_the_hole(
+        &mut self,
+        expression: Option<&Expression>,
+    ) -> Result<()> {
+        match expression {
+            None => {
+                self.builder.load_the_hole();
+                Ok(())
+            }
+            Some(expression) => {
+                self.visit_for_accumulator_value(expression)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn visit_in_same_test_execution_scope(&mut self, expression: &Expression) -> Result<()> {
+        debug_assert!(self.is_test());
+        self.visit(expression)?;
+        if !self.result_consumed_by_test() {
+            let (fallthrough, type_hint) = self.test_scope_parts();
+            let (mut then_labels, mut else_labels) = self.take_test_labels();
+            self.build_test(type_hint, &mut then_labels, &mut else_labels, fallthrough);
+            self.put_test_labels(then_labels, else_labels);
+            self.set_result_consumed_by_test();
+        }
+        Ok(())
+    }
+
+    fn visit_for_accumulator_value(&mut self, expression: &Expression) -> Result<TypeHint> {
+        self.execution_result.push(ExpressionResultScope::Value {
+            type_hint: TypeHint::Unknown,
+        });
+        let result = self.visit(expression);
+        let scope = self.execution_result.pop().expect("the value scope");
+        result?;
+        match scope {
+            ExpressionResultScope::Value { type_hint } => Ok(type_hint),
+            _ => unreachable!("not a value result scope"),
+        }
+    }
+
+    fn visit_for_effect(&mut self, expression: &Expression) -> Result<()> {
+        self.execution_result.push(ExpressionResultScope::Effect);
+        let result = self.visit(expression);
+        self.execution_result.pop();
+        result
     }
 
     fn visit_for_test(
@@ -1051,76 +1249,63 @@ impl BytecodeGenerator {
         else_labels: &mut BytecodeLabels,
         fallthrough: TestFallthrough,
     ) -> Result<()> {
-        match expression {
-            Expression::Unary {
-                op: Token::Not,
-                expression,
-                ..
-            } => self.visit_for_test(expression, else_labels, then_labels, fallthrough.inverted()),
-
-            Expression::Logical {
-                op: Token::And,
-                left,
-                right,
-                ..
-            } => {
-                let mut inner_then = BytecodeLabels::new();
-                self.visit_for_test(left, &mut inner_then, else_labels, TestFallthrough::Then)?;
-                self.builder.bind_labels(&mut inner_then);
-                self.visit_for_test(right, then_labels, else_labels, fallthrough)
-            }
-
-            Expression::Logical {
-                op: Token::Or,
-                left,
-                right,
-                ..
-            } => {
-                let mut inner_else = BytecodeLabels::new();
-                self.visit_for_test(left, then_labels, &mut inner_else, TestFallthrough::Else)?;
-                self.builder.bind_labels(&mut inner_else);
-                self.visit_for_test(right, then_labels, else_labels, fallthrough)
-            }
-
-            _ => {
-                let produces_boolean = matches!(expression, Expression::Compare { .. });
-                self.visit_for_accumulator_value(expression)?;
-                match fallthrough {
-                    TestFallthrough::Then => {
-                        let label = else_labels.new_label();
-                        if produces_boolean {
-                            self.builder.jump_if_false(else_labels.label_mut(label));
-                        } else {
-                            self.builder
-                                .jump_if_to_boolean_false(else_labels.label_mut(label));
-                        }
-                    }
-                    TestFallthrough::Else => {
-                        let label = then_labels.new_label();
-                        if produces_boolean {
-                            self.builder.jump_if_true(then_labels.label_mut(label));
-                        } else {
-                            self.builder
-                                .jump_if_to_boolean_true(then_labels.label_mut(label));
-                        }
-                    }
-                    TestFallthrough::None => {
-                        let then_label = then_labels.new_label();
-                        if produces_boolean {
-                            self.builder.jump_if_true(then_labels.label_mut(then_label));
-                        } else {
-                            self.builder
-                                .jump_if_to_boolean_true(then_labels.label_mut(then_label));
-                        }
-                        let else_label = else_labels.new_label();
-                        self.builder.jump(else_labels.label_mut(else_label));
-                    }
-                }
-                Ok(())
-            }
+        self.execution_result.push(ExpressionResultScope::Test {
+            then_labels: std::mem::take(then_labels),
+            else_labels: std::mem::take(else_labels),
+            fallthrough,
+            result_consumed_by_test: false,
+            type_hint: TypeHint::Unknown,
+            inverted: false,
+        });
+        let result = self.visit(expression);
+        let scope = self.execution_result.pop().expect("the test scope");
+        let ExpressionResultScope::Test {
+            then_labels: mut visited_then,
+            else_labels: mut visited_else,
+            fallthrough,
+            result_consumed_by_test,
+            type_hint,
+            inverted,
+        } = scope
+        else {
+            unreachable!("not a test result scope")
+        };
+        if result.is_ok() && !result_consumed_by_test {
+            self.build_test(
+                type_hint,
+                &mut visited_then,
+                &mut visited_else,
+                fallthrough,
+            );
         }
+        if inverted {
+            *then_labels = visited_else;
+            *else_labels = visited_then;
+        } else {
+            *then_labels = visited_then;
+            *else_labels = visited_else;
+        }
+        result
     }
 
+
+    fn visit_not(&mut self, expression: &Expression) -> Result<()> {
+        if self.is_effect() {
+            return self.visit_for_effect(expression);
+        }
+        if self.is_test() {
+            self.invert_control_flow();
+            return self.visit_in_same_test_execution_scope(expression);
+        }
+        let type_hint = self.visit_for_accumulator_value(expression)?;
+        if type_hint == TypeHint::Boolean {
+            self.builder.logical_not();
+        } else {
+            self.builder.to_boolean_logical_not();
+        }
+        self.set_result_is_boolean();
+        Ok(())
+    }
 
     fn visit_binary_operation(
         &mut self,
@@ -1168,6 +1353,7 @@ impl BytecodeGenerator {
                 Token::Eq => self.builder.compare_undetectable(),
                 other => unreachable!("{other} does not fold against an oddball"),
             };
+            self.set_result_is_boolean();
             return Ok(());
         }
 
@@ -1185,7 +1371,57 @@ impl BytecodeGenerator {
             self.builder.logical_not();
         }
         self.builder.register_allocator().release_registers(mark);
+        self.set_result_is_boolean();
         Ok(())
+    }
+
+    fn visit_logical_operation(
+        &mut self,
+        op: Token,
+        left: &Expression,
+        right: &Expression,
+    ) -> Result<()> {
+        if self.is_test() {
+            return self.visit_logical_test(op, left, right);
+        }
+        self.visit_logical_operation_for_value(op, left, right)
+    }
+
+    fn visit_logical_test(
+        &mut self,
+        op: Token,
+        left: &Expression,
+        right: &Expression,
+    ) -> Result<()> {
+        self.visit_logical_test_sub_expression(op, left)?;
+        self.visit_in_same_test_execution_scope(right)
+    }
+
+    fn visit_logical_test_sub_expression(
+        &mut self,
+        op: Token,
+        expression: &Expression,
+    ) -> Result<()> {
+        let (mut then_labels, mut else_labels) = self.take_test_labels();
+        let mut test_next = BytecodeLabels::new();
+        let result = match op {
+            Token::Or => self.visit_for_test(
+                expression,
+                &mut then_labels,
+                &mut test_next,
+                TestFallthrough::Else,
+            ),
+            Token::And => self.visit_for_test(
+                expression,
+                &mut test_next,
+                &mut else_labels,
+                TestFallthrough::Then,
+            ),
+            other => unreachable!("{other} is not a logical test operator"),
+        };
+        self.builder.bind_labels(&mut test_next);
+        self.put_test_labels(then_labels, else_labels);
+        result
     }
 
     fn visit_logical_operation_for_value(
@@ -1227,11 +1463,7 @@ impl BytecodeGenerator {
 
     fn visit_unary_operation(&mut self, op: Token, expression: &Expression) -> Result<()> {
         match op {
-            Token::Not => {
-                self.visit_for_accumulator_value(expression)?;
-                self.builder.to_boolean_logical_not();
-                Ok(())
-            }
+            Token::Not => self.visit_not(expression),
             Token::TypeOf => {
                 self.visit_for_accumulator_value(expression)?;
                 self.builder.type_of();
@@ -1460,10 +1692,10 @@ impl BytecodeGenerator {
             TestFallthrough::Then,
         )?;
         self.builder.bind_labels(&mut then_labels);
-        self.visit_for_accumulator_value(then_expression)?;
+        self.visit(then_expression)?;
         conditional.jump_to_end(&mut self.builder);
         self.builder.bind_labels(&mut else_labels);
-        self.visit_for_accumulator_value(else_expression)?;
+        self.visit(else_expression)?;
         conditional.finish(&mut self.builder);
         Ok(())
     }
@@ -1825,12 +2057,7 @@ impl BytecodeGenerator {
             args.register_count()
         );
 
-        match &class.extends {
-            Some(extends) => self.visit_for_accumulator_value(extends)?,
-            None => {
-                self.builder.load_the_hole();
-            }
-        }
+        self.visit_for_accumulator_value_or_the_hole(class.extends.as_ref())?;
         self.builder.store_accumulator_in_register(super_class);
 
         let index = self.compile_function(&class.constructor)?;
