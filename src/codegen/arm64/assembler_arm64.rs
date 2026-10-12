@@ -2892,6 +2892,342 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    fn imm_neon_ext(imm4: i32) -> Instr {
+        debug_assert!(crate::utils::utils::is_uintn(imm4 as i64, 4));
+        (imm4 as Instr) << IMM_NEON_EXT_OFFSET
+    }
+
+    fn imm_neon5(format: Instr, index: i32) -> Instr {
+        debug_assert!(crate::utils::utils::is_uintn(index as i64, 4));
+        let s = Assembler::lane_size_in_bytes_log2_from_neon_format(format) as i32;
+        let imm5 = (index << (s + 1)) | (1 << s);
+        (imm5 as Instr) << IMM_NEON5_OFFSET
+    }
+
+    fn imm_neon4(format: Instr, index: i32) -> Instr {
+        debug_assert!(crate::utils::utils::is_uintn(index as i64, 4));
+        let s = Assembler::lane_size_in_bytes_log2_from_neon_format(format) as i32;
+        let imm4 = index << s;
+        (imm4 as Instr) << IMM_NEON4_OFFSET
+    }
+
+    fn lane_size_in_bytes_log2_from_neon_format(format: Instr) -> u32 {
+        match format & NEON_FORMAT_FIELD_MASK & !NEON_Q {
+            NEON_8B => 0,
+            NEON_4H => 1,
+            NEON_2S => 2,
+            NEON_1D => 3,
+            _ => unreachable!(),
+        }
+    }
+
+    fn imm_neon_abcdefgh(imm8: i32) -> Instr {
+        debug_assert!(crate::utils::utils::is_uintn(imm8 as i64, 8));
+        let mut instruction = (((imm8 >> 5) & 7) as Instr) << IMM_NEON_ABC_OFFSET;
+        instruction |= ((imm8 & 0x1f) as Instr) << IMM_NEON_DEFGH_OFFSET;
+        instruction
+    }
+
+    fn neon_cmode(cmode: i32) -> Instr {
+        debug_assert!(crate::utils::utils::is_uintn(cmode as i64, 4));
+        (cmode as Instr) << NEON_CMODE_OFFSET
+    }
+
+    fn neon_mod_imm_op(op: i32) -> Instr {
+        debug_assert!(is_uint1(op as i64));
+        (op as Instr) << NEON_MOD_IMM_OP_OFFSET
+    }
+
+    fn neon_format_for_lane_size(lane_size: u32) -> Instr {
+        match lane_size {
+            1 => NEON_16B,
+            2 => NEON_8H,
+            4 => NEON_4S,
+            _ => {
+                debug_assert_eq!(lane_size, 8);
+                NEON_2D
+            }
+        }
+    }
+
+    fn neon_modified_imm_shift_lsl(
+        &mut self,
+        vd: VRegister,
+        imm8: i32,
+        left_shift: i32,
+        op: Instr,
+    ) {
+        debug_assert!(
+            vd.is_8b() || vd.is_16b() || vd.is_4h() || vd.is_8h() || vd.is_2s() || vd.is_4s()
+        );
+        debug_assert!(
+            (left_shift == 0) || (left_shift == 8) || (left_shift == 16) || (left_shift == 24)
+        );
+        debug_assert!(crate::utils::utils::is_uintn(imm8 as i64, 8));
+
+        let cmode_1;
+        let cmode_2;
+        let mut cmode_3;
+        if vd.is_8b() || vd.is_16b() {
+            debug_assert_eq!(op, NEON_MODIFIED_IMMEDIATE_MOVI);
+            cmode_1 = 1;
+            cmode_2 = 1;
+            cmode_3 = 1;
+        } else {
+            cmode_1 = (left_shift >> 3) & 1;
+            cmode_2 = left_shift >> 4;
+            cmode_3 = 0;
+            if vd.is_4h() || vd.is_8h() {
+                debug_assert!((left_shift == 0) || (left_shift == 8));
+                cmode_3 = 1;
+            }
+        }
+        let cmode = (cmode_3 << 3) | (cmode_2 << 2) | (cmode_1 << 1);
+
+        let q = if vd.is_q() { NEON_Q } else { 0 };
+        let instruction = q
+            | op
+            | Assembler::imm_neon_abcdefgh(imm8)
+            | Assembler::neon_cmode(cmode)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_modified_imm_shift_msl(
+        &mut self,
+        vd: VRegister,
+        imm8: i32,
+        shift_amount: i32,
+        op: Instr,
+    ) {
+        debug_assert!(vd.is_2s() || vd.is_4s());
+        debug_assert!((shift_amount == 8) || (shift_amount == 16));
+        debug_assert!(crate::utils::utils::is_uintn(imm8 as i64, 8));
+
+        let cmode_0 = (shift_amount >> 4) & 1;
+        let cmode = 0xC | cmode_0;
+
+        let q = if vd.is_q() { NEON_Q } else { 0 };
+        let instruction = q
+            | op
+            | Assembler::imm_neon_abcdefgh(imm8)
+            | Assembler::neon_cmode(cmode)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn movi(&mut self, vd: VRegister, imm: u64, shift: Shift, shift_amount: i32) {
+        debug_assert!((shift == Shift::Lsl) || (shift == Shift::Msl));
+        if vd.is_2d() || vd.is_1d() {
+            debug_assert_eq!(shift_amount, 0);
+            let mut imm8 = 0;
+            for i in 0..8 {
+                let byte = (imm >> (i * 8)) & 0xFF;
+                debug_assert!((byte == 0) || (byte == 0xFF));
+                if byte == 0xFF {
+                    imm8 |= 1 << i;
+                }
+            }
+            let q = if vd.is_2d() { NEON_Q } else { 0 };
+            let instruction = q
+                | Assembler::neon_mod_imm_op(1)
+                | NEON_MODIFIED_IMMEDIATE_MOVI
+                | Assembler::imm_neon_abcdefgh(imm8)
+                | Assembler::neon_cmode(0xE)
+                | Assembler::rd(vd);
+            self.emit(instruction);
+        } else if shift == Shift::Lsl {
+            debug_assert!(crate::utils::utils::is_uintn(imm as i64, 8));
+            self.neon_modified_imm_shift_lsl(
+                vd,
+                imm as i32,
+                shift_amount,
+                NEON_MODIFIED_IMMEDIATE_MOVI,
+            );
+        } else {
+            debug_assert!(crate::utils::utils::is_uintn(imm as i64, 8));
+            self.neon_modified_imm_shift_msl(
+                vd,
+                imm as i32,
+                shift_amount,
+                NEON_MODIFIED_IMMEDIATE_MOVI,
+            );
+        }
+    }
+
+    pub fn mvni(&mut self, vd: VRegister, imm8: i32, shift: Shift, shift_amount: i32) {
+        debug_assert!((shift == Shift::Lsl) || (shift == Shift::Msl));
+        if shift == Shift::Lsl {
+            self.neon_modified_imm_shift_lsl(
+                vd,
+                imm8,
+                shift_amount,
+                NEON_MODIFIED_IMMEDIATE_MVNI,
+            );
+        } else {
+            self.neon_modified_imm_shift_msl(
+                vd,
+                imm8,
+                shift_amount,
+                NEON_MODIFIED_IMMEDIATE_MVNI,
+            );
+        }
+    }
+
+    pub fn ins(&mut self, vd: VRegister, vd_index: i32, vn: VRegister, vn_index: i32) {
+        debug_assert!(are_same_format(vd, &[vn]));
+        let lane_size = vd.lane_size_in_bytes();
+        let format = Assembler::neon_format_for_lane_size(lane_size);
+        debug_assert!(
+            (0 <= vd_index) && (vd_index < lane_count_from_neon_format(format))
+        );
+        debug_assert!(
+            (0 <= vn_index) && (vn_index < lane_count_from_neon_format(format))
+        );
+        let instruction = NEON_INS_ELEMENT
+            | Assembler::imm_neon5(format, vd_index)
+            | Assembler::imm_neon4(format, vn_index)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn ins_from_register(&mut self, vd: VRegister, vd_index: i32, rn: Register) {
+        let lane_size = vd.lane_size_in_bytes();
+        let format = Assembler::neon_format_for_lane_size(lane_size);
+        if lane_size == 8 {
+            debug_assert!(rn.is_x());
+        } else {
+            debug_assert!(rn.is_w());
+        }
+        debug_assert!(
+            (0 <= vd_index) && (vd_index < lane_count_from_neon_format(format))
+        );
+        let instruction = NEON_INS_GENERAL
+            | Assembler::imm_neon5(format, vd_index)
+            | Assembler::rn(rn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn dup(&mut self, vd: VRegister, vn: VRegister, vn_index: i32) {
+        let q;
+        let scalar;
+        let lane_size = vn.lane_size_in_bytes();
+        let format = Assembler::neon_format_for_lane_size(lane_size);
+
+        if vd.is_scalar() {
+            q = NEON_Q;
+            scalar = NEON_SCALAR;
+        } else {
+            debug_assert!(!vd.is_1d());
+            q = if vd.is_d() { 0 } else { NEON_Q };
+            scalar = 0;
+        }
+        let instruction = q
+            | scalar
+            | NEON_DUP_ELEMENT
+            | Assembler::imm_neon5(format, vn_index)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn dup_from_register(&mut self, vd: VRegister, rn: Register) {
+        debug_assert!(!vd.is_1d());
+        debug_assert_eq!(vd.is_2d(), rn.is_x());
+        let q = if vd.is_d() { 0 } else { NEON_Q };
+        let instruction = q
+            | NEON_DUP_GENERAL
+            | Assembler::imm_neon5(Assembler::v_format(vd), 0)
+            | Assembler::rn(rn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn smov(&mut self, rd: Register, vn: VRegister, vn_index: i32) {
+        let lane_size = vn.lane_size_in_bytes();
+        let format;
+        match lane_size {
+            1 => format = NEON_16B,
+            2 => format = NEON_8H,
+            _ => {
+                debug_assert_eq!(lane_size, 4);
+                debug_assert!(rd.is_x());
+                format = NEON_4S;
+            }
+        }
+        let q = if rd.is_w() { 0 } else { NEON_Q };
+        debug_assert!(
+            (0 <= vn_index) && (vn_index < lane_count_from_neon_format(format))
+        );
+        let instruction = q
+            | NEON_SMOV
+            | Assembler::imm_neon5(format, vn_index)
+            | Assembler::rn(vn)
+            | Assembler::rd(rd);
+        self.emit(instruction);
+    }
+
+    pub fn umov(&mut self, rd: Register, vn: VRegister, vn_index: i32) {
+        let lane_size = vn.lane_size_in_bytes();
+        let format;
+        let mut q = 0;
+        match lane_size {
+            1 => {
+                format = NEON_16B;
+                debug_assert!(rd.is_w());
+            }
+            2 => {
+                format = NEON_8H;
+                debug_assert!(rd.is_w());
+            }
+            4 => {
+                format = NEON_4S;
+                debug_assert!(rd.is_w());
+            }
+            _ => {
+                debug_assert_eq!(lane_size, 8);
+                debug_assert!(rd.is_x());
+                format = NEON_2D;
+                q = NEON_Q;
+            }
+        }
+        debug_assert!(
+            (0 <= vn_index) && (vn_index < lane_count_from_neon_format(format))
+        );
+        let instruction = q
+            | NEON_UMOV
+            | Assembler::imm_neon5(format, vn_index)
+            | Assembler::rn(vn)
+            | Assembler::rd(rd);
+        self.emit(instruction);
+    }
+
+    pub fn ext(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, index: i32) {
+        debug_assert!(are_same_format(vd, &[vn, vm]));
+        debug_assert!(vd.is_8b() || vd.is_16b());
+        debug_assert!((0 <= index) && (index < vd.lane_count()));
+        let instruction = Assembler::v_format(vd)
+            | NEON_EXT
+            | Assembler::rm(vm)
+            | Assembler::imm_neon_ext(index)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn sdot(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+        debug_assert!((vn.is_16b() && vd.is_4s()) || (vn.is_8b() && vd.is_2s()));
+        debug_assert!(are_same_format(vn, &[vm]));
+        let instruction = Assembler::v_format(vd)
+            | NEON_SDOT
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
     fn neon_3_same(&mut self, vd: VRegister, vn: VRegister, vm: VRegister, vop: Instr) {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         debug_assert!(vd.is_vector() || !vd.is_q());
@@ -4312,4 +4648,41 @@ define_neon_xtn!(
     (uqxtn2, NEON_UQXTN, vd, vd.is_vector() && vd.is_q()),
     (sqxtun, NEON_SQXTUN, vd, vd.is_scalar() || vd.is_d()),
     (sqxtun2, NEON_SQXTUN, vd, vd.is_vector() && vd.is_q()),
+);
+
+macro_rules! define_neon_compare_zero {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister, value: i32) {
+                    debug_assert!(vd.is_vector() || vd.is_1d());
+                    debug_assert_eq!(value, 0);
+                    self.neon_2_reg_misc(vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_compare_zero!(
+    (cmle, NEON_CMLE_ZERO),
+    (cmlt, NEON_CMLT_ZERO),
+);
+
+macro_rules! define_neon_fp_compare_zero {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister, value: f64) {
+                    debug_assert_eq!(value, 0.0);
+                    self.neon_fp_2_reg_misc_zero(vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_neon_fp_compare_zero!(
+    (fcmle, NEON_FCMLE_ZERO),
+    (fcmlt, NEON_FCMLT_ZERO),
 );

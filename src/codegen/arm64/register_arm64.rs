@@ -560,6 +560,20 @@ pub fn lane_size_in_bytes_log2_from_format(vform: VectorFormat) -> u32 {
     }
 }
 
+pub fn lane_count_from_neon_format(format: u32) -> i32 {
+    match format & 0x40C00000 {
+        0x00000000 => 8,
+        0x40000000 => 16,
+        0x00400000 => 4,
+        0x40400000 => 8,
+        0x00800000 => 2,
+        0x40800000 => 4,
+        0x00C00000 => 1,
+        0x40C00000 => 2,
+        _ => unreachable!(),
+    }
+}
+
 pub fn lane_count_from_format(vform: VectorFormat) -> i32 {
     debug_assert_ne!(vform, VectorFormat::FormatUndefined);
     match vform {
@@ -689,6 +703,11 @@ impl VRegister {
     #[inline]
     pub fn lane_size_in_bits(self) -> u32 {
         self.size_in_bits() / self.lane_count() as u32
+    }
+
+    #[inline]
+    pub fn lane_size_in_bytes(self) -> u32 {
+        self.lane_size_in_bits() / 8
     }
 
     #[inline]
