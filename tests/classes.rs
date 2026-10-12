@@ -762,3 +762,138 @@ fn an_arrow_nested_twice_in_a_field_keeps_this() {
         "2"
     );
 }
+
+#[test]
+fn a_computed_name_becomes_a_method() {
+    assert_eq!(
+        evaluate("var k = 'm'; class A { [k]() { return 1; } } (new A()).m()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate("var k = 'm'; class A { static [k]() { return 2; } } A.m()"),
+        "2"
+    );
+}
+
+#[test]
+fn a_computed_method_lives_on_the_prototype_and_is_not_enumerable() {
+    assert_eq!(
+        evaluate(
+            "var k = 'm';
+             class A { [k]() { return 1; } }
+             var a = new A();
+             (A.prototype.m === a.m) + ',' + Object.keys(a).length + ',' + Object.keys(A).length"
+        ),
+        "true,0,0"
+    );
+}
+
+#[test]
+fn a_computed_name_becomes_an_accessor() {
+    assert_eq!(
+        evaluate(
+            "var k = 'x';
+             class A { get [k]() { return 3; } }
+             (new A()).x"
+        ),
+        "3"
+    );
+    assert_eq!(
+        evaluate(
+            "var k = 'x';
+             class A { get [k]() { return 1; } set [k](v) { this.seen = v; } }
+             var a = new A();
+             a.x = 4;
+             a.x + ',' + a.seen"
+        ),
+        "1,4"
+    );
+}
+
+#[test]
+fn computed_names_are_evaluated_in_source_order() {
+    assert_eq!(
+        evaluate(
+            "var order = '';
+             function a() { order = order + 'a'; return 'p'; }
+             function b() { order = order + 'b'; return 'q'; }
+             class A { [a]() {} [b]() {} [a()]() {} [b()]() {} }
+             order"
+        ),
+        "ab"
+    );
+    assert_eq!(
+        evaluate(
+            "var i = 0;
+             function f() { i = i + 1; return 'k' + i; }
+             class A { [f()]() { return 1; } [f()]() { return 2; } }
+             var a = new A();
+             a.k1() + ',' + a.k2() + ',' + i"
+        ),
+        "1,2,2"
+    );
+}
+
+#[test]
+fn a_computed_name_that_throws_abandons_the_class() {
+    assert_eq!(
+        evaluate(
+            "var caught = 'no';
+             var order = '';
+             function a() { order = order + 'a'; return 'p'; }
+             function b() { throw 'boom'; }
+             try {
+                 class A { [a()]() {} [b()]() {} }
+             } catch (e) {
+                 caught = e;
+             }
+             caught + ',' + order"
+        ),
+        "boom,a"
+    );
+}
+
+#[test]
+fn a_computed_name_is_converted_with_to_name() {
+    assert_eq!(
+        evaluate("class A { [1]() { return 'one'; } } var a = new A(); a[1]() + ',' + a['1']()"),
+        "one,one"
+    );
+    assert_eq!(
+        evaluate("var k = 2 + 3; class A { [k]() { return 'five'; } } (new A())[5]()"),
+        "five"
+    );
+}
+
+#[test]
+fn a_computed_name_can_shadow_a_literal_one() {
+    assert_eq!(
+        evaluate("var k = 'm'; class A { m() { return 1; } [k]() { return 2; } } (new A()).m()"),
+        "2"
+    );
+    assert_eq!(
+        evaluate("var k = 'm'; class A { [k]() { return 1; } m() { return 2; } } (new A()).m()"),
+        "2"
+    );
+}
+
+#[test]
+fn a_computed_method_is_inherited() {
+    assert_eq!(
+        evaluate(
+            "var k = 'm';
+             class B { [k]() { return 1; } }
+             class A extends B {}
+             (new A()).m()"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn a_class_expression_takes_computed_names_too() {
+    assert_eq!(
+        evaluate("var k = 'm'; var A = class { [k]() { return 1; } }; (new A()).m()"),
+        "1"
+    );
+}

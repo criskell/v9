@@ -158,7 +158,11 @@ impl Isolate {
             }
             let value_kind = boilerplate.value_kind_at(&self.heap, member);
             let name = boilerplate.key_at(&self.heap, member);
-            let name = self.create_handle(name);
+            let name = if name.is_smi() {
+                args[crate::objects::smi::Smi::to_int(name) as usize]
+            } else {
+                self.create_handle(name)
+            };
             let value = args
                 [ClassBoilerplate::K_FIRST_DYNAMIC_ARGUMENT_INDEX as usize + member as usize];
 

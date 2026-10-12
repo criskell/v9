@@ -12,7 +12,7 @@ pub enum ConstantEntry {
     Name(String),
     FunctionLiteral(usize),
     ScopeInfo(Vec<String>),
-    ClassBoilerplate(Vec<(i32, String)>),
+    ClassBoilerplate(Vec<(i32, Option<String>)>),
     ClassFieldsSymbol,
     TheHole,
 }
@@ -185,7 +185,7 @@ impl ConstantArrayBuilder {
         self.insert_deduped(DedupKey::ClassFieldsSymbol, ConstantEntry::ClassFieldsSymbol)
     }
 
-    pub fn insert_class_boilerplate(&mut self, members: &[(i32, String)]) -> usize {
+    pub fn insert_class_boilerplate(&mut self, members: &[(i32, Option<String>)]) -> usize {
         self.allocate_index(ConstantEntry::ClassBoilerplate(members.to_vec()))
     }
 

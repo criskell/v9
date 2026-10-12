@@ -439,25 +439,36 @@ impl Isolate {
 
     pub fn new_class_boilerplate(
         &mut self,
-        members: &[(i32, String)],
+        members: &[(i32, Option<String>)],
     ) -> crate::objects::literal_objects::ClassBoilerplate {
         use crate::objects::literal_objects::ClassBoilerplate;
         use crate::objects::smi::Smi;
 
         let scope = self.handle_scope();
+        let first_key_index =
+            ClassBoilerplate::K_FIRST_DYNAMIC_ARGUMENT_INDEX + members.len() as i32;
+        let mut number_of_computed = 0;
         let mut keys = Vec::with_capacity(members.len());
         for (_, name) in members {
-            let name = name.clone();
-            let interned = self.internalize_string(&name).tagged();
-            keys.push(self.create_handle(interned));
+            match name {
+                Some(name) => {
+                    let name = name.clone();
+                    let interned = self.internalize_string(&name).tagged();
+                    keys.push(self.create_handle(interned));
+                }
+                None => {
+                    let index = Smi::from_int(first_key_index + number_of_computed);
+                    number_of_computed += 1;
+                    keys.push(self.create_handle(index));
+                }
+            }
         }
 
         let length = ClassBoilerplate::K_FIRST_MEMBER_INDEX
             + members.len() as i32 * ClassBoilerplate::K_MEMBER_SIZE;
         let array = self.new_fixed_array_tenured(length);
         let array_handle = self.create_object_handle(array.object());
-        let arguments_count = ClassBoilerplate::K_FIRST_DYNAMIC_ARGUMENT_INDEX
-            + members.len() as i32;
+        let arguments_count = first_key_index + number_of_computed;
         let array = crate::objects::fixed_array::FixedArray::unchecked_cast(
             array_handle.object(self),
         );

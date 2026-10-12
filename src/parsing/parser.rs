@@ -1383,7 +1383,24 @@ impl Parser {
 
         let position = self.peek_position();
         if self.peek() == Token::LeftBracket {
-            return Err(self.unexpected_token_with_hint("computed class members are not implemented"));
+            self.consume(Token::LeftBracket);
+            let saved = self.accept_in;
+            self.accept_in = true;
+            let key = self.parse_assignment_expression();
+            self.accept_in = saved;
+            let key = key?;
+            self.expect(Token::RightBracket)?;
+            if self.peek() != Token::LeftParen {
+                return Err(self
+                    .unexpected_token_with_hint("computed class fields are not implemented"));
+            }
+            let value = self.parse_method_literal(None, is_static, position)?;
+            return Ok(ClassMember::Property(ClassLiteralProperty {
+                key: PropertyKey::Computed(key),
+                value,
+                kind,
+                is_static,
+            }));
         }
         let name = self.parse_property_name()?;
         if self.peek() != Token::LeftParen {

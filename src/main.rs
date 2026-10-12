@@ -198,7 +198,13 @@ fn print_bytecode(_path: &str, source: &str) {
                 ConstantEntry::Name(value) => format!("#{value}"),
                 ConstantEntry::ClassFieldsSymbol => "<class fields symbol>".to_string(),
                 ConstantEntry::ClassBoilerplate(members) => {
-                    let names: Vec<&str> = members.iter().map(|(_, name)| name.as_str()).collect();
+                    let names: Vec<&str> = members
+                        .iter()
+                        .map(|(_, name)| match name {
+                            Some(name) => name.as_str(),
+                            None => "[]",
+                        })
+                        .collect();
                     format!("<class {{{}}}>", names.join(", "))
                 }
                 ConstantEntry::FunctionLiteral(index) => format!("<function {index}>"),

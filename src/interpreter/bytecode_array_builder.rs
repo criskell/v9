@@ -128,7 +128,7 @@ impl BytecodeArrayBuilder {
         self.output(Bytecode::LdaConstant, &[index])
     }
 
-    pub fn load_class_boilerplate(&mut self, members: &[(i32, String)]) -> &mut Self {
+    pub fn load_class_boilerplate(&mut self, members: &[(i32, Option<String>)]) -> &mut Self {
         let index = self
             .bytecode_array_writer
             .constant_array_builder_mut()

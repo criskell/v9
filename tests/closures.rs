@@ -247,3 +247,48 @@ fn a_reference_two_contexts_out_is_reached_by_depth() {
         "y is slot 2 at depth 0:\n{inner}"
     );
 }
+
+#[test]
+fn a_function_declaration_is_visible_from_another_function() {
+    assert_eq!(
+        evaluate("function f() { return 1; } function g() { return f(); } g()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate(
+            "function even(n) { if (n === 0) { return true; } return odd(n - 1); }
+             function odd(n) { if (n === 0) { return false; } return even(n - 1); }
+             even(10) + ',' + even(7)"
+        ),
+        "true,false"
+    );
+    assert_eq!(
+        evaluate(
+            "function f() { return 1; }
+             function g() { function h() { return f() + 1; } return h(); }
+             g()"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn a_captured_function_declaration_goes_to_a_context_slot() {
+    let listing = listing_of(
+        "function f() { return 1; } function g() { return f(); } g()",
+        "<script>",
+    );
+    assert!(
+        listing.contains("StaCurrentContextSlot"),
+        "the closure must be stored where the inner function reads it: {listing}"
+    );
+}
+
+#[test]
+fn an_uncaptured_function_declaration_stays_a_global() {
+    let listing = listing_of("function f() { return 1; } f()", "<script>");
+    assert!(
+        listing.contains("StaGlobal"),
+        "nothing captures f, so it is a global property: {listing}"
+    );
+}

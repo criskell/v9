@@ -106,7 +106,7 @@ impl BytecodeGenerator {
                 .clone()
                 .expect("a hoisted function declaration has a name");
             generator.builder.create_closure(index);
-            generator.builder.store_global(&name);
+            generator.build_variable_assignment(&name);
         }
         match program.body.split_last() {
             Some((Statement::Expression { expression, .. }, rest)) => {
@@ -1517,18 +1517,19 @@ impl BytecodeGenerator {
 
         let mut members = Vec::with_capacity(class.public_members.len());
         for property in &class.public_members {
-            let PropertyKey::Name(name) = &property.key else {
-                unreachable!()
-            };
             let value_kind = match property.kind {
                 ClassLiteralPropertyKind::Method => ValueKind::ConstantKind,
                 ClassLiteralPropertyKind::Getter => ValueKind::GetterKind,
                 ClassLiteralPropertyKind::Setter => ValueKind::SetterKind,
                 ClassLiteralPropertyKind::Field => unreachable!(),
             };
+            let key = match &property.key {
+                PropertyKey::Name(name) => Some(name.clone()),
+                PropertyKey::Computed(_) => None,
+            };
             members.push((
                 ClassBoilerplate::encode_flags(value_kind, property.is_static),
-                name.clone(),
+                key,
             ));
         }
 
@@ -1545,7 +1546,7 @@ impl BytecodeGenerator {
     fn build_class_literal_in_scope(
         &mut self,
         class: &ClassLiteral,
-        members: &[(i32, String)],
+        members: &[(i32, Option<String>)],
     ) -> Result<()> {
         use crate::ast::scopes::{K_HOME_OBJECT, K_STATIC_HOME_OBJECT};
         use crate::objects::literal_objects::ClassBoilerplate;
@@ -1587,6 +1588,17 @@ impl BytecodeGenerator {
             self.builder
                 .create_closure(index)
                 .store_accumulator_in_register(value);
+        }
+
+        for property in &class.public_members {
+            let PropertyKey::Computed(key) = &property.key else {
+                continue;
+            };
+            let register = self.builder.register_allocator().grow_register_list(&mut args);
+            self.visit_for_accumulator_value(key)?;
+            self.builder
+                .to_name()
+                .store_accumulator_in_register(register);
         }
 
         self.builder
