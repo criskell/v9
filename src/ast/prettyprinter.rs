@@ -326,6 +326,16 @@ fn print_expression(out: &mut String, expression: &Expression, depth: usize) {
                 print_expression(out, argument, depth + 1);
             }
         }
+        Expression::CallRuntime {
+            function_id,
+            arguments,
+            ..
+        } => {
+            out.push_str(&format!("CALL RUNTIME {}\n", function_id.function().name));
+            for argument in arguments {
+                print_expression(out, argument, depth + 1);
+            }
+        }
         Expression::ObjectLiteral { properties, .. } => {
             out.push_str("OBJECT LITERAL\n");
             for property in properties {

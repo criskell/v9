@@ -1116,6 +1116,9 @@ impl Parser {
                 })
             }
             Token::Class => self.parse_class_expression(position),
+            Token::Mod if crate::flags::flags::V8_FLAGS.allow_natives_syntax() => {
+                self.parse_v8_intrinsic()
+            }
             Token::Div | Token::AssignDiv => {
                 Err(self
                     .unexpected_token_with_hint("regular expression literals are not implemented"))
@@ -1133,6 +1136,40 @@ impl Parser {
                 Err(self.unexpected_token_with_hint("expected an expression"))
             }
         }
+    }
+
+    fn parse_v8_intrinsic(&mut self) -> Result<Expression> {
+        let position = self.peek_position();
+        self.consume(Token::Mod);
+        let name = self.parse_identifier()?;
+        if self.peek() != Token::LeftParen {
+            return Err(self.unexpected_token_with_hint("expected an argument list"));
+        }
+        let arguments = self.parse_arguments()?;
+        self.new_v8_intrinsic(&name, arguments, position)
+    }
+
+    fn new_v8_intrinsic(
+        &mut self,
+        name: &str,
+        arguments: Vec<Expression>,
+        position: crate::ast::ast::Position,
+    ) -> Result<Expression> {
+        let Some(function) = crate::runtime::runtime::FunctionId::function_for_name(name) else {
+            return Err(self.unexpected_token_with_hint("not defined"));
+        };
+
+        if function.nargs != -1 && function.nargs != arguments.len() as i32 {
+            return Err(
+                self.unexpected_token_with_hint("runtime function given the wrong number of arguments")
+            );
+        }
+
+        Ok(Expression::CallRuntime {
+            function_id: function.function_id,
+            arguments,
+            position,
+        })
     }
 
     fn parse_identifier(&mut self) -> Result<String> {

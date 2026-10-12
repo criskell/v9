@@ -233,9 +233,41 @@ impl Isolate {
         let map = object.map(&self.heap);
         let name = name_handle.get(self);
         let pair_value = pair_handle.get(self);
-        let new_map = self.transition_to_accessor_property(map, name, pair_value, attributes);
+        if map.is_dictionary_map(&self.heap) {
+            self.transition_to_accessor_pair(object, name, pair_value, attributes);
+        } else {
+            let new_map = self.transition_to_accessor_property(map, name, pair_value, attributes);
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            self.heap.set_map(object.object(), new_map.object());
+        }
+        self.close_handle_scope(scope);
+    }
+
+    fn transition_to_accessor_pair(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        pair: Tagged,
+        attributes: crate::objects::property_details::PropertyAttributes,
+    ) {
+        use crate::objects::property_details::{PropertyConstness, PropertyKind};
+
+        let details = PropertyDetails::new_dictionary(
+            PropertyKind::Accessor,
+            attributes,
+            PropertyConstness::Mutable,
+            0,
+        );
+
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let name_handle = self.create_handle(name);
+        let pair_handle = self.create_handle(pair);
+        self.normalize_properties(object);
         let object = JSObject::unchecked_cast(object_handle.object(self));
-        self.heap.set_map(object.object(), new_map.object());
+        let name = name_handle.get(self);
+        let pair = pair_handle.get(self);
+        self.set_normalized_property(object, name, pair, details);
         self.close_handle_scope(scope);
     }
 
@@ -449,8 +481,14 @@ impl Isolate {
             let descriptors = map.instance_descriptors(&self.heap);
             let key = descriptors.get_key(&self.heap, index);
             let details = descriptors.get_details(&self.heap, index);
-            let object = JSObject::unchecked_cast(object_handle.object(self));
-            let value = object.fast_property_at(&self.heap, details.field_index() as i32);
+            let value = if details.location()
+                == crate::objects::property_details::PropertyLocation::Field
+            {
+                let object = JSObject::unchecked_cast(object_handle.object(self));
+                object.fast_property_at(&self.heap, details.field_index() as i32)
+            } else {
+                descriptors.get_value(&self.heap, index)
+            };
             let dictionary_handle = self.create_object_handle(dictionary.object());
             let slow_details = PropertyDetails::new_dictionary(
                 details.kind(),

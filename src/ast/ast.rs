@@ -200,6 +200,12 @@ pub enum Expression {
         position: Position,
     },
 
+    CallRuntime {
+        function_id: crate::runtime::runtime::FunctionId,
+        arguments: Vec<Expression>,
+        position: Position,
+    },
+
     ObjectLiteral {
         properties: Vec<ObjectLiteralProperty>,
         position: Position,
@@ -266,6 +272,7 @@ impl Expression {
             | Expression::Property { position, .. }
             | Expression::CallNew { position, .. }
             | Expression::Call { position, .. }
+            | Expression::CallRuntime { position, .. }
             | Expression::ObjectLiteral { position, .. }
             | Expression::ArrayLiteral { position, .. }
             | Expression::FunctionLiteral { position, .. }

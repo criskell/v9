@@ -380,6 +380,12 @@ impl Map {
         heap.write_tagged(self.field(Self::K_INSTANCE_DESCRIPTORS_OFFSET), value);
     }
 
+    pub fn initialize_descriptors(self, heap: &mut Heap, descriptors: DescriptorArray) {
+        let number_of_descriptors = descriptors.number_of_descriptors(heap);
+        self.set_instance_descriptors(heap, descriptors.tagged());
+        self.set_number_of_own_descriptors(heap, number_of_descriptors);
+    }
+
     #[inline]
     pub fn instance_descriptors_address(self) -> Address {
         self.field(Self::K_INSTANCE_DESCRIPTORS_OFFSET)

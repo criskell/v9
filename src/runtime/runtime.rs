@@ -3,6 +3,7 @@
 pub enum FunctionId {
     DefineAccessorPropertyUnchecked,
     DefineClass,
+    ToFastProperties,
 }
 
 pub struct Function {
@@ -25,6 +26,12 @@ const K_INTRINSIC_FUNCTIONS: &[Function] = &[
         nargs: -1,
         result_size: 1,
     },
+    Function {
+        function_id: FunctionId::ToFastProperties,
+        name: "ToFastProperties",
+        nargs: 1,
+        result_size: 1,
+    },
 ];
 
 impl FunctionId {
@@ -38,6 +45,12 @@ impl FunctionId {
 
     pub fn function(self) -> &'static Function {
         &K_INTRINSIC_FUNCTIONS[self as usize]
+    }
+
+    pub fn function_for_name(name: &str) -> Option<&'static Function> {
+        K_INTRINSIC_FUNCTIONS
+            .iter()
+            .find(|function| function.name == name)
     }
 }
 
@@ -53,6 +66,7 @@ impl crate::execution::isolate::Isolate {
                 self.runtime_define_accessor_property_unchecked(args)
             }
             FunctionId::DefineClass => self.runtime_define_class(args),
+            FunctionId::ToFastProperties => self.runtime_to_fast_properties(args),
         }
     }
 }

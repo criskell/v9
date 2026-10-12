@@ -4,6 +4,7 @@ pub mod builtins;
 pub mod codegen;
 pub mod common;
 pub mod execution;
+pub mod flags;
 pub mod handles;
 pub mod heap;
 pub mod ic;

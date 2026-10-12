@@ -730,6 +730,11 @@ impl BytecodeGenerator {
             Expression::Call {
                 callee, arguments, ..
             } => self.visit_call(callee, arguments),
+            Expression::CallRuntime {
+                function_id,
+                arguments,
+                ..
+            } => self.visit_call_runtime(*function_id, arguments),
             Expression::ObjectLiteral { properties, .. } => self.visit_object_literal(properties),
             Expression::ClassLiteral { class, .. } => self.visit_class_literal(class),
             Expression::TemplateLiteral { template, .. } => {
@@ -1381,6 +1386,29 @@ impl BytecodeGenerator {
             }
         }
 
+        self.builder.register_allocator().release_registers(mark);
+        Ok(())
+    }
+
+    fn visit_call_runtime(
+        &mut self,
+        function_id: crate::runtime::runtime::FunctionId,
+        arguments: &[Expression],
+    ) -> Result<()> {
+        let mark = self.builder.register_allocator().next_register_index();
+        let mut args = self
+            .builder
+            .register_allocator()
+            .new_growable_register_list();
+        for argument in arguments {
+            self.visit_for_accumulator_value(argument)?;
+            let register = self
+                .builder
+                .register_allocator()
+                .grow_register_list(&mut args);
+            self.builder.store_accumulator_in_register(register);
+        }
+        self.builder.call_runtime(function_id, args);
         self.builder.register_allocator().release_registers(mark);
         Ok(())
     }

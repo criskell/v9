@@ -511,6 +511,26 @@ impl NameDictionary {
             .filter(|entry| HashTableBase::is_key(heap, self.key_at(heap, *entry)))
             .collect()
     }
+
+    pub fn set_entry(
+        self,
+        heap: &mut Heap,
+        entry: i32,
+        key: Tagged,
+        value: Tagged,
+        details: PropertyDetails,
+    ) {
+        self.as_hash_table()
+            .set_key_at(heap, NAME_DICTIONARY_SHAPE, entry, key);
+        self.value_at_put(heap, entry, value);
+        self.details_at_put(heap, entry, details);
+    }
+
+    pub fn iteration_indices(self, heap: &Heap) -> Vec<i32> {
+        let mut array = self.iterate_entries(heap);
+        array.sort_by_key(|entry| self.details_at(heap, *entry).dictionary_index());
+        array
+    }
 }
 
 impl Isolate {

@@ -385,3 +385,60 @@ fn define_property_rejects_a_non_object_descriptor() {
 fn define_property_rejects_a_non_object_target() {
     assert!(error("Object.defineProperty(1, 'x', {});").contains("non-object"));
 }
+
+#[test]
+fn an_accessor_can_be_defined_on_a_dictionary_object() {
+    assert_eq!(
+        evaluate(
+            "var o = { a: 1 };
+             delete o.a;
+             Object.defineProperty(o, 'g', { get: function() { return 7; } });
+             o.g"
+        ),
+        "7"
+    );
+    assert_eq!(
+        evaluate(
+            "var o = { a: 1 };
+             delete o.a;
+             var seen = 0;
+             Object.defineProperty(o, 's', { set: function(v) { seen = v; } });
+             o.s = 4;
+             seen"
+        ),
+        "4"
+    );
+    assert_eq!(
+        evaluate(
+            "var o = { a: 1, b: 2 };
+             delete o.a;
+             Object.defineProperty(o, 'g', { get: function() { return this.b; } });
+             o.b = 9;
+             o.g + ',' + Object.keys(o).join('')"
+        ),
+        "9,bg"
+    );
+}
+
+#[test]
+fn normalizing_an_object_keeps_its_accessor() {
+    assert_eq!(
+        evaluate(
+            "var o = { a: 1, get g() { return 7; } };
+             delete o.a;
+             o.g"
+        ),
+        "7"
+    );
+    assert_eq!(
+        evaluate(
+            "var o = { a: 1 };
+             var seen = 0;
+             Object.defineProperty(o, 's', { set: function(v) { seen = v; } });
+             delete o.a;
+             o.s = 3;
+             seen"
+        ),
+        "3"
+    );
+}

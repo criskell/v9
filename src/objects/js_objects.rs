@@ -339,3 +339,161 @@ mod tests {
         assert_eq!(JSObject::K_HEADER_SIZE, 24);
     }
 }
+
+impl crate::execution::isolate::Isolate {
+    pub(crate) fn set_normalized_property(
+        &mut self,
+        object: JSObject,
+        name: Tagged,
+        value: Tagged,
+        details: crate::objects::property_details::PropertyDetails,
+    ) {
+        use crate::objects::hash_table::K_NOT_FOUND;
+
+        debug_assert!(!object.has_fast_properties(&self.heap));
+        let dictionary = object.property_dictionary(&self.heap);
+        let entry = dictionary.find_entry(&self.heap, name);
+
+        if entry == K_NOT_FOUND {
+            let scope = self.handle_scope();
+            let object_handle = self.create_object_handle(object.object());
+            let dictionary = self
+                .name_dictionary_add(dictionary, name, value, details)
+                .tagged();
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            object.set_raw_properties_or_hash(&mut self.heap, dictionary);
+            self.close_handle_scope(scope);
+        } else {
+            let original_details = dictionary.details_at(&self.heap, entry);
+            let enumeration_index = original_details.dictionary_index();
+            let details = details.set_dictionary_index(enumeration_index);
+            dictionary.set_entry(&mut self.heap, entry, name, value, details);
+        }
+    }
+
+    pub(crate) fn migrate_slow_to_fast(&mut self, object: JSObject, unused_property_fields: i32) {
+        use crate::objects::descriptor_array::DescriptorArray;
+        use crate::objects::dictionary::NameDictionary;
+        use crate::objects::elements_kind::is_transitionable_fast_elements_kind;
+        use crate::objects::property_details::{
+            accessor_constant, data_field_with_attributes, PropertyConstness, PropertyKind,
+            PropertyLocation, Representation, K_MAX_NUMBER_OF_DESCRIPTORS,
+        };
+
+        if object.has_fast_properties(&self.heap) {
+            return;
+        }
+        let dictionary = object.property_dictionary(&self.heap);
+        let number_of_elements = dictionary.number_of_elements(&self.heap);
+
+        if number_of_elements > K_MAX_NUMBER_OF_DESCRIPTORS as i32 {
+            return;
+        }
+
+        let iteration_order = dictionary.iteration_indices(&self.heap);
+
+        let mut number_of_fields = 0;
+
+        for entry in &iteration_order {
+            let kind = dictionary.details_at(&self.heap, *entry).kind();
+            if kind == PropertyKind::Data {
+                number_of_fields += 1;
+            }
+        }
+
+        let old_map = object.map(&self.heap);
+
+        let inobject_props = old_map.inobject_properties(&self.heap);
+
+        let scope = self.handle_scope();
+        let object_handle = self.create_object_handle(object.object());
+        let dictionary_handle = self.create_object_handle(dictionary.object());
+        let old_map_handle = self.create_object_handle(old_map.object());
+
+        let old_map = Map::unchecked_cast(old_map_handle.object(self));
+        let new_map = self.copy_drop_descriptors(old_map);
+        new_map.set_is_dictionary_map(&mut self.heap, false);
+        let new_map_handle = self.create_object_handle(new_map.object());
+
+        if number_of_elements == 0 {
+            let new_map = new_map_handle.object(self);
+            let object = JSObject::unchecked_cast(object_handle.object(self));
+            self.heap.set_map(object.object(), new_map);
+            let empty = self.roots.empty_property_array;
+            object.set_raw_properties_or_hash(&mut self.heap, empty);
+            debug_assert!(object.has_fast_properties(&self.heap));
+            self.close_handle_scope(scope);
+            return;
+        }
+
+        let descriptors = self.new_descriptor_array(number_of_elements);
+        let descriptors_handle = self.create_object_handle(descriptors.object());
+
+        let mut number_of_allocated_fields =
+            number_of_fields + unused_property_fields - inobject_props;
+        if number_of_allocated_fields < 0 {
+            number_of_allocated_fields = 0;
+        }
+
+        let fields = self.new_property_array(number_of_allocated_fields);
+        let fields_handle = self.create_object_handle(fields.object());
+
+        let old_map = Map::unchecked_cast(old_map_handle.object(self));
+        let is_transitionable_elements_kind =
+            is_transitionable_fast_elements_kind(old_map.elements_kind(&self.heap));
+
+        let mut field_index = 0;
+        for entry in &iteration_order {
+            let dictionary = NameDictionary::unchecked_cast(dictionary_handle.object(self));
+            let key = dictionary.key_at(&self.heap, *entry);
+            let value = dictionary.value_at(&self.heap, *entry);
+            let details = dictionary.details_at(&self.heap, *entry);
+
+            let (details, descriptor_value) = if details.kind() == PropertyKind::Data {
+                let constness = if is_transitionable_elements_kind {
+                    PropertyConstness::Mutable
+                } else {
+                    PropertyConstness::Const
+                };
+                let details = data_field_with_attributes(
+                    field_index as u32,
+                    Representation::Tagged,
+                    details.attributes(),
+                )
+                .with_constness(constness);
+                (details, self.the_hole_value())
+            } else {
+                debug_assert_eq!(details.kind(), PropertyKind::Accessor);
+                (accessor_constant(details.attributes()), value)
+            };
+
+            if details.location() == PropertyLocation::Field {
+                if field_index < inobject_props {
+                    let new_map = Map::unchecked_cast(new_map_handle.object(self));
+                    let object = JSObject::unchecked_cast(object_handle.object(self));
+                    object.set_in_object_property_at(&mut self.heap, new_map, field_index, value);
+                } else {
+                    let fields = PropertyArray::unchecked_cast(fields_handle.object(self));
+                    fields.set(&mut self.heap, field_index - inobject_props, value);
+                }
+                field_index += 1;
+            }
+            let descriptors = DescriptorArray::unchecked_cast(descriptors_handle.object(self));
+            descriptors.append(&mut self.heap, key, details, descriptor_value);
+        }
+
+        let new_map = Map::unchecked_cast(new_map_handle.object(self));
+        let descriptors = DescriptorArray::unchecked_cast(descriptors_handle.object(self));
+        new_map.initialize_descriptors(&mut self.heap, descriptors);
+        new_map.set_owns_descriptors(&mut self.heap, true);
+
+        let new_map = new_map_handle.object(self);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        self.heap.set_map(object.object(), new_map);
+
+        let fields = fields_handle.get(self);
+        let object = JSObject::unchecked_cast(object_handle.object(self));
+        object.set_raw_properties_or_hash(&mut self.heap, fields);
+        self.close_handle_scope(scope);
+    }
+}

@@ -233,3 +233,194 @@ fn the_enumeration_index_counts_insertions() {
         "each insertion got a distinct index"
     );
 }
+
+fn computed_stores(count: usize) -> String {
+    let mut source = String::from("var o = {};");
+    for index in 0..count {
+        source.push_str(&format!("o['f{index}'] = {index};"));
+    }
+    source
+}
+
+fn dictionary_stores(count: usize) -> String {
+    let mut source = String::from("var o = {}; o.pad = 0; delete o.pad;");
+    for index in 0..count {
+        source.push_str(&format!("o.f{index} = {index};"));
+    }
+    source
+}
+
+fn to_fast(source: &str) -> (Isolate, JSObject) {
+    vx::flags::flags::V8_FLAGS.set_allow_natives_syntax(true);
+    run(source)
+}
+
+fn evaluate_with_natives_syntax(source: &str) -> String {
+    vx::flags::flags::V8_FLAGS.set_allow_natives_syntax(true);
+    evaluate(source)
+}
+
+#[test]
+fn to_fast_properties_turns_a_dictionary_back_into_a_hidden_class() {
+    let stores = computed_stores(40);
+    assert!(is_slow(&format!("{stores}o")));
+    let (isolate, object) = to_fast(&format!("{stores}%ToFastProperties(o); o"));
+    assert!(object.has_fast_properties(&isolate.heap));
+    assert_eq!(
+        object
+            .map(&isolate.heap)
+            .number_of_own_descriptors(&isolate.heap),
+        40
+    );
+    assert_eq!(
+        evaluate_with_natives_syntax(&format!(
+            "{stores}%ToFastProperties(o); o.f0 + ',' + o.f17 + ',' + o.f39"
+        )),
+        "0,17,39"
+    );
+}
+
+#[test]
+fn the_migrated_descriptors_are_in_insertion_order() {
+    let stores = dictionary_stores(8);
+    assert!(is_slow(&format!("{stores}o")));
+    assert_eq!(
+        evaluate_with_natives_syntax(&format!(
+            "{stores}%ToFastProperties(o); Object.keys(o).join(',')"
+        )),
+        "f0,f1,f2,f3,f4,f5,f6,f7"
+    );
+}
+
+#[test]
+fn a_deleted_entry_gets_no_descriptor() {
+    let stores = dictionary_stores(8);
+    let (isolate, object) = to_fast(&format!("{stores}delete o.f3; %ToFastProperties(o); o"));
+    assert_eq!(
+        object
+            .map(&isolate.heap)
+            .number_of_own_descriptors(&isolate.heap),
+        7
+    );
+    assert_eq!(
+        evaluate_with_natives_syntax(&format!(
+            "{stores}delete o.f3; %ToFastProperties(o); Object.keys(o).join(',')"
+        )),
+        "f0,f1,f2,f4,f5,f6,f7"
+    );
+}
+
+#[test]
+fn an_emptied_dictionary_migrates_to_a_shape_with_no_properties() {
+    let (isolate, object) = to_fast("var o = {}; o.a = 1; delete o.a; %ToFastProperties(o); o");
+    assert!(object.has_fast_properties(&isolate.heap));
+    assert_eq!(
+        object
+            .map(&isolate.heap)
+            .number_of_own_descriptors(&isolate.heap),
+        0
+    );
+    assert_eq!(
+        evaluate_with_natives_syntax(
+            "var o = {}; o.a = 1; delete o.a; %ToFastProperties(o); o.b = 2; o.b"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn migrating_a_fast_object_changes_nothing() {
+    vx::flags::flags::V8_FLAGS.set_allow_natives_syntax(true);
+    let mut isolate = Isolate::new();
+    isolate.setup_global_object();
+    isolate
+        .run_script(
+            "var o = {}; o.a = 1; o.b = 2; %ToFastProperties(o);
+             var p = {}; p.a = 1; p.b = 2;",
+        )
+        .expect("runs");
+
+    fn map_of(isolate: &mut Isolate, name: &str) -> vx::objects::tagged::Address {
+        let global = isolate.global_object();
+        let value = isolate.get_property_by_str(global, name);
+        let object = JSObject::unchecked_cast(value.to_strong_heap_object().unwrap());
+        isolate.heap.map_of(object.object()).address()
+    }
+
+    let migrated = map_of(&mut isolate, "o");
+    let untouched = map_of(&mut isolate, "p");
+    assert_eq!(migrated, untouched, "a fast object keeps the map it shares");
+}
+
+#[test]
+fn an_accessor_survives_the_migration() {
+    let stores = dictionary_stores(8);
+    assert!(is_slow(&format!("{stores}o")));
+    assert_eq!(
+        evaluate_with_natives_syntax(&format!(
+            "{stores}
+             Object.defineProperty(o, 'g', {{ get: function() {{ return this.f1 + 100; }} }});
+             %ToFastProperties(o);
+             o.g"
+        )),
+        "101"
+    );
+    assert_eq!(
+        evaluate_with_natives_syntax(&format!(
+            "{stores}
+             var seen = 0;
+             Object.defineProperty(o, 's', {{ set: function(v) {{ seen = v; }} }});
+             %ToFastProperties(o);
+             o.s = 9;
+             seen"
+        )),
+        "9"
+    );
+}
+
+#[test]
+fn a_non_enumerable_entry_stays_non_enumerable_after_the_migration() {
+    assert_eq!(
+        evaluate_with_natives_syntax(
+            "var o = {};
+             o.a = 1;
+             Object.defineProperty(o, 'h', {
+                 get: function() { return 7; },
+                 enumerable: false
+             });
+             delete o.a;
+             o.b = 2;
+             %ToFastProperties(o);
+             Object.keys(o).join(',') + '|' + o.h"
+        ),
+        "b|7"
+    );
+}
+
+#[test]
+fn the_fields_that_do_not_fit_in_the_object_go_to_a_property_array() {
+    use vx::objects::fixed_array::PropertyArray;
+    let stores = computed_stores(40);
+    let (isolate, object) = to_fast(&format!("{stores}%ToFastProperties(o); o"));
+    let inobject = object.map(&isolate.heap).inobject_properties(&isolate.heap);
+    assert!(inobject > 0 && inobject < 40);
+    let array = PropertyArray::unchecked_cast(
+        object
+            .raw_properties_or_hash(&isolate.heap)
+            .to_strong_heap_object()
+            .unwrap(),
+    );
+    assert_eq!(array.length(&isolate.heap), 40 - inobject);
+}
+
+#[test]
+fn a_migrated_object_can_go_slow_again() {
+    let stores = dictionary_stores(8);
+    assert!(is_slow(&format!("{stores}o")));
+    assert_eq!(
+        evaluate_with_natives_syntax(&format!(
+            "{stores}%ToFastProperties(o); delete o.f0; Object.keys(o).length + ',' + o.f7"
+        )),
+        "7,7"
+    );
+}

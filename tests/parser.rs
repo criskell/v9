@@ -188,6 +188,15 @@ fn shape(expression: &Expression) -> String {
                 .collect::<Vec<_>>()
                 .join(" , ")
         ),
+        Expression::CallRuntime {
+            function_id,
+            arguments,
+            ..
+        } => format!(
+            "%{}({})",
+            function_id.function().name,
+            arguments.iter().map(shape).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
@@ -660,4 +669,13 @@ fn a_realistic_program_parses() {
     assert!(printed.contains("CONDITIONAL"));
     assert!(printed.contains("FOR"));
     assert!(printed.contains("WHILE"));
+}
+
+#[test]
+fn natives_syntax_needs_the_flag() {
+    let message = parse_error("%ToFastProperties(o)");
+    assert!(
+        message.contains("expected an expression"),
+        "said: {message}"
+    );
 }

@@ -27,4 +27,21 @@ impl Isolate {
         self.define_accessor(obj, name, getter, setter, attrs);
         Ok(self.undefined_value())
     }
+
+    pub(crate) fn runtime_to_fast_properties(&mut self, args: &[Tagged]) -> ExecutionResult {
+        debug_assert_eq!(1, args.len());
+        let scope = self.handle_scope();
+        let object = self.create_handle(args[0]);
+        let value = object.get(self);
+        if let Some(heap_object) = value.to_strong_heap_object() {
+            if crate::objects::instance_type::is_js_object(self.heap.instance_type(heap_object))
+                && !self.is_global_object(JSObject::unchecked_cast(heap_object))
+            {
+                self.migrate_slow_to_fast(JSObject::unchecked_cast(heap_object), 0);
+            }
+        }
+        let value = object.get(self);
+        self.close_handle_scope(scope);
+        Ok(value)
+    }
 }
