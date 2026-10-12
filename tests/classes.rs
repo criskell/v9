@@ -1441,3 +1441,107 @@ fn two_getters_for_one_private_name_are_a_syntax_error() {
     assert!(error("class A { set #x(v) {} set #x(v) {} }").contains("already declared"));
     assert!(error("class A { #x = 1; get #x() { return 2; } }").contains("already declared"));
 }
+
+#[test]
+fn the_class_name_is_bound_inside_the_class() {
+    assert_eq!(
+        evaluate(
+            "class A { m() { return A === this.constructor; } }
+             var B = A;
+             A = null;
+             (new B()).m()"
+        ),
+        "true"
+    );
+    assert_eq!(
+        evaluate("var A = class Inner { m() { return Inner === A; } }; (new A()).m()"),
+        "true"
+    );
+    assert_eq!(
+        evaluate(
+            "class A { static s() { return new A(); } }
+             var B = A;
+             A = null;
+             B.s() instanceof B"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn the_inner_class_binding_can_be_shadowed_and_does_not_leak() {
+    assert_eq!(evaluate("class A { m() { var A = 5; return A; } } (new A()).m()"), "5");
+    assert_eq!(evaluate("var A = 1; class B { m() { return A; } } (new B()).m()"), "1");
+    assert_eq!(
+        evaluate(
+            "class Outer {
+                 m() { class Inner { n() { return Inner; } } return (new Inner()).n() !== Outer; }
+             }
+             (new Outer()).m()"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn a_static_private_method_checks_that_the_receiver_is_the_class() {
+    assert_eq!(
+        evaluate("class A { static #m() { return 1; } static run() { return A.#m(); } } A.run()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate("class A { static #m() { return 1; } static run() { return this.#m(); } } A.run()"),
+        "1"
+    );
+    assert_eq!(
+        evaluate("class A { static #m() { return 1; } run() { return A.#m(); } } (new A()).run()"),
+        "1"
+    );
+    assert!(error(
+        "class A { static #m() { return 1; } static run(o) { return o.#m(); } } A.run({})"
+    )
+    .contains("Receiver must be class A"));
+    assert!(error(
+        "var A = class { static #m() { return 1; } static run(o) { return o.#m(); } }; A.run({})"
+    )
+    .contains("Receiver must be class anonymous"));
+}
+
+#[test]
+fn a_static_private_accessor_checks_the_receiver_too() {
+    assert_eq!(
+        evaluate("class A { static get #x() { return 2; } static run() { return A.#x; } } A.run()"),
+        "2"
+    );
+    assert_eq!(
+        evaluate(
+            "class A {
+                 static #v = 0;
+                 static set #x(v) { A.#v = v; }
+                 static run() { A.#x = 5; return A.#v; }
+             }
+             A.run()"
+        ),
+        "5"
+    );
+    assert!(error(
+        "class A { static get #x() { return 1; } static run(o) { return o.#x; } } A.run({})"
+    )
+    .contains("Receiver must be class A"));
+}
+
+#[test]
+fn static_and_instance_private_members_live_side_by_side() {
+    assert_eq!(
+        evaluate(
+            "class A {
+                 #m() { return 1; }
+                 static #s() { return 2; }
+                 run() { return this.#m(); }
+                 static srun() { return A.#s(); }
+             }
+             (new A()).run() + ',' + A.srun()"
+        ),
+        "1,2"
+    );
+}

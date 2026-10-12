@@ -614,20 +614,44 @@ impl BytecodeGenerator {
             .rposition(|breakable| matches!(breakable, Breakable::Loop(_)))
     }
 
-    fn private_member(&self, key: &PropertyAccess) -> Option<(String, VariableMode)> {
+    fn private_member(&self, key: &PropertyAccess) -> Option<(String, VariableMode, bool)> {
         let PropertyAccess::Keyed(Expression::VariableProxy { name, .. }) = key else {
             return None;
         };
-        let mode = self.variable_mode(name)?;
+        let (mode, is_static) = self.private_variable(name)?;
         if crate::ast::ast::is_private_method_or_accessor_variable_mode(mode) {
-            Some((name.clone(), mode))
+            Some((name.clone(), mode, is_static))
         } else {
             None
         }
     }
 
-    fn build_private_member_load(&mut self, object: Register, name: &str, mode: VariableMode) {
-        self.build_private_brand_check(object);
+    fn private_variable(&self, name: &str) -> Option<(VariableMode, bool)> {
+        for scope in self.scope_chain.iter().rev() {
+            if let Some(variable) = scope.lookup_local(name) {
+                return Some((variable.mode, variable.is_static_flag));
+            }
+        }
+        None
+    }
+
+    fn class_variable(&self) -> Option<String> {
+        for scope in self.scope_chain.iter().rev() {
+            if let Some(name) = scope.class_variable() {
+                return Some(name.to_string());
+            }
+        }
+        None
+    }
+
+    fn build_private_member_load(
+        &mut self,
+        object: Register,
+        name: &str,
+        mode: VariableMode,
+        is_static: bool,
+    ) {
+        self.build_private_brand_check(object, is_static);
         match mode {
             VariableMode::PrivateMethod => self.build_variable_load(name),
             VariableMode::PrivateSetterOnly => {
@@ -651,6 +675,7 @@ impl BytecodeGenerator {
         object: Register,
         name: &str,
         mode: VariableMode,
+        is_static: bool,
         value: Register,
     ) {
         match mode {
@@ -660,13 +685,13 @@ impl BytecodeGenerator {
                 ));
             }
             VariableMode::PrivateGetterOnly => {
-                self.build_private_brand_check(object);
+                self.build_private_brand_check(object, is_static);
                 self.build_invalid_property_access(&format!(
                     "'{name}' was defined without a setter"
                 ));
             }
             _ => {
-                self.build_private_brand_check(object);
+                self.build_private_brand_check(object, is_static);
                 let mark = self.builder.register_allocator().next_register_index();
                 let pair = self.builder.register_allocator().new_register();
                 self.build_variable_load(name);
@@ -675,15 +700,6 @@ impl BytecodeGenerator {
                 self.builder.register_allocator().release_registers(mark);
             }
         }
-    }
-
-    fn variable_mode(&self, name: &str) -> Option<crate::ast::ast::VariableMode> {
-        for scope in self.scope_chain.iter().rev() {
-            if let Some(variable) = scope.lookup_local(name) {
-                return Some(variable.mode);
-            }
-        }
-        None
     }
 
     fn visit_private_accessor(
@@ -746,9 +762,25 @@ impl BytecodeGenerator {
         self.builder.emit_throw();
     }
 
-    fn build_private_brand_check(&mut self, object: Register) {
-        self.build_variable_load(crate::ast::scopes::K_BRAND);
-        self.builder.load_keyed_property(object);
+    fn build_private_brand_check(&mut self, object: Register, is_static: bool) {
+        if !is_static {
+            self.build_variable_load(crate::ast::scopes::K_BRAND);
+            self.builder.load_keyed_property(object);
+            return;
+        }
+        let class_variable = self.class_variable().expect("the class variable");
+        let mut return_check = crate::interpreter::bytecode_label::BytecodeLabel::new();
+        self.build_variable_load(&class_variable);
+        self.builder
+            .compare_operation(Token::EqStrict, object)
+            .jump_if_true(&mut return_check);
+        let name = if class_variable == crate::ast::scopes::K_DOT {
+            "anonymous".to_string()
+        } else {
+            class_variable
+        };
+        self.build_invalid_property_access(&format!("Receiver must be class {name}"));
+        self.builder.bind(&mut return_check);
     }
 
     fn build_private_brand_initialization(&mut self, receiver: Register) {
@@ -1320,7 +1352,7 @@ impl BytecodeGenerator {
             }
             Expression::Property { object, key, .. } => {
                 let object_register = self.visit_for_register_value(object)?;
-                if let Some((name, mode)) = self.private_member(key) {
+                if let Some((name, mode, is_static)) = self.private_member(key) {
                     if op != Token::Assign {
                         return self.unsupported("a compound assignment to a private accessor");
                     }
@@ -1328,7 +1360,13 @@ impl BytecodeGenerator {
                     let value_register = self.builder.register_allocator().new_register();
                     self.visit_for_accumulator_value(value)?;
                     self.builder.store_accumulator_in_register(value_register);
-                    self.build_private_member_store(object_register, &name, mode, value_register);
+                    self.build_private_member_store(
+                        object_register,
+                        &name,
+                        mode,
+                        is_static,
+                        value_register,
+                    );
                     self.builder.load_accumulator_with_register(value_register);
                     self.builder.register_allocator().release_registers(mark);
                     return Ok(());
@@ -1419,8 +1457,8 @@ impl BytecodeGenerator {
         let mark = self.builder.register_allocator().next_register_index();
         let object_register = self.visit_for_register_value(object)?;
         match self.private_member(key) {
-            Some((name, mode)) => {
-                self.build_private_member_load(object_register, &name, mode);
+            Some((name, mode, is_static)) => {
+                self.build_private_member_load(object_register, &name, mode, is_static);
             }
             None => match key {
                 PropertyAccess::Named(name) => {
@@ -1527,8 +1565,8 @@ impl BytecodeGenerator {
                 let object_register = self.visit_for_register_value(object)?;
                 let callee_register = self.builder.register_allocator().new_register();
                 match self.private_member(key) {
-                    Some((name, mode)) => {
-                        self.build_private_member_load(object_register, &name, mode);
+                    Some((name, mode, is_static)) => {
+                        self.build_private_member_load(object_register, &name, mode, is_static);
                     }
                     None => match key.as_ref() {
                         PropertyAccess::Named(name) => {
@@ -1941,6 +1979,15 @@ impl BytecodeGenerator {
         if self.is_context_slot(K_STATIC_HOME_OBJECT) {
             self.builder.load_accumulator_with_register(class_constructor);
             self.build_variable_assignment(K_STATIC_HOME_OBJECT);
+        }
+
+        let class_variable = class
+            .name
+            .clone()
+            .unwrap_or_else(|| crate::ast::scopes::K_DOT.to_string());
+        if self.is_context_slot(&class_variable) {
+            self.builder.load_accumulator_with_register(class_constructor);
+            self.build_variable_assignment(&class_variable);
         }
 
         if let Some(initializer) = &class.instance_members_initializer_function {

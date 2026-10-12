@@ -12,6 +12,7 @@ pub enum ScopeKind {
 pub struct Variable {
     pub name: String,
     pub mode: VariableMode,
+    pub is_static_flag: bool,
     pub location: VariableLocation,
     pub index: i32,
     pub force_context_allocation: bool,
@@ -24,6 +25,7 @@ impl Variable {
         Variable {
             name: name.to_string(),
             mode,
+            is_static_flag: false,
             location: VariableLocation::Unallocated,
             index: -1,
             force_context_allocation: false,
@@ -46,6 +48,7 @@ impl Variable {
 #[derive(Clone, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
+    class_variable: Option<String>,
     variables: Vec<Variable>,
     unresolved: Vec<String>,
     context_slot_count: i32,
@@ -57,11 +60,13 @@ pub struct Scope {
 pub const K_HOME_OBJECT: &str = ".home_object";
 pub const K_STATIC_HOME_OBJECT: &str = ".static_home_object";
 pub const K_BRAND: &str = ".brand";
+pub const K_DOT: &str = ".";
 
 impl Scope {
     pub fn new(kind: ScopeKind) -> Scope {
         Scope {
             kind,
+            class_variable: None,
             variables: Vec::new(),
             unresolved: Vec::new(),
             context_slot_count: 0,
@@ -77,6 +82,18 @@ impl Scope {
         }
         self.variables.push(Variable::new(name, mode));
         self.variables.len() - 1
+    }
+
+    pub fn class_variable(&self) -> Option<&str> {
+        self.class_variable.as_deref()
+    }
+
+    pub fn set_class_variable(&mut self, name: &str) {
+        self.class_variable = Some(name.to_string());
+    }
+
+    pub fn set_is_static_flag(&mut self, index: usize, value: bool) {
+        self.variables[index].is_static_flag = value;
     }
 
     pub fn lookup_local_index(&self, name: &str) -> Option<usize> {

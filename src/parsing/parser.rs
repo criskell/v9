@@ -1301,6 +1301,7 @@ impl Parser {
         };
 
         self.scope_chain.push(ScopeKind::Class);
+        self.declare_class_variable(name.as_deref());
         self.scope_chain
             .current()
             .declare(crate::ast::scopes::K_HOME_OBJECT, VariableMode::Const);
@@ -1432,23 +1433,15 @@ impl Parser {
             self.next();
             let name = self.scanner.current_literal().to_string();
             if kind != ClassLiteralPropertyKind::Method {
-                if is_static {
-                    return Err(self.unexpected_token_with_hint(
-                        "static private accessors are not implemented",
-                    ));
-                }
                 if self.peek() != Token::LeftParen {
                     return Err(self.unexpected_token_with_hint("an accessor needs a body"));
                 }
-                return self.parse_private_class_accessor(class_info, name, kind, position);
+                return self.parse_private_class_accessor(
+                    class_info, name, kind, is_static, position,
+                );
             }
             if self.peek() == Token::LeftParen {
-                if is_static {
-                    return Err(self.unexpected_token_with_hint(
-                        "static private methods are not implemented",
-                    ));
-                }
-                return self.parse_private_class_method(class_info, name, position);
+                return self.parse_private_class_method(class_info, name, is_static, position);
             }
             return self.parse_private_class_field_initializer(
                 class_info, name, is_static, position,
@@ -1536,16 +1529,27 @@ impl Parser {
         &mut self,
         class_info: &mut ClassInfo,
         name: String,
+        is_static: bool,
         position: Position,
     ) -> Result<ClassMember> {
         self.declare_private_name(&name, VariableMode::PrivateMethod)?;
-        self.declare_private_brand(class_info);
-        let value = self.parse_method_literal(Some(name.clone()), false, position)?;
+        let index = self
+            .scope_chain
+            .current()
+            .lookup_local_index(&name)
+            .expect("the private name");
+        self.scope_chain.current().set_is_static_flag(index, is_static);
+        if is_static {
+            self.force_class_variable_allocation();
+        } else {
+            self.declare_private_brand(class_info);
+        }
+        let value = self.parse_method_literal(Some(name.clone()), is_static, position)?;
         class_info.private_members.push(ClassLiteralProperty {
             key: PropertyKey::Name(name),
             value: Some(value),
             kind: ClassLiteralPropertyKind::Method,
-            is_static: false,
+            is_static,
             computed_name_var: None,
         });
         Ok(ClassMember::Empty)
@@ -1556,6 +1560,7 @@ impl Parser {
         class_info: &mut ClassInfo,
         name: String,
         kind: ClassLiteralPropertyKind,
+        is_static: bool,
         position: Position,
     ) -> Result<ClassMember> {
         let mode = if kind == ClassLiteralPropertyKind::Getter {
@@ -1564,16 +1569,47 @@ impl Parser {
             VariableMode::PrivateSetterOnly
         };
         self.declare_private_name(&name, mode)?;
-        self.declare_private_brand(class_info);
-        let value = self.parse_method_literal(Some(name.clone()), false, position)?;
+        let index = self
+            .scope_chain
+            .current()
+            .lookup_local_index(&name)
+            .expect("the private name");
+        self.scope_chain.current().set_is_static_flag(index, is_static);
+        if is_static {
+            self.force_class_variable_allocation();
+        } else {
+            self.declare_private_brand(class_info);
+        }
+        let value = self.parse_method_literal(Some(name.clone()), is_static, position)?;
         class_info.private_members.push(ClassLiteralProperty {
             key: PropertyKey::Name(name),
             value: Some(value),
             kind,
-            is_static: false,
+            is_static,
             computed_name_var: None,
         });
         Ok(ClassMember::Empty)
+    }
+
+    fn force_class_variable_allocation(&mut self) {
+        let name = self
+            .scope_chain
+            .current()
+            .class_variable()
+            .expect("the class variable")
+            .to_string();
+        let index = self
+            .scope_chain
+            .current()
+            .lookup_local_index(&name)
+            .expect("the class variable");
+        self.scope_chain.current().force_context_allocation(index);
+    }
+
+    fn declare_class_variable(&mut self, name: Option<&str>) {
+        let name = name.unwrap_or(crate::ast::scopes::K_DOT);
+        self.scope_chain.current().declare(name, VariableMode::Const);
+        self.scope_chain.current().set_class_variable(name);
     }
 
     fn declare_private_brand(&mut self, class_info: &mut ClassInfo) {
