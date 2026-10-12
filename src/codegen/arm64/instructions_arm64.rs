@@ -79,6 +79,30 @@ impl Instruction {
         signed_bitextract_32(width - 1, 0, offset)
     }
 
+    pub fn is_ldr_literal(self) -> bool {
+        self.mask(LOAD_LITERAL_F_MASK) == LOAD_LITERAL_FIXED
+    }
+
+    pub fn is_ldr_literal_x(self) -> bool {
+        self.mask(LOAD_LITERAL_MASK) == LDR_X_LIT
+    }
+
+    #[inline]
+    pub fn imm_l_literal(self) -> i32 {
+        self.signed_bits(23, 5)
+    }
+
+    pub fn set_imm_l_literal(&mut self, distance: i64) {
+        debug_assert!(self.is_ldr_literal());
+        debug_assert_eq!(distance % K_INSTR_SIZE as i64, 0);
+        let imm = (crate::utils::utils::checked_truncate_to_int19(
+            distance >> K_LOAD_LITERAL_SCALE_LOG2,
+        ) as Instr)
+            << IMM_L_LITERAL_OFFSET;
+        let bits = self.mask(!IMM_L_LITERAL_MASK) | imm;
+        self.set_instruction_bits(bits);
+    }
+
     pub fn is_adr(self) -> bool {
         self.mask(PC_REL_ADDRESSING_MASK) == ADR
     }
@@ -131,9 +155,11 @@ impl Instruction {
         let offset;
         if self.is_pc_rel_addressing() {
             offset = self.imm_pc_rel() as i64;
-        } else {
-            debug_assert_ne!(self.branch_type(), ImmBranchType::UnknownBranchType);
+        } else if self.branch_type() != ImmBranchType::UnknownBranchType {
             offset = self.imm_branch() as i64 * K_INSTR_SIZE as i64;
+        } else {
+            debug_assert!(self.is_ldr_literal());
+            offset = self.imm_l_literal() as i64 * K_INSTR_SIZE as i64;
         }
         offset
     }
@@ -204,6 +230,10 @@ impl Instruction {
             return;
         }
         let branch_type = self.branch_type();
+        if branch_type == ImmBranchType::UnknownBranchType {
+            self.set_imm_l_literal(distance);
+            return;
+        }
         self.set_branch_imm_target(branch_type, distance);
     }
 }

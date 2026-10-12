@@ -487,3 +487,57 @@ fn loads_and_stores_of_vector_registers() {
         vec![0x6dbf27e8]
     );
 }
+
+#[test]
+fn a_literal_load_is_patched_when_the_pool_is_emitted() {
+    let mut assembler = Assembler::new();
+    assembler.ldr_literal(X0, 0x0123456789abcdef);
+    assembler.ret(LR);
+    assembler.force_constant_pool_emission();
+    assert_eq!(
+        words(&assembler),
+        vec![
+            0x580000c0, 0xd65f03c0, 0x14000006, 0x5800009f, 0xd63f03e0, 0xd503201f,
+            0x89abcdef, 0x01234567,
+        ]
+    );
+    assert!(assembler.constant_pool_is_empty());
+}
+
+#[test]
+fn two_loads_of_the_same_constant_share_one_pool_entry() {
+    let mut assembler = Assembler::new();
+    assembler.ldr_literal(X0, 7);
+    assembler.ldr_literal(X1, 7);
+    assembler.force_constant_pool_emission();
+    let words = words(&assembler);
+    assert_eq!(words.len(), 8);
+    assert_eq!(words[0] >> 5 & 0x7ffff, 6);
+    assert_eq!(words[1] >> 5 & 0x7ffff, 5);
+    assert_eq!(words[6], 7);
+    assert_eq!(words[7], 0);
+}
+
+#[test]
+fn a_thirty_two_bit_entry_needs_no_alignment_padding() {
+    let mut assembler = Assembler::new();
+    assembler.ldr_literal(W0, 0xdeadbeef);
+    assembler.force_constant_pool_emission();
+    assert_eq!(
+        words(&assembler),
+        vec![0x18000080, 0x14000004, 0x5800005f, 0xd63f03e0, 0xdeadbeef]
+    );
+}
+
+#[test]
+fn a_literal_load_of_a_double() {
+    let mut assembler = Assembler::new();
+    assembler.ldr_literal(D0, 1.5f64.to_bits());
+    assembler.force_constant_pool_emission();
+    let words = words(&assembler);
+    assert_eq!(words[0] & 0xff000000, 0x5c000000);
+    assert_eq!(
+        ((words[words.len() - 1] as u64) << 32) | words[words.len() - 2] as u64,
+        1.5f64.to_bits()
+    );
+}

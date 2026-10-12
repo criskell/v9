@@ -254,6 +254,7 @@ impl MemOperand {
 
 pub struct Assembler {
     base: AssemblerBase,
+    constpool: crate::codegen::arm64::constant_pool_arm64::ConstantPool,
 }
 
 impl Default for Assembler {
@@ -268,6 +269,7 @@ impl Assembler {
     pub fn new() -> Assembler {
         Assembler {
             base: AssemblerBase::new(),
+            constpool: crate::codegen::arm64::constant_pool_arm64::ConstantPool::new(),
         }
     }
 
@@ -287,13 +289,14 @@ impl Assembler {
         Instruction::new(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
-    fn set_instruction_at(&mut self, offset: i32, instr: Instruction) {
+    pub fn set_instruction_at(&mut self, offset: i32, instr: Instruction) {
         self.base
             .write_bytes_at(offset, &instr.instruction_bits().to_le_bytes());
     }
 
     fn emit(&mut self, instruction: Instr) {
         self.base.emit_bytes(&instruction.to_le_bytes());
+        self.check_buffer();
     }
 
     pub fn bind(&mut self, label: &mut Label) {
@@ -1844,6 +1847,124 @@ impl Assembler {
     pub fn fnmsub(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
         let op = if fd.is_32_bits() { FNMSUB_S } else { FNMSUB_D };
         self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
+    }
+
+    pub fn emit_instruction(&mut self, instruction: Instr) {
+        self.emit(instruction);
+    }
+
+    pub fn rt_of(rt: CPURegister) -> Instr {
+        Assembler::rt(rt)
+    }
+
+    pub fn imm_l_literal(imm19: i32) -> Instr {
+        (checked_truncate_to_int19(imm19 as i64) as Instr) << IMM_L_LITERAL_OFFSET
+    }
+
+    pub fn is_imm_l_literal(offset: i64) -> bool {
+        crate::utils::utils::is_int19(offset >> K_LOAD_LITERAL_SCALE_LOG2)
+    }
+
+    fn load_literal_op_for(rt: CPURegister) -> Instr {
+        if rt.is_register() {
+            return if rt.is_64_bits() { LDR_X_LIT } else { LDR_W_LIT };
+        }
+        debug_assert!(rt.is_v_register());
+        if rt.is_64_bits() {
+            LDR_D_LIT
+        } else {
+            LDR_S_LIT
+        }
+    }
+
+    pub fn ldr_pcrel(&mut self, rt: CPURegister, imm19: i32) {
+        debug_assert!(!rt.is_zero());
+        let instruction = Assembler::load_literal_op_for(rt)
+            | Assembler::imm_l_literal(imm19)
+            | Assembler::rt(rt);
+        self.emit(instruction);
+    }
+
+    pub fn ldr_literal(&mut self, rt: CPURegister, imm: u64) {
+        self.block_pools();
+        if rt.is_32_bits() {
+            self.constpool.record_entry_32(imm as u32, self.pc_offset());
+        } else {
+            self.constpool.record_entry_64(imm, self.pc_offset());
+        }
+        self.ldr_pcrel(rt, 0);
+        self.release_pools();
+    }
+
+    pub fn emit_pool_guard(&mut self) {
+        let instruction = BLR | Assembler::rn(XZR);
+        self.emit(instruction);
+    }
+
+    pub fn align(&mut self, m: i32) {
+        debug_assert_eq!(self.pc_offset() % K_INSTR_SIZE as i32, 0);
+        debug_assert!(m >= K_INSTR_SIZE as i32 && crate::base::bits::is_power_of_two(m as u32));
+        while (self.pc_offset() & (m - 1)) != 0 {
+            self.nop();
+        }
+    }
+
+    pub fn dc32(&mut self, data: u32) {
+        self.base.emit_bytes(&data.to_le_bytes());
+    }
+
+    pub fn dc64(&mut self, data: u64) {
+        self.base.emit_bytes(&data.to_le_bytes());
+    }
+
+    pub fn dd(&mut self, data: u32) {
+        self.block_pools();
+        self.dc32(data);
+        self.release_pools();
+    }
+
+    pub fn dq(&mut self, data: u64) {
+        self.block_pools();
+        self.dc64(data);
+        self.release_pools();
+    }
+
+    pub fn block_pools(&mut self) {
+        self.constpool.start_block();
+    }
+
+    pub fn release_pools(&mut self) {
+        self.constpool.end_block();
+    }
+
+    pub fn check_buffer(&mut self) {
+        if self.constpool.is_blocked() {
+            return;
+        }
+        let mut constpool = std::mem::take(&mut self.constpool);
+        constpool.maybe_check(self);
+        self.constpool = constpool;
+    }
+
+    pub fn emit_const_pool_with_jump_if_needed(&mut self, margin: usize) {
+        use crate::codegen::arm64::constant_pool_arm64::{Emission, Jump};
+        if self.constpool.is_empty() {
+            return;
+        }
+        let mut constpool = std::mem::take(&mut self.constpool);
+        constpool.check(self, Emission::IfNeeded, Jump::Required, margin);
+        self.constpool = constpool;
+    }
+
+    pub fn force_constant_pool_emission(&mut self) {
+        use crate::codegen::arm64::constant_pool_arm64::{Emission, Jump};
+        let mut constpool = std::mem::take(&mut self.constpool);
+        constpool.check(self, Emission::Forced, Jump::Required, 0);
+        self.constpool = constpool;
+    }
+
+    pub fn constant_pool_is_empty(&self) -> bool {
+        self.constpool.is_empty()
     }
 
     fn add_sub(
