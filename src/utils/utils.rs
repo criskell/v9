@@ -112,3 +112,25 @@ pub fn checked_truncate_to_int26(x: i64) -> i64 {
     assert!(is_int26(x));
     truncate_to_intn(x, 26)
 }
+
+#[inline]
+pub fn is_int7(x: i64) -> bool {
+    is_intn(x, 7)
+}
+
+#[inline]
+pub fn is_int21(x: i64) -> bool {
+    is_intn(x, 21)
+}
+
+#[inline]
+pub fn checked_truncate_to_int7(x: i64) -> i64 {
+    assert!(is_int7(x));
+    truncate_to_intn(x, 7)
+}
+
+#[inline]
+pub fn checked_truncate_to_int21(x: i64) -> i64 {
+    assert!(is_int21(x));
+    truncate_to_intn(x, 21)
+}

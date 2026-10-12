@@ -5,6 +5,13 @@ pub fn signed_bitextract_32(msb: u32, lsb: u32, x: u32) -> i32 {
     ((x as i32) << (31 - msb)) >> (lsb + 31 - msb)
 }
 
+pub fn imm_pc_rel_address(imm21: i32) -> Instr {
+    let imm = crate::utils::utils::checked_truncate_to_int21(imm21 as i64) as Instr;
+    let immhi = (imm >> IMM_PC_REL_LO_WIDTH) << IMM_PC_REL_HI_OFFSET;
+    let immlo = imm << IMM_PC_REL_LO_OFFSET;
+    (immhi & IMM_PC_REL_HI_MASK) | (immlo & IMM_PC_REL_LO_MASK)
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Instruction(Instr);
 
@@ -54,6 +61,28 @@ impl Instruction {
         self.signed_bits(18, 5)
     }
 
+    #[inline]
+    pub fn imm_pc_rel_hi(self) -> i32 {
+        self.signed_bits(23, 5)
+    }
+
+    #[inline]
+    pub fn imm_pc_rel_lo(self) -> i32 {
+        ((self.0 & IMM_PC_REL_LO_MASK) >> IMM_PC_REL_LO_OFFSET) as i32
+    }
+
+    pub fn imm_pc_rel(self) -> i32 {
+        debug_assert!(self.is_pc_rel_addressing());
+        let offset = ((self.imm_pc_rel_hi() as u32) << IMM_PC_REL_LO_WIDTH)
+            | (self.imm_pc_rel_lo() as u32);
+        let width = IMM_PC_REL_LO_WIDTH + IMM_PC_REL_HI_WIDTH;
+        signed_bitextract_32(width - 1, 0, offset)
+    }
+
+    pub fn is_adr(self) -> bool {
+        self.mask(PC_REL_ADDRESSING_MASK) == ADR
+    }
+
     pub fn is_pc_rel_addressing(self) -> bool {
         self.mask(PC_REL_ADDRESSING_F_MASK) == PC_REL_ADDRESSING_FIXED
     }
@@ -99,8 +128,14 @@ impl Instruction {
     }
 
     pub fn imm_pc_offset(self) -> i64 {
-        debug_assert_ne!(self.branch_type(), ImmBranchType::UnknownBranchType);
-        self.imm_branch() as i64 * K_INSTR_SIZE as i64
+        let offset;
+        if self.is_pc_rel_addressing() {
+            offset = self.imm_pc_rel() as i64;
+        } else {
+            debug_assert_ne!(self.branch_type(), ImmBranchType::UnknownBranchType);
+            offset = self.imm_branch() as i64 * K_INSTR_SIZE as i64;
+        }
+        offset
     }
 
     pub fn imm_branch_range_bitwidth(branch_type: ImmBranchType) -> u32 {
@@ -151,7 +186,23 @@ impl Instruction {
         self.set_instruction_bits(bits);
     }
 
+    pub fn is_valid_pc_rel_offset(offset: i64) -> bool {
+        crate::utils::utils::is_int21(offset)
+    }
+
+    pub fn set_pc_rel_imm_target(&mut self, distance: i64) {
+        debug_assert!(self.is_adr());
+        debug_assert!(Instruction::is_valid_pc_rel_offset(distance));
+        let imm = imm_pc_rel_address(distance as i32);
+        let bits = self.mask(!IMM_PC_REL_MASK) | imm;
+        self.set_instruction_bits(bits);
+    }
+
     pub fn set_imm_pc_offset_target(&mut self, distance: i64) {
+        if self.is_pc_rel_addressing() {
+            self.set_pc_rel_imm_target(distance);
+            return;
+        }
         let branch_type = self.branch_type();
         self.set_branch_imm_target(branch_type, distance);
     }
