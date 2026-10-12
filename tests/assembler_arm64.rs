@@ -381,3 +381,109 @@ fn an_address_of_a_label() {
     assembler.bind(&mut here);
     assert_eq!(words(&assembler), vec![0x10000040, 0xd503201f]);
 }
+
+#[test]
+fn floating_point_moves() {
+    assert_eq!(assemble(|a| a.fmov(D0, D1)), vec![0x1e604020]);
+    assert_eq!(assemble(|a| a.fmov(S0, S1)), vec![0x1e204020]);
+    assert_eq!(
+        assemble(|a| a.fmov_from_register(D0, X1)),
+        vec![0x9e670020]
+    );
+    assert_eq!(assemble(|a| a.fmov_to_register(X0, D1)), vec![0x9e660020]);
+    assert_eq!(
+        assemble(|a| a.fmov_from_register(S0, W1)),
+        vec![0x1e270020]
+    );
+    assert_eq!(assemble(|a| a.fmov_to_register(W0, S1)), vec![0x1e260020]);
+}
+
+#[test]
+fn a_floating_point_immediate_is_an_eight_bit_pattern() {
+    assert_eq!(assemble(|a| a.fmov_immediate(D0, 1.0)), vec![0x1e6e1000]);
+    assert_eq!(assemble(|a| a.fmov_immediate(S0, -2.0)), vec![0x1e301000]);
+    assert_eq!(assemble(|a| a.fmov_immediate(D0, 0.5)), vec![0x1e6c1000]);
+    assert!(Assembler::is_imm_fp64(1.0f64.to_bits()));
+    assert!(!Assembler::is_imm_fp64(0.1f64.to_bits()));
+}
+
+#[test]
+fn floating_point_comparisons() {
+    assert_eq!(assemble(|a| a.fcmp(D0, D1)), vec![0x1e612000]);
+    assert_eq!(assemble(|a| a.fcmp(S0, S1)), vec![0x1e212000]);
+    assert_eq!(assemble(|a| a.fcmp_zero(D0, 0.0)), vec![0x1e602008]);
+}
+
+#[test]
+fn floating_point_arithmetic() {
+    assert_eq!(assemble(|a| a.fadd(D0, D1, D2)), vec![0x1e622820]);
+    assert_eq!(assemble(|a| a.fsub(S0, S1, S2)), vec![0x1e223820]);
+    assert_eq!(assemble(|a| a.fmul(D0, D1, D2)), vec![0x1e620820]);
+    assert_eq!(assemble(|a| a.fdiv(D0, D1, D2)), vec![0x1e621820]);
+    assert_eq!(assemble(|a| a.fmax(D0, D1, D2)), vec![0x1e624820]);
+    assert_eq!(assemble(|a| a.fmin(D0, D1, D2)), vec![0x1e625820]);
+    assert_eq!(assemble(|a| a.fmaxnm(D0, D1, D2)), vec![0x1e626820]);
+    assert_eq!(assemble(|a| a.fminnm(D0, D1, D2)), vec![0x1e627820]);
+    assert_eq!(assemble(|a| a.fnmul(D0, D1, D2)), vec![0x1e628820]);
+}
+
+#[test]
+fn floating_point_unary_operations() {
+    assert_eq!(assemble(|a| a.fabs(D0, D1)), vec![0x1e60c020]);
+    assert_eq!(assemble(|a| a.fneg(S0, S1)), vec![0x1e214020]);
+    assert_eq!(assemble(|a| a.fsqrt(D0, D1)), vec![0x1e61c020]);
+}
+
+#[test]
+fn the_rounding_modes() {
+    assert_eq!(assemble(|a| a.frintn(D0, D1)), vec![0x1e644020]);
+    assert_eq!(assemble(|a| a.frintp(D0, D1)), vec![0x1e64c020]);
+    assert_eq!(assemble(|a| a.frintm(D0, D1)), vec![0x1e654020]);
+    assert_eq!(assemble(|a| a.frintz(D0, D1)), vec![0x1e65c020]);
+    assert_eq!(assemble(|a| a.frinta(D0, D1)), vec![0x1e664020]);
+    assert_eq!(assemble(|a| a.frintx(D0, D1)), vec![0x1e674020]);
+    assert_eq!(assemble(|a| a.frinti(D0, D1)), vec![0x1e67c020]);
+}
+
+#[test]
+fn conversions_between_the_floating_point_sizes() {
+    assert_eq!(assemble(|a| a.fcvt(D0, S1)), vec![0x1e22c020]);
+    assert_eq!(assemble(|a| a.fcvt(S0, D1)), vec![0x1e624020]);
+}
+
+#[test]
+fn fused_multiply_add() {
+    assert_eq!(assemble(|a| a.fmadd(D0, D1, D2, D3)), vec![0x1f420c20]);
+    assert_eq!(assemble(|a| a.fmsub(D0, D1, D2, D3)), vec![0x1f428c20]);
+    assert_eq!(assemble(|a| a.fnmadd(S0, S1, S2, S3)), vec![0x1f220c20]);
+    assert_eq!(assemble(|a| a.fnmsub(D0, D1, D2, D3)), vec![0x1f628c20]);
+}
+
+#[test]
+fn conversions_between_integer_and_floating_point() {
+    assert_eq!(assemble(|a| a.scvtf(D0, X1, 0)), vec![0x9e620020]);
+    assert_eq!(assemble(|a| a.scvtf(S0, W1, 0)), vec![0x1e220020]);
+    assert_eq!(assemble(|a| a.ucvtf(D0, X1, 0)), vec![0x9e630020]);
+    assert_eq!(assemble(|a| a.scvtf(D0, X1, 4)), vec![0x9e42f020]);
+    assert_eq!(assemble(|a| a.fcvtzs(X0, D1, 0)), vec![0x9e780020]);
+    assert_eq!(assemble(|a| a.fcvtzs(W0, S1, 0)), vec![0x1e380020]);
+    assert_eq!(assemble(|a| a.fcvtzu(X0, D1, 0)), vec![0x9e790020]);
+    assert_eq!(assemble(|a| a.fcvtzs(X0, D1, 8)), vec![0x9e58e020]);
+}
+
+#[test]
+fn loads_and_stores_of_vector_registers() {
+    let offset = |base, offset| MemOperand::new(base, offset, AddrMode::Offset);
+    assert_eq!(assemble(|a| a.ldr(D0, offset(X1, 8))), vec![0xfd400420]);
+    assert_eq!(assemble(|a| a.str(D0, offset(X1, 8))), vec![0xfd000420]);
+    assert_eq!(assemble(|a| a.ldr(S0, offset(X1, 4))), vec![0xbd400420]);
+    assert_eq!(assemble(|a| a.ldr(Q0, offset(X1, 16))), vec![0x3dc00420]);
+    assert_eq!(
+        assemble(|a| a.ldp(D0, D1, offset(X2, 16))),
+        vec![0x6d410440]
+    );
+    assert_eq!(
+        assemble(|a| a.stp(D8, D9, MemOperand::new(SP, -16, AddrMode::PreIndex))),
+        vec![0x6dbf27e8]
+    );
+}

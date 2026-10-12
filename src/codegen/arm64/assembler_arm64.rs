@@ -1592,6 +1592,260 @@ impl Assembler {
         self.emit(addrmodeop | memop);
     }
 
+    fn fp_type(fd: VRegister) -> Instr {
+        if fd.is_64_bits() {
+            FP64
+        } else {
+            FP32
+        }
+    }
+
+    fn fp_scale(scale: u32) -> Instr {
+        debug_assert!(is_uint6(scale as i64));
+        scale << FP_SCALE_OFFSET
+    }
+
+    fn imm_fp(imm: f64) -> Instr {
+        Assembler::fp_to_imm8(imm) << IMM_FP_OFFSET
+    }
+
+    pub fn fp_to_imm8(imm: f64) -> u32 {
+        let bits = imm.to_bits();
+        debug_assert!(Assembler::is_imm_fp64(bits));
+        let bit7 = ((bits >> 63) & 0x1) << 7;
+        let bit6 = ((bits >> 61) & 0x1) << 6;
+        let bit5_to_0 = (bits >> 48) & 0x3F;
+        (bit7 | bit6 | bit5_to_0) as u32
+    }
+
+    pub fn is_imm_fp64(bits: u64) -> bool {
+        if (bits & 0xFFFFFFFFFFFF) != 0 {
+            return false;
+        }
+
+        let b_pattern = ((bits >> 48) & 0x3FC0) as u32;
+        if b_pattern != 0 && b_pattern != 0x3FC0 {
+            return false;
+        }
+
+        if ((bits ^ (bits << 1)) & 0x4000000000000000) == 0 {
+            return false;
+        }
+
+        true
+    }
+
+    fn fp_data_processing_1_source(&mut self, vd: VRegister, vn: VRegister, op: Instr) {
+        let instruction =
+            Assembler::fp_type(vn) | op | Assembler::rn(vn) | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn fp_data_processing_2_source(
+        &mut self,
+        fd: VRegister,
+        fn_: VRegister,
+        fm: VRegister,
+        op: Instr,
+    ) {
+        debug_assert_eq!(fd.size_in_bits(), fn_.size_in_bits());
+        debug_assert_eq!(fd.size_in_bits(), fm.size_in_bits());
+        let instruction = Assembler::fp_type(fd)
+            | op
+            | Assembler::rm(fm)
+            | Assembler::rn(fn_)
+            | Assembler::rd(fd);
+        self.emit(instruction);
+    }
+
+    fn fp_data_processing_3_source(
+        &mut self,
+        fd: VRegister,
+        fn_: VRegister,
+        fm: VRegister,
+        fa: VRegister,
+        op: Instr,
+    ) {
+        let instruction = Assembler::fp_type(fd)
+            | op
+            | Assembler::rm(fm)
+            | Assembler::rn(fn_)
+            | Assembler::ra(fa)
+            | Assembler::rd(fd);
+        self.emit(instruction);
+    }
+
+    pub fn fmov(&mut self, vd: VRegister, vn: VRegister) {
+        debug_assert_eq!(vd.size_in_bits(), vn.size_in_bits());
+        let instruction =
+            Assembler::fp_type(vd) | FMOV | Assembler::rd(vd) | Assembler::rn(vn);
+        self.emit(instruction);
+    }
+
+    pub fn fmov_from_register(&mut self, vd: VRegister, rn: Register) {
+        debug_assert_eq!(vd.size_in_bits(), rn.size_in_bits());
+        let op = if vd.is_32_bits() { FMOV_SW } else { FMOV_DX };
+        let instruction = op | Assembler::rd(vd) | Assembler::rn(rn);
+        self.emit(instruction);
+    }
+
+    pub fn fmov_to_register(&mut self, rd: Register, fn_: VRegister) {
+        debug_assert_eq!(rd.size_in_bits(), fn_.size_in_bits());
+        let op = if rd.is_32_bits() { FMOV_WS } else { FMOV_XD };
+        let instruction = op | Assembler::rd(rd) | Assembler::rn(fn_);
+        self.emit(instruction);
+    }
+
+    pub fn fmov_immediate(&mut self, vd: VRegister, imm: f64) {
+        debug_assert!(vd.is_scalar());
+        let op = if vd.is_1d() { FMOV_D_IMM } else { FMOV_S_IMM };
+        debug_assert!(vd.is_1d() || vd.is_1s());
+        let instruction = op | Assembler::rd(vd) | Assembler::imm_fp(imm);
+        self.emit(instruction);
+    }
+
+    pub fn fcmp(&mut self, fn_: VRegister, fm: VRegister) {
+        debug_assert_eq!(fn_.size_in_bits(), fm.size_in_bits());
+        let instruction =
+            Assembler::fp_type(fn_) | FCMP | Assembler::rm(fm) | Assembler::rn(fn_);
+        self.emit(instruction);
+    }
+
+    pub fn fcmp_zero(&mut self, fn_: VRegister, value: f64) {
+        debug_assert_eq!(value, 0.0);
+        let instruction = Assembler::fp_type(fn_) | FCMP_ZERO | Assembler::rn(fn_);
+        self.emit(instruction);
+    }
+
+    pub fn fcvt(&mut self, vd: VRegister, vn: VRegister) {
+        let op;
+        if vd.is_1d() {
+            debug_assert!(vn.is_1s() || vn.is_1h());
+            op = if vn.is_1s() { FCVT_DS } else { FCVT_DH };
+        } else if vd.is_1s() {
+            debug_assert!(vn.is_1d() || vn.is_1h());
+            op = if vn.is_1d() { FCVT_SD } else { FCVT_SH };
+        } else {
+            debug_assert!(vd.is_1h());
+            debug_assert!(vn.is_1d() || vn.is_1s());
+            op = if vn.is_1d() { FCVT_HD } else { FCVT_HS };
+        }
+        self.fp_data_processing_1_source(vd, vn, op);
+    }
+
+    pub fn scvtf(&mut self, vd: VRegister, rn: Register, fbits: u32) {
+        let instruction = if fbits == 0 {
+            Assembler::sf(rn)
+                | Assembler::fp_type(vd)
+                | SCVTF
+                | Assembler::rn(rn)
+                | Assembler::rd(vd)
+        } else {
+            Assembler::sf(rn)
+                | Assembler::fp_type(vd)
+                | SCVTF_FIXED
+                | Assembler::fp_scale(64 - fbits)
+                | Assembler::rn(rn)
+                | Assembler::rd(vd)
+        };
+        self.emit(instruction);
+    }
+
+    pub fn ucvtf(&mut self, fd: VRegister, rn: Register, fbits: u32) {
+        let instruction = if fbits == 0 {
+            Assembler::sf(rn)
+                | Assembler::fp_type(fd)
+                | UCVTF
+                | Assembler::rn(rn)
+                | Assembler::rd(fd)
+        } else {
+            Assembler::sf(rn)
+                | Assembler::fp_type(fd)
+                | UCVTF_FIXED
+                | Assembler::fp_scale(64 - fbits)
+                | Assembler::rn(rn)
+                | Assembler::rd(fd)
+        };
+        self.emit(instruction);
+    }
+
+    pub fn fcvtzs(&mut self, rd: Register, vn: VRegister, fbits: u32) {
+        debug_assert!(vn.is_1s() || vn.is_1d());
+        debug_assert!(fbits <= rd.size_in_bits());
+        let instruction = if fbits == 0 {
+            Assembler::sf(rd)
+                | Assembler::fp_type(vn)
+                | FCVTZS
+                | Assembler::rn(vn)
+                | Assembler::rd(rd)
+        } else {
+            Assembler::sf(rd)
+                | Assembler::fp_type(vn)
+                | FCVTZS_FIXED
+                | Assembler::fp_scale(64 - fbits)
+                | Assembler::rn(vn)
+                | Assembler::rd(rd)
+        };
+        self.emit(instruction);
+    }
+
+    pub fn fcvtzu(&mut self, rd: Register, vn: VRegister, fbits: u32) {
+        debug_assert!(vn.is_1s() || vn.is_1d());
+        debug_assert!(fbits <= rd.size_in_bits());
+        let instruction = if fbits == 0 {
+            Assembler::sf(rd)
+                | Assembler::fp_type(vn)
+                | FCVTZU
+                | Assembler::rn(vn)
+                | Assembler::rd(rd)
+        } else {
+            Assembler::sf(rd)
+                | Assembler::fp_type(vn)
+                | FCVTZU_FIXED
+                | Assembler::fp_scale(64 - fbits)
+                | Assembler::rn(vn)
+                | Assembler::rd(rd)
+        };
+        self.emit(instruction);
+    }
+
+    pub fn fjcvtzs(&mut self, rd: Register, vn: VRegister) {
+        debug_assert!(rd.is_w());
+        debug_assert!(vn.is_1d());
+        let instruction = FJCVTZS | Assembler::rn(vn) | Assembler::rd(rd);
+        self.emit(instruction);
+    }
+
+    pub fn fnmul(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+        let op = if vd.is_1s() { FNMUL_S } else { FNMUL_D };
+        let instruction = Assembler::fp_type(vd)
+            | op
+            | Assembler::rm(vm)
+            | Assembler::rn(vn)
+            | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    pub fn fmadd(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
+        let op = if fd.is_32_bits() { FMADD_S } else { FMADD_D };
+        self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
+    }
+
+    pub fn fmsub(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
+        let op = if fd.is_32_bits() { FMSUB_S } else { FMSUB_D };
+        self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
+    }
+
+    pub fn fnmadd(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
+        let op = if fd.is_32_bits() { FNMADD_S } else { FNMADD_D };
+        self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
+    }
+
+    pub fn fnmsub(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
+        let op = if fd.is_32_bits() { FNMSUB_S } else { FNMSUB_D };
+        self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
+    }
+
     fn add_sub(
         &mut self,
         rd: Register,
@@ -1843,3 +2097,53 @@ impl Assembler {
         self.emit(instruction);
     }
 }
+
+macro_rules! define_fp_3_same {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
+                    debug_assert!(vd.is_1s() || vd.is_1d());
+                    self.fp_data_processing_2_source(vd, vn, vm, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_3_same!(
+    (fadd, FADD),
+    (fsub, FSUB),
+    (fmul, FMUL),
+    (fdiv, FDIV),
+    (fmax, FMAX),
+    (fmaxnm, FMAXNM),
+    (fmin, FMIN),
+    (fminnm, FMINNM),
+);
+
+macro_rules! define_fp_2_reg_misc {
+    ($(($name:ident, $op:ident)),* $(,)?) => {
+        impl Assembler {
+            $(
+                pub fn $name(&mut self, vd: VRegister, vn: VRegister) {
+                    debug_assert!(vd.is_1s() || vd.is_1d());
+                    self.fp_data_processing_1_source(vd, vn, $op);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_2_reg_misc!(
+    (fabs, FABS),
+    (fneg, FNEG),
+    (fsqrt, FSQRT),
+    (frintn, FRINTN),
+    (frinta, FRINTA),
+    (frintp, FRINTP),
+    (frintm, FRINTM),
+    (frintx, FRINTX),
+    (frintz, FRINTZ),
+    (frinti, FRINTI),
+);
