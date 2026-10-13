@@ -1,6 +1,7 @@
 #![allow(non_upper_case_globals)]
 
 use crate::codegen::arm64::constants_arm64::*;
+use crate::codegen::arm64::register_arm64::VectorFormat;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Reg31Mode {
@@ -91,7 +92,7 @@ impl Instruction {
     }
 
     #[inline]
-    fn signed_bits(self, msb: u32, lsb: u32) -> i32 {
+    pub fn signed_bits(self, msb: u32, lsb: u32) -> i32 {
         signed_bitextract_32(msb, lsb, self.0)
     }
 
@@ -169,6 +170,100 @@ impl Instruction {
     }
 
     #[inline]
+    pub fn rs(self) -> u32 {
+        self.bits(Rs_offset + 4, Rs_offset)
+    }
+
+    pub fn neon_q(self) -> u32 {
+        self.bits(NEONQ_offset, NEONQ_offset)
+    }
+
+    pub fn neon_s(self) -> u32 {
+        self.bits(NEONS_offset, NEONS_offset)
+    }
+
+    pub fn neon_l(self) -> u32 {
+        self.bits(NEONL_offset, NEONL_offset)
+    }
+
+    pub fn neon_m(self) -> u32 {
+        self.bits(NEONM_offset, NEONM_offset)
+    }
+
+    pub fn neon_h(self) -> u32 {
+        self.bits(NEONH_offset, NEONH_offset)
+    }
+
+    pub fn neon_size(self) -> u32 {
+        self.bits(NEONSize_offset + 1, NEONSize_offset)
+    }
+
+    pub fn neon_ls_size(self) -> u32 {
+        self.bits(NEONLSSize_offset + 1, NEONLSSize_offset)
+    }
+
+    pub fn neon_cmode(self) -> u32 {
+        self.bits(NEONCmode_offset + 3, NEONCmode_offset)
+    }
+
+    pub fn neon_mod_imm_op(self) -> u32 {
+        self.bits(NEONModImmOp_offset, NEONModImmOp_offset)
+    }
+
+    pub fn imm_neon4(self) -> u32 {
+        self.bits(ImmNEON4_offset + 3, ImmNEON4_offset)
+    }
+
+    pub fn imm_neon5(self) -> u32 {
+        self.bits(ImmNEON5_offset + 4, ImmNEON5_offset)
+    }
+
+    pub fn imm_neon_ext(self) -> u32 {
+        self.bits(ImmNEONExt_offset + 3, ImmNEONExt_offset)
+    }
+
+    pub fn imm_neon_abc(self) -> u32 {
+        self.bits(ImmNEONabc_offset + 2, ImmNEONabc_offset)
+    }
+
+    pub fn imm_neon_defgh(self) -> u32 {
+        self.bits(ImmNEONdefgh_offset + 4, ImmNEONdefgh_offset)
+    }
+
+    pub fn imm_neon_immh(self) -> u32 {
+        self.bits(
+            ImmNEONImmh_offset + ImmNEONImmh_width - 1,
+            ImmNEONImmh_offset,
+        )
+    }
+
+    pub fn imm_neon_immh_immb(self) -> u32 {
+        self.bits(
+            ImmNEONImmhImmb_offset + ImmNEONImmhImmb_width - 1,
+            ImmNEONImmhImmb_offset,
+        )
+    }
+
+    pub fn imm_neon_abcdefgh(self) -> u32 {
+        self.imm_neon_abc() << 5 | self.imm_neon_defgh()
+    }
+
+    pub fn imm_neon_fp32(self) -> f32 {
+        Instruction::imm8_to_fp32(self.imm_neon_abcdefgh())
+    }
+
+    pub fn imm_neon_fp64(self) -> f64 {
+        Instruction::imm8_to_fp64(self.imm_neon_abcdefgh())
+    }
+
+    pub fn neon_ls_index(self, access_size_shift: u32) -> i32 {
+        let q = self.neon_q();
+        let s = self.neon_s();
+        let size = self.neon_ls_size();
+        let index = (q << 3) | (s << 2) | size;
+        (index >> access_size_shift) as i32
+    }
+
     pub fn rt2(self) -> u32 {
         self.bits(14, 10)
     }
@@ -628,5 +723,213 @@ impl Instruction {
             return;
         }
         self.set_branch_imm_target(branch_type, distance);
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum NEONFormat {
+    NF_UNDEF = 0,
+    NF_8B = 1,
+    NF_16B = 2,
+    NF_4H = 3,
+    NF_8H = 4,
+    NF_2S = 5,
+    NF_4S = 6,
+    NF_1D = 7,
+    NF_2D = 8,
+    NF_B = 9,
+    NF_H = 10,
+    NF_S = 11,
+    NF_D = 12,
+}
+
+pub const kNEONFormatMaxBits: usize = 6;
+
+pub struct NEONFormatMap {
+    pub bits: [u8; kNEONFormatMaxBits],
+    pub map: [NEONFormat; 1 << kNEONFormatMaxBits],
+}
+
+pub const fn neon_format_map(bits: [u8; kNEONFormatMaxBits], entries: &[NEONFormat]) -> NEONFormatMap {
+    let mut map = [NEONFormat::NF_UNDEF; 1 << kNEONFormatMaxBits];
+    let mut i = 0;
+    while i < entries.len() {
+        map[i] = entries[i];
+        i += 1;
+    }
+    NEONFormatMap { bits, map }
+}
+
+pub struct NEONFormatDecoder {
+    instrbits: Instr,
+    formats: [&'static NEONFormatMap; 4],
+}
+
+impl NEONFormatDecoder {
+    pub fn new(instr: Instruction, formats: &[&'static NEONFormatMap]) -> NEONFormatDecoder {
+        let mut decoder = NEONFormatDecoder {
+            instrbits: instr.instruction_bits(),
+            formats: [NEONFormatDecoder::integer_format_map(); 4],
+        };
+        match formats.len() {
+            0 => decoder.set_format_maps(&[NEONFormatDecoder::integer_format_map()]),
+            _ => decoder.set_format_maps(formats),
+        }
+        decoder
+    }
+
+    pub fn set_format_maps(&mut self, formats: &[&'static NEONFormatMap]) {
+        debug_assert!(!formats.is_empty());
+        self.formats[0] = formats[0];
+        self.formats[1] = if formats.len() > 1 {
+            formats[1]
+        } else {
+            self.formats[0]
+        };
+        self.formats[2] = if formats.len() > 2 {
+            formats[2]
+        } else {
+            self.formats[1]
+        };
+        self.formats[3] = self.formats[2];
+    }
+
+    pub fn set_format_map(&mut self, index: usize, format: &'static NEONFormatMap) {
+        debug_assert!(index < self.formats.len());
+        self.formats[index] = format;
+    }
+
+    pub fn get_vector_format(&self, format_index: usize) -> VectorFormat {
+        self.get_vector_format_from_map(self.formats[format_index])
+    }
+
+    pub fn get_vector_format_from_map(&self, format_map: &NEONFormatMap) -> VectorFormat {
+        const vform: [VectorFormat; 13] = [
+            VectorFormat::FormatUndefined,
+            VectorFormat::Format8B,
+            VectorFormat::Format16B,
+            VectorFormat::Format4H,
+            VectorFormat::Format8H,
+            VectorFormat::Format2S,
+            VectorFormat::Format4S,
+            VectorFormat::Format1D,
+            VectorFormat::Format2D,
+            VectorFormat::FormatB,
+            VectorFormat::FormatH,
+            VectorFormat::FormatS,
+            VectorFormat::FormatD,
+        ];
+        let format = self.get_neon_format(format_map);
+        debug_assert!((format as usize) < vform.len());
+        vform[format as usize]
+    }
+
+    fn get_neon_format(&self, format_map: &NEONFormatMap) -> NEONFormat {
+        format_map.map[self.pick_bits(&format_map.bits) as usize]
+    }
+
+    fn pick_bits(&self, bits: &[u8; kNEONFormatMaxBits]) -> u8 {
+        let mut result = 0;
+        for b in 0..kNEONFormatMaxBits {
+            if bits[b] == 0 {
+                break;
+            }
+            result <<= 1;
+            result |= if (self.instrbits & (1 << bits[b])) == 0 {
+                0
+            } else {
+                1
+            };
+        }
+        result
+    }
+
+    pub fn integer_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map(
+            [23, 22, 30, 0, 0, 0],
+            &[NF_8B, NF_16B, NF_4H, NF_8H, NF_2S, NF_4S, NF_UNDEF, NF_2D],
+        );
+        &map
+    }
+
+    pub fn long_integer_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map([23, 22, 0, 0, 0, 0], &[NF_8H, NF_4S, NF_2D]);
+        &map
+    }
+
+    pub fn fp_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap =
+            neon_format_map([22, 30, 0, 0, 0, 0], &[NF_2S, NF_4S, NF_UNDEF, NF_2D]);
+        &map
+    }
+
+    pub fn fphp_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map([30, 0, 0, 0, 0, 0], &[NF_4H, NF_8H]);
+        &map
+    }
+
+    pub fn load_store_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map(
+            [11, 10, 30, 0, 0, 0],
+            &[NF_8B, NF_16B, NF_4H, NF_8H, NF_2S, NF_4S, NF_1D, NF_2D],
+        );
+        &map
+    }
+
+    pub fn logical_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map([30, 0, 0, 0, 0, 0], &[NF_8B, NF_16B]);
+        &map
+    }
+
+    pub fn triangular_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map(
+            [19, 18, 17, 16, 30, 0],
+            &[
+                NF_UNDEF, NF_UNDEF, NF_8B, NF_16B, NF_4H, NF_8H, NF_8B, NF_16B, NF_2S, NF_4S,
+                NF_8B, NF_16B, NF_4H, NF_8H, NF_8B, NF_16B, NF_UNDEF, NF_2D, NF_8B, NF_16B,
+                NF_4H, NF_8H, NF_8B, NF_16B, NF_2S, NF_4S, NF_8B, NF_16B, NF_4H, NF_8H, NF_8B,
+                NF_16B,
+            ],
+        );
+        &map
+    }
+
+    pub fn scalar_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap =
+            neon_format_map([23, 22, 0, 0, 0, 0], &[NF_B, NF_H, NF_S, NF_D]);
+        &map
+    }
+
+    pub fn long_scalar_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map([23, 22, 0, 0, 0, 0], &[NF_H, NF_S, NF_D]);
+        &map
+    }
+
+    pub fn fp_scalar_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map([22, 0, 0, 0, 0, 0], &[NF_S, NF_D]);
+        &map
+    }
+
+    pub fn triangular_scalar_format_map() -> &'static NEONFormatMap {
+        use NEONFormat::*;
+        static map: NEONFormatMap = neon_format_map(
+            [19, 18, 17, 16, 0, 0],
+            &[
+                NF_UNDEF, NF_B, NF_H, NF_B, NF_S, NF_B, NF_H, NF_B, NF_D, NF_B, NF_H, NF_B, NF_S,
+                NF_B, NF_H, NF_B,
+            ],
+        );
+        &map
     }
 }

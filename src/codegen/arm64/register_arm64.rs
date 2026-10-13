@@ -1,6 +1,7 @@
 #![allow(non_upper_case_globals)]
 
 use crate::codegen::arm64::constants_arm64::*;
+use crate::codegen::arm64::utils_arm64::count_set_bits;
 
 pub const kCode_no_reg: i32 = -1;
 
@@ -191,6 +192,22 @@ impl CPURegister {
     }
 
     #[inline]
+    pub fn is_same_size_and_type(self, other: CPURegister) -> bool {
+        (self.reg_size == other.reg_size) && (self.reg_type == other.reg_type)
+    }
+
+    pub fn is_fp_register(self) -> bool {
+        self.is_s() || self.is_d()
+    }
+
+    pub fn max_code(self) -> i32 {
+        if self.is_v_register() {
+            return kNumberOfVRegisters as i32 - 1;
+        }
+        debug_assert!(self.is_register());
+        kNumberOfRegisters as i32 - 1
+    }
+
     pub fn is_even(self) -> bool {
         (self.code() % 2) == 0
     }
@@ -737,6 +754,108 @@ impl VRegister {
         (self.size_in_bits() == other.size_in_bits())
             && (self.lane_count() == other.lane_count())
     }
+}
+
+pub fn are_aliased(regs: &[CPURegister]) -> bool {
+    let mut number_of_valid_regs = 0;
+    let mut number_of_valid_fpregs = 0;
+
+    let mut unique_regs: u64 = 0;
+    let mut unique_fpregs: u64 = 0;
+
+    for reg in regs {
+        if reg.is_register() {
+            number_of_valid_regs += 1;
+            unique_regs |= 1u64 << reg.code();
+        } else if reg.is_v_register() {
+            number_of_valid_fpregs += 1;
+            unique_fpregs |= 1u64 << reg.code();
+        } else {
+            debug_assert!(!reg.is_valid());
+        }
+    }
+
+    let number_of_unique_regs = count_set_bits(unique_regs, 64);
+    let number_of_unique_fpregs = count_set_bits(unique_fpregs, 64);
+
+    debug_assert!(number_of_valid_regs >= number_of_unique_regs);
+    debug_assert!(number_of_valid_fpregs >= number_of_unique_fpregs);
+
+    (number_of_valid_regs != number_of_unique_regs)
+        || (number_of_valid_fpregs != number_of_unique_fpregs)
+}
+
+pub fn are_same_size_and_type(reg1: CPURegister, regs: &[CPURegister]) -> bool {
+    debug_assert!(reg1.is_valid());
+    regs.iter()
+        .all(|reg| reg.is_valid() && reg.is_same_size_and_type(reg1))
+}
+
+pub fn are_consecutive(reg1: CPURegister, regs: &[CPURegister]) -> bool {
+    debug_assert!(reg1.is_valid());
+    let mut previous = reg1;
+    for reg in regs {
+        debug_assert!(reg.is_valid());
+        if reg.code() != ((previous.code() + 1) % (reg1.max_code() + 1)) {
+            return false;
+        }
+        previous = *reg;
+    }
+    true
+}
+
+pub fn are_even(regs: &[CPURegister]) -> bool {
+    regs.iter().all(|reg| reg.is_valid() && reg.is_even())
+}
+
+pub fn vector_format_double_lanes(vform: VectorFormat) -> VectorFormat {
+    debug_assert!(
+        vform == VectorFormat::Format8B
+            || vform == VectorFormat::Format4H
+            || vform == VectorFormat::Format2S
+    );
+    match vform {
+        VectorFormat::Format8B => VectorFormat::Format16B,
+        VectorFormat::Format4H => VectorFormat::Format8H,
+        VectorFormat::Format2S => VectorFormat::Format4S,
+        _ => unreachable!(),
+    }
+}
+
+pub fn vector_format_half_lanes(vform: VectorFormat) -> VectorFormat {
+    debug_assert!(
+        vform == VectorFormat::Format16B
+            || vform == VectorFormat::Format8H
+            || vform == VectorFormat::Format4S
+            || vform == VectorFormat::Format2D
+    );
+    match vform {
+        VectorFormat::Format16B => VectorFormat::Format8B,
+        VectorFormat::Format8H => VectorFormat::Format4H,
+        VectorFormat::Format4S => VectorFormat::Format2S,
+        VectorFormat::Format2D => VectorFormat::Format1D,
+        _ => unreachable!(),
+    }
+}
+
+pub fn vector_format_fill_half_q(vform: VectorFormat) -> VectorFormat {
+    vector_format_half_lanes(vector_format_fill_q(vform))
+}
+
+pub fn vector_format_fill_half_q_from_lane_size(lane_size: u32) -> VectorFormat {
+    vector_format_fill_half_q(scalar_format_from_lane_size(lane_size))
+}
+
+pub fn max_int_from_format(vform: VectorFormat) -> i64 {
+    (i64::MAX as u64 >> (64 - lane_size_in_bits_from_format(vform))) as i64
+}
+
+pub fn min_int_from_format(vform: VectorFormat) -> i64 {
+    i64::MIN >> (64 - lane_size_in_bits_from_format(vform))
+}
+
+pub fn max_uint_from_format(vform: VectorFormat) -> u64 {
+    u64::MAX >> (64 - lane_size_in_bits_from_format(vform))
 }
 
 pub fn are_same_format(reg1: VRegister, regs: &[VRegister]) -> bool {

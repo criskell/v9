@@ -1,5 +1,6 @@
 #![allow(non_upper_case_globals)]
 
+use crate::codegen::arm64::constants_arm64::*;
 use crate::codegen::arm64::instructions_arm64::Instruction;
 
 pub trait DecoderVisitor {
@@ -44,13 +45,52 @@ pub trait DecoderVisitor {
     fn visit_fp_immediate(&mut self, instr: Instruction);
     fn visit_fp_conditional_compare(&mut self, instr: Instruction);
     fn visit_fp_conditional_select(&mut self, instr: Instruction);
+    fn visit_min_max_immediate(&mut self, instr: Instruction);
+    fn visit_load_store_acquire_release(&mut self, instr: Instruction);
+    fn visit_atomic_memory(&mut self, instr: Instruction);
+    fn visit_neon2_reg_misc(&mut self, instr: Instruction);
+    fn visit_neon3_different(&mut self, instr: Instruction);
+    fn visit_neon3_extension(&mut self, instr: Instruction);
+    fn visit_neon3_same(&mut self, instr: Instruction);
+    fn visit_neon3_same_hp(&mut self, instr: Instruction);
+    fn visit_neon_across_lanes(&mut self, instr: Instruction);
+    fn visit_neon_by_indexed_element(&mut self, instr: Instruction);
+    fn visit_neon_copy(&mut self, instr: Instruction);
+    fn visit_neon_extract(&mut self, instr: Instruction);
+    fn visit_neon_load_store_multi_struct(&mut self, instr: Instruction);
+    fn visit_neon_load_store_multi_struct_post_index(&mut self, instr: Instruction);
+    fn visit_neon_load_store_single_struct(&mut self, instr: Instruction);
+    fn visit_neon_load_store_single_struct_post_index(&mut self, instr: Instruction);
+    fn visit_neon_modified_immediate(&mut self, instr: Instruction);
+    fn visit_neon_scalar2_reg_misc(&mut self, instr: Instruction);
+    fn visit_neon_scalar3_diff(&mut self, instr: Instruction);
+    fn visit_neon_scalar3_same(&mut self, instr: Instruction);
+    fn visit_neon_scalar_by_indexed_element(&mut self, instr: Instruction);
+    fn visit_neon_scalar_copy(&mut self, instr: Instruction);
+    fn visit_neon_scalar_pairwise(&mut self, instr: Instruction);
+    fn visit_neon_scalar_shift_immediate(&mut self, instr: Instruction);
+    fn visit_neon_shift_immediate(&mut self, instr: Instruction);
+    fn visit_neon_table(&mut self, instr: Instruction);
+    fn visit_neon_perm(&mut self, instr: Instruction);
+    fn visit_neonsha3(&mut self, instr: Instruction);
+    fn visit_cpy(&mut self, instr: Instruction);
+    fn visit_set(&mut self, instr: Instruction);
+    fn visit_sve_bit_perm(&mut self, instr: Instruction);
     fn visit_unallocated(&mut self, instr: Instruction);
     fn visit_unimplemented(&mut self, instr: Instruction);
 }
 
 pub fn decode<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
     if instr.bits(28, 27) == 0 {
-        visitor.visit_unallocated(instr);
+        if instr.bits(31, 24) == 0x45
+            && instr.bit(21) == 0
+            && instr.bits(15, 12) == 0xB
+            && instr.bits(11, 10) != 3
+        {
+            visitor.visit_sve_bit_perm(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
         return;
     }
     match instr.bits(27, 24) {
@@ -81,7 +121,7 @@ fn decode_data_processing_immediate<V: DecoderVisitor>(visitor: &mut V, instr: I
         if instr.bits(30, 29) != 0 || instr.bits(21, 20) != 0 {
             visitor.visit_unallocated(instr);
         } else {
-            visitor.visit_unimplemented(instr);
+            visitor.visit_min_max_immediate(instr);
         }
     } else {
         visitor.visit_add_sub_immediate(instr);
@@ -299,18 +339,29 @@ fn decode_load_store<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
     debug_assert_eq!(0x8, instr.bits(27, 24) & 0xA);
 
     if (instr.bit(28) == 0) && (instr.bit(29) == 0) && (instr.bit(26) == 1) {
-        visitor.visit_unimplemented(instr);
+        decode_neon_load_store(visitor, instr);
         return;
     }
 
     if instr.bit(24) == 0 {
         if instr.bit(28) == 0 {
             if instr.bit(29) == 0 {
-                visitor.visit_unimplemented(instr);
+                debug_assert_eq!(instr.bit(26), 0);
+                if instr.mask(0xA08000) == 0x800000 {
+                    visitor.visit_unallocated(instr);
+                } else if instr.mask(0xA08000) == 0 {
+                    visitor.visit_unimplemented(instr);
+                } else {
+                    visitor.visit_load_store_acquire_release(instr);
+                }
             } else if (instr.bits(31, 30) == 0x3) || (instr.mask(0xC4400000) == 0x40000000) {
                 visitor.visit_unallocated(instr);
             } else if instr.bit(23) == 0 {
-                visitor.visit_unimplemented(instr);
+                if instr.mask(0xC4400000) == 0xC0400000 {
+                    visitor.visit_unallocated(instr);
+                } else {
+                    visitor.visit_unimplemented(instr);
+                }
             } else {
                 visitor.visit_load_store_pair_post_index(instr);
             }
@@ -356,8 +407,20 @@ fn decode_load_store<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
             } else {
                 visitor.visit_load_store_register_offset(instr);
             }
+        } else if (instr.bits(11, 10) == 0x0) && (instr.bits(26, 25) == 0x0) {
+            if (instr.bit(15) == 1)
+                && ((instr.bits(14, 12) == 0x1)
+                    || (instr.bit(13) == 1)
+                    || (instr.bits(14, 12) == 0x5)
+                    || ((instr.bits(14, 12) == 0x4)
+                        && ((instr.bit(23) == 0) || (instr.bits(23, 22) == 0x3))))
+            {
+                visitor.visit_unallocated(instr);
+            } else {
+                visitor.visit_atomic_memory(instr);
+            }
         } else {
-            visitor.visit_unimplemented(instr);
+            visitor.visit_unallocated(instr);
         }
         return;
     }
@@ -376,7 +439,13 @@ fn decode_load_store<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
     }
 
     if instr.bit(29) == 0 {
-        visitor.visit_unallocated(instr);
+        if instr.mask(CpyFMask) == CpyFixed && instr.bits(23, 22) != 0x3 {
+            visitor.visit_cpy(instr);
+        } else if instr.mask(SetFMask) == SetFixed && instr.bits(15, 14) != 0x3 {
+            visitor.visit_set(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
     } else if (instr.mask(0x84C00000) == 0x80C00000)
         || (instr.mask(0x44800000) == 0x44800000)
         || (instr.mask(0x84800000) == 0x84800000)
@@ -391,7 +460,7 @@ fn decode_fp<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
     debug_assert!((instr.bits(27, 24) == 0xE) || (instr.bits(27, 24) == 0xF));
 
     if instr.bit(28) == 0 {
-        visitor.visit_unimplemented(instr);
+        decode_neon_vector_data_processing(visitor, instr);
         return;
     }
     if instr.bits(31, 30) == 0x3 {
@@ -399,7 +468,7 @@ fn decode_fp<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
         return;
     }
     if instr.bits(31, 30) == 0x1 {
-        visitor.visit_unimplemented(instr);
+        decode_neon_scalar_data_processing(visitor, instr);
         return;
     }
     if instr.bit(29) != 0 {
@@ -504,5 +573,155 @@ fn decode_fp<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
             3 => visitor.visit_fp_conditional_select(instr),
             _ => unreachable!(),
         }
+    }
+}
+
+fn decode_neon_load_store<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
+    debug_assert_eq!(0x6, instr.bits(29, 25));
+    if instr.bit(31) != 0 {
+        visitor.visit_unallocated(instr);
+        return;
+    }
+    if (instr.bit(24) == 0) && (instr.bit(21) == 1) {
+        visitor.visit_unallocated(instr);
+        return;
+    }
+
+    if instr.bit(23) == 0 {
+        if instr.bits(20, 16) == 0 {
+            if instr.bit(24) == 0 {
+                visitor.visit_neon_load_store_multi_struct(instr);
+            } else {
+                visitor.visit_neon_load_store_single_struct(instr);
+            }
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+    } else if instr.bit(24) == 0 {
+        visitor.visit_neon_load_store_multi_struct_post_index(instr);
+    } else {
+        visitor.visit_neon_load_store_single_struct_post_index(instr);
+    }
+}
+
+fn decode_neon_vector_data_processing<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
+    debug_assert_eq!(0x7, instr.bits(28, 25));
+    if instr.bit(31) != 0 {
+        if instr.bit(30) == 1 {
+            visitor.visit_neonsha3(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+        return;
+    }
+    if instr.bit(24) != 0 {
+        if instr.bit(10) == 0 {
+            visitor.visit_neon_by_indexed_element(instr);
+        } else if instr.bit(23) == 0 {
+            if instr.bits(22, 19) == 0 {
+                visitor.visit_neon_modified_immediate(instr);
+            } else {
+                visitor.visit_neon_shift_immediate(instr);
+            }
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+        return;
+    }
+    if instr.bit(21) == 0 {
+        if instr.bit(15) != 0 {
+            if instr.bit(10) == 1 {
+                visitor.visit_neon3_extension(instr);
+            } else {
+                visitor.visit_unallocated(instr);
+            }
+            return;
+        }
+        if instr.bit(10) == 0 {
+            if instr.bit(29) == 0 {
+                if instr.bit(11) == 0 {
+                    visitor.visit_neon_table(instr);
+                } else {
+                    visitor.visit_neon_perm(instr);
+                }
+            } else {
+                visitor.visit_neon_extract(instr);
+            }
+        } else if instr.bits(23, 22) == 0 {
+            visitor.visit_neon_copy(instr);
+        } else if instr.bit(14) == 0 && instr.bit(22) != 0 {
+            visitor.visit_neon3_same_hp(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+        return;
+    }
+    if instr.bit(10) != 0 {
+        visitor.visit_neon3_same(instr);
+        return;
+    }
+    if instr.bit(11) == 0 {
+        visitor.visit_neon3_different(instr);
+        return;
+    }
+    if instr.bits(18, 17) != 0 {
+        visitor.visit_unallocated(instr);
+        return;
+    }
+    if instr.bit(20) == 0 {
+        if instr.bit(19) == 0 {
+            visitor.visit_neon2_reg_misc(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+    } else if instr.bit(19) == 0 {
+        visitor.visit_neon_across_lanes(instr);
+    } else {
+        visitor.visit_neon2_reg_misc(instr);
+    }
+}
+
+fn decode_neon_scalar_data_processing<V: DecoderVisitor>(visitor: &mut V, instr: Instruction) {
+    debug_assert_eq!(0xF, instr.bits(28, 25));
+    if instr.bit(24) != 0 {
+        if instr.bit(10) == 0 {
+            visitor.visit_neon_scalar_by_indexed_element(instr);
+        } else if instr.bit(23) == 0 {
+            visitor.visit_neon_scalar_shift_immediate(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+        return;
+    }
+    if instr.bit(21) == 0 {
+        if (instr.bit(15) == 0) && (instr.bit(10) != 0) && (instr.bits(23, 22) == 0) {
+            visitor.visit_neon_scalar_copy(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+        return;
+    }
+    if instr.bit(10) != 0 {
+        visitor.visit_neon_scalar3_same(instr);
+        return;
+    }
+    if instr.bit(11) == 0 {
+        visitor.visit_neon_scalar3_diff(instr);
+        return;
+    }
+    if instr.bits(18, 17) != 0 {
+        visitor.visit_unallocated(instr);
+        return;
+    }
+    if instr.bit(20) == 0 {
+        if instr.bit(19) == 0 {
+            visitor.visit_neon_scalar2_reg_misc(instr);
+        } else {
+            visitor.visit_unallocated(instr);
+        }
+    } else if instr.bit(19) == 0 {
+        visitor.visit_neon_scalar_pairwise(instr);
+    } else {
+        visitor.visit_unallocated(instr);
     }
 }
