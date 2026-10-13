@@ -1,7 +1,8 @@
 #![allow(non_upper_case_globals)]
 
 use vx::codegen::arm64::assembler_arm64::{MemOperand, Operand};
-use vx::codegen::arm64::constants_arm64::{condition_from_bits, AddrMode, Condition, Shift};
+use vx::codegen::arm64::constants_arm64::*;
+use vx::codegen::cpu_features::CpuFeature;
 use vx::codegen::arm64::instructions_arm64::Instruction;
 use vx::codegen::arm64::macro_assembler_arm64::MacroAssembler;
 use vx::codegen::arm64::register_arm64::*;
@@ -286,4 +287,119 @@ fn a_conditional_branch_to_a_bound_label_out_of_range_gets_an_inverted_branch() 
     let over = Instruction::new(code[(at / 4 + 1) as usize]);
     assert!(over.is_uncond_branch_imm());
     assert_eq!(at + 4 + over.imm_pc_offset() as i32, 0);
+}
+
+fn one(build: impl FnOnce(&mut MacroAssembler)) -> u32 {
+    let mut masm = MacroAssembler::new();
+    masm.asm().enable_cpu_feature(CpuFeature::CSSC);
+    build(&mut masm);
+    let bytes = masm.buffer_start();
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+#[test]
+fn two_register_and_conditional_macros() {
+    assert_eq!(one(|m| m.cls(x0, x1)), 0xdac01420);
+    assert_eq!(one(|m| m.clz(w2, w3)), 0x5ac01062);
+    assert_eq!(one(|m| m.rbit(x4, x5)), 0xdac000a4);
+    assert_eq!(one(|m| m.rev(x6, x7)), 0xdac00ce6);
+    assert_eq!(one(|m| m.rev16(w8, w9)), 0x5ac00528);
+    assert_eq!(one(|m| m.sxtb(x10, w11)), 0x93401d6a);
+    assert_eq!(one(|m| m.uxth(w12, w13)), 0x53003dac);
+    assert_eq!(one(|m| m.cinc(x14, x15, Condition::Eq)), 0x9a8f15ee);
+    assert_eq!(one(|m| m.cinv(w16, w17, Condition::Ne)), 0x5a910230);
+    assert_eq!(one(|m| m.cneg(x18, x19, Condition::Lt)), 0xda93a672);
+    assert_eq!(one(|m| m.cset(x20, Condition::Gt)), 0x9a9fd7f4);
+    assert_eq!(one(|m| m.csetm(w21, Condition::Le)), 0x5a9fc3f5);
+    assert_eq!(one(|m| m.csel(x22, x23, x24, Condition::Hs)), 0x9a9822f6);
+    assert_eq!(one(|m| m.csinc(w25, w26, w27, Condition::Lo)), 0x1a9b3759);
+}
+
+#[test]
+fn shift_and_multiply_macros() {
+    assert_eq!(one(|m| m.asr(x0, x1, 5)), 0x9345fc20);
+    assert_eq!(one(|m| m.lsl(w2, w3, 7)), 0x53196062);
+    assert_eq!(one(|m| m.lsr(x4, x5, 9)), 0xd349fca4);
+    assert_eq!(one(|m| m.ror(x6, x7, 11)), 0x93c72ce6);
+    assert_eq!(one(|m| m.asr_register(x8, x9, x10)), 0x9aca2928);
+    assert_eq!(one(|m| m.lsl_register(w11, w12, w13)), 0x1acd218b);
+    assert_eq!(one(|m| m.mul(x14, x15, x16)), 0x9b107dee);
+    assert_eq!(one(|m| m.mneg(w17, w18, w19)), 0x1b13fe51);
+    assert_eq!(one(|m| m.sdiv(x20, x21, x22)), 0x9ad60eb4);
+    assert_eq!(one(|m| m.udiv(w23, w24, w25)), 0x1ad90b17);
+    assert_eq!(one(|m| m.smulh(x26, x27, x28)), 0x9b5c7f7a);
+    assert_eq!(one(|m| m.umulh(x0, x1, x2)), 0x9bc27c20);
+    assert_eq!(one(|m| m.madd(x3, x4, x5, x6)), 0x9b051883);
+    assert_eq!(one(|m| m.msub(w7, w8, w9, w10)), 0x1b09a907);
+    assert_eq!(one(|m| m.smaddl(x11, w12, w13, x14)), 0x9b2d398b);
+    assert_eq!(one(|m| m.umsubl(x15, w16, w17, x18)), 0x9bb1ca0f);
+}
+
+#[test]
+fn bitfield_macros() {
+    assert_eq!(one(|m| m.bfi(x19, x20, 3, 8)), 0xb37d1e93);
+    assert_eq!(one(|m| m.bfxil(w21, w22, 4, 9)), 0x330432d5);
+    assert_eq!(one(|m| m.sbfx(x23, x24, 5, 10)), 0x93453b17);
+    assert_eq!(one(|m| m.ubfx(w25, w26, 6, 11)), 0x53064359);
+    assert_eq!(one(|m| m.sbfiz(x27, x28, 7, 12)), 0x93792f9b);
+    assert_eq!(one(|m| m.ubfiz(w0, w1, 8, 13)), 0x53183020);
+}
+
+#[test]
+fn floating_point_macros() {
+    assert_eq!(one(|m| m.fabs_macro(d0, d1)), 0x1e60c020);
+    assert_eq!(one(|m| m.fneg(s2, s3)), 0x1e214062);
+    assert_eq!(one(|m| m.fsqrt(d4, d5)), 0x1e61c0a4);
+    assert_eq!(one(|m| m.fadd(d6, d7, d8)), 0x1e6828e6);
+    assert_eq!(one(|m| m.fsub(s9, s10, s11)), 0x1e2b3949);
+    assert_eq!(one(|m| m.fmul(d12, d13, d14)), 0x1e6e09ac);
+    assert_eq!(one(|m| m.fdiv(s15, s16, s17)), 0x1e311a0f);
+    assert_eq!(one(|m| m.fmax(d18, d19, d20)), 0x1e744a72);
+    assert_eq!(one(|m| m.fminnm(s21, s22, s23)), 0x1e377ad5);
+    assert_eq!(one(|m| m.fmadd(d24, d25, d26, d27)), 0x1f5a6f38);
+    assert_eq!(one(|m| m.fnmsub(s28, s29, s30, s31)), 0x1f3effbc);
+}
+
+#[test]
+fn floating_point_conversions_and_compares() {
+    assert_eq!(one(|m| m.fcvtas(x0, d1)), 0x9e640020);
+    assert_eq!(one(|m| m.fcvtnu(w2, s3)), 0x1e210062);
+    assert_eq!(one(|m| m.fcvtzs(x4, d5, 0)), 0x9e7800a4);
+    assert_eq!(one(|m| m.fcmp(d6, d7)), 0x1e6720c0);
+    assert_eq!(one(|m| m.fccmp(d8, d9, NZCVFlag, Condition::Eq)), 0x1e69050f);
+    assert_eq!(one(|m| m.fcsel(d10, d11, d12, Condition::Ne)), 0x1e6c1d6a);
+    assert_eq!(one(|m| m.scvtf(d13, x14, 0)), 0x9e6201cd);
+    assert_eq!(one(|m| m.ucvtf(s15, w16, 0)), 0x1e23020f);
+    assert_eq!(one(|m| m.extr(x17, x18, x19, 20)), 0x93d35251);
+}
+
+#[test]
+fn load_store_macros() {
+    assert_eq!(one(|m| m.ldrb(w0, MemOperand::new(x1, 2, AddrMode::Offset))), 0x39400820);
+    assert_eq!(one(|m| m.strb(w2, MemOperand::new(x3, 4, AddrMode::Offset))), 0x39001062);
+    assert_eq!(one(|m| m.ldrsb(x4, MemOperand::new(x5, 6, AddrMode::Offset))), 0x398018a4);
+    assert_eq!(one(|m| m.ldrh(w6, MemOperand::new(x7, 8, AddrMode::Offset))), 0x794010e6);
+    assert_eq!(one(|m| m.strh(w8, MemOperand::new(x9, 10, AddrMode::Offset))), 0x79001528);
+    assert_eq!(one(|m| m.ldrsh(x10, MemOperand::new(x11, 12, AddrMode::Offset))), 0x7980196a);
+    assert_eq!(one(|m| m.ldrsw(x12, MemOperand::new(x13, 16, AddrMode::Offset))), 0xb98011ac);
+    assert_eq!(one(|m| m.ldp(x14, x15, MemOperand::new(x16, 32, AddrMode::Offset))), 0xa9423e0e);
+    assert_eq!(one(|m| m.stp(w17, w18, MemOperand::new(x19, 8, AddrMode::Offset))), 0x29014a71);
+    assert_eq!(one(|m| m.ldpsw(x20, x21, MemOperand::new(x22, 16, AddrMode::Offset))), 0x694256d4);
+}
+
+#[test]
+fn acquire_release_and_atomic_macros() {
+    assert_eq!(one(|m| m.ldarb(w0, x1)), 0x08dffc20);
+    assert_eq!(one(|m| m.ldaxr(x2, x3)), 0xc85ffc62);
+    assert_eq!(one(|m| m.stlrh(w4, x5)), 0x489ffca4);
+    assert_eq!(one(|m| m.stlxr(w6, x7, x8)), 0xc806fd07);
+    assert_eq!(one(|m| m.cas(x9, x10, MemOperand::new(x11, 0, AddrMode::Offset))), 0xc8a97d6a);
+    assert_eq!(one(|m| m.casalb(w12, w13, MemOperand::new(x14, 0, AddrMode::Offset))), 0x08ecfdcd);
+}
+
+#[test]
+fn barrier_macros() {
+    assert_eq!(one(|m| m.dmb(BarrierDomain::InnerShareable, BarrierType::BarrierAll)), 0xd5033bbf);
+    assert_eq!(one(|m| m.dsb(BarrierDomain::NonShareable, BarrierType::BarrierAll)), 0xd503379f);
+    assert_eq!(one(|m| m.isb()), 0xd5033fdf);
 }

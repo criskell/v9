@@ -1184,7 +1184,7 @@ impl Assembler {
         is_uint5(immediate)
     }
 
-    fn calc_ls_pair_data_size(op: Instr) -> u32 {
+    pub fn calc_ls_pair_data_size(op: Instr) -> u32 {
         match op {
             STP_q | LDP_q => kQRegSizeLog2 as u32,
             STP_x | LDP_x | STP_d | LDP_d => kXRegSizeLog2 as u32,
@@ -1392,7 +1392,7 @@ impl Assembler {
         self.sbcs(rd, zr, operand);
     }
 
-    fn add_sub_with_carry(
+    pub fn add_sub_with_carry(
         &mut self,
         rd: Register,
         rn: Register,
@@ -1622,7 +1622,7 @@ impl Assembler {
         self.csneg(rd, rn, rn, negate_condition(cond));
     }
 
-    fn conditional_compare(
+    pub fn conditional_compare(
         &mut self,
         rn: Register,
         operand: Operand,
@@ -1877,7 +1877,7 @@ impl Assembler {
         self.load_store_pair(rt, rt2, src, LDPSW_x);
     }
 
-    fn load_store_pair(
+    pub fn load_store_pair(
         &mut self,
         rt: impl Into<CPURegister>,
         rt2: impl Into<CPURegister>,
@@ -2276,6 +2276,24 @@ impl Assembler {
         self.emit(instruction);
     }
 
+    pub fn abs_register(&mut self, rd: Register, rn: Register) {
+        debug_assert!(self.base.is_enabled(CpuFeature::CSSC));
+        debug_assert!(rd.is_same_size_and_type(*rn));
+
+        let instruction =
+            0x5ac02000 | Assembler::sf(rd) | Assembler::rd(rd) | Assembler::rn(rn);
+        self.emit(instruction);
+    }
+
+    pub fn cnt_register(&mut self, rd: Register, rn: Register) {
+        debug_assert!(self.base.is_enabled(CpuFeature::CSSC));
+        debug_assert!(rd.is_same_size_and_type(*rn));
+
+        let instruction =
+            0x5ac01c00 | Assembler::sf(rd) | Assembler::rd(rd) | Assembler::rn(rn);
+        self.emit(instruction);
+    }
+
     pub fn ctz(&mut self, rd: Register, rn: Register) {
         debug_assert!(self.base.is_enabled(CpuFeature::CSSC));
         debug_assert!(rd.is_same_size_and_type(*rn));
@@ -2627,6 +2645,14 @@ impl Assembler {
 
     pub fn load_store_for_macro(&mut self, rt: impl Into<CPURegister>, addr: MemOperand, op: Instr) {
         self.load_store(rt, addr, op);
+    }
+
+    pub fn load_pair_op_for_macro(rt: CPURegister, rt2: CPURegister) -> Instr {
+        Assembler::load_pair_op_for(rt, rt2)
+    }
+
+    pub fn store_pair_op_for_macro(rt: CPURegister, rt2: CPURegister) -> Instr {
+        Assembler::store_pair_op_for(rt, rt2)
     }
 
     pub fn load_op_for_macro(rt: CPURegister) -> Instr {
@@ -3286,6 +3312,15 @@ impl Assembler {
             | Assembler::rm(vm)
             | Assembler::rn(vn)
             | Assembler::rd(vd);
+        self.emit(instruction);
+    }
+
+    fn neon_fp_convert_to_int(&mut self, rd: Register, vn: VRegister, op: Instr) {
+        let instruction = Assembler::sf(rd)
+            | Assembler::fp_type(vn)
+            | op
+            | Assembler::rn(vn)
+            | Assembler::rd(rd);
         self.emit(instruction);
     }
 
@@ -5344,11 +5379,15 @@ define_neon_fp_2_reg_misc!(
 );
 
 macro_rules! define_neon_fp_convert {
-    ($(($name:ident, $op:ident)),* $(,)?) => {
+    ($(($name:ident, $scalar:ident, $op:ident, $scalar_op:ident)),* $(,)?) => {
         impl Assembler {
             $(
                 pub fn $name(&mut self, vd: VRegister, vn: VRegister) {
                     self.neon_fp_2_reg_misc_zero(vd, vn, $op);
+                }
+
+                pub fn $scalar(&mut self, rd: Register, vn: VRegister) {
+                    self.neon_fp_convert_to_int(rd, vn, $scalar_op);
                 }
             )*
         }
@@ -5356,14 +5395,14 @@ macro_rules! define_neon_fp_convert {
 }
 
 define_neon_fp_convert!(
-    (fcvtns, NEON_FCVTNS),
-    (fcvtnu, NEON_FCVTNU),
-    (fcvtps, NEON_FCVTPS),
-    (fcvtpu, NEON_FCVTPU),
-    (fcvtms, NEON_FCVTMS),
-    (fcvtmu, NEON_FCVTMU),
-    (fcvtas, NEON_FCVTAS),
-    (fcvtau, NEON_FCVTAU),
+    (fcvtns, fcvtns_register, NEON_FCVTNS, FCVTNS),
+    (fcvtnu, fcvtnu_register, NEON_FCVTNU, FCVTNU),
+    (fcvtps, fcvtps_register, NEON_FCVTPS, FCVTPS),
+    (fcvtpu, fcvtpu_register, NEON_FCVTPU, FCVTPU),
+    (fcvtms, fcvtms_register, NEON_FCVTMS, FCVTMS),
+    (fcvtmu, fcvtmu_register, NEON_FCVTMU, FCVTMU),
+    (fcvtas, fcvtas_register, NEON_FCVTAS, FCVTAS),
+    (fcvtau, fcvtau_register, NEON_FCVTAU, FCVTAU),
 );
 
 impl Assembler {

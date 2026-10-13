@@ -161,6 +161,7 @@ pub struct MacroAssembler {
     asm: Assembler,
     tmp_list: CPURegList,
     fptmp_list: CPURegList,
+    allow_macro_instructions: bool,
 }
 
 impl Default for MacroAssembler {
@@ -175,6 +176,7 @@ impl MacroAssembler {
             asm: Assembler::new(),
             tmp_list: MacroAssembler::default_tmp_list(),
             fptmp_list: MacroAssembler::default_fptmp_list(),
+            allow_macro_instructions: true,
         }
     }
 
@@ -200,6 +202,14 @@ impl MacroAssembler {
 
     pub fn fptmp_list_mut(&mut self) -> &mut CPURegList {
         &mut self.fptmp_list
+    }
+
+    pub fn allow_macro_instructions(&self) -> bool {
+        self.allow_macro_instructions
+    }
+
+    pub fn set_allow_macro_instructions(&mut self, value: bool) {
+        self.allow_macro_instructions = value;
     }
 
     pub fn asm(&mut self) -> &mut Assembler {
@@ -986,4 +996,822 @@ impl MacroAssembler {
             );
         }
     }
+}
+
+macro_rules! define_two_register_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, rn: Register) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, rn);
+                }
+            )*
+        }
+    };
+}
+
+define_two_register_macro! {
+    cls, cls;
+    clz, clz;
+    ctz, ctz;
+    abs, abs_register;
+    cnt, cnt_register;
+    rbit, rbit;
+    rev, rev;
+    rev16, rev16;
+    rev32, rev32;
+    sxtb, sxtb;
+    sxth, sxth;
+    sxtw, sxtw;
+    uxtb, uxtb;
+    uxth, uxth;
+    uxtw, uxtw;
+}
+
+macro_rules! define_conditional_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, rn: Register, cond: Condition) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+                    self.asm.$op(rd, rn, cond);
+                }
+            )*
+        }
+    };
+}
+
+define_conditional_macro! {
+    cinc, cinc;
+    cinv, cinv;
+    cneg, cneg;
+}
+
+macro_rules! define_conditional_select_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    rd: Register,
+                    rn: Register,
+                    rm: Register,
+                    cond: Condition,
+                ) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+                    self.asm.$op(rd, rn, rm, cond);
+                }
+            )*
+        }
+    };
+}
+
+define_conditional_select_macro! {
+    csel, csel;
+    csinc, csinc;
+    csinv, csinv;
+    csneg, csneg;
+}
+
+macro_rules! define_condition_only_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, cond: Condition) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+                    self.asm.$op(rd, cond);
+                }
+            )*
+        }
+    };
+}
+
+define_condition_only_macro! {
+    cset, cset;
+    csetm, csetm;
+}
+
+macro_rules! define_shift_immediate_macro {
+    ($($name:ident, $op:ident, $variable:ident, $variable_op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, rn: Register, shift: u32) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, rn, shift);
+                }
+
+                pub fn $variable(&mut self, rd: Register, rn: Register, rm: Register) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$variable_op(rd, rn, rm);
+                }
+            )*
+        }
+    };
+}
+
+define_shift_immediate_macro! {
+    asr, asr, asr_register, asrv;
+    lsl, lsl, lsl_register, lslv;
+    lsr, lsr, lsr_register, lsrv;
+    ror, ror, ror_register, rorv;
+}
+
+macro_rules! define_three_register_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, rn: Register, rm: Register) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, rn, rm);
+                }
+            )*
+        }
+    };
+}
+
+define_three_register_macro! {
+    mul, mul;
+    mneg, mneg;
+    sdiv, sdiv;
+    udiv, udiv;
+    smulh, smulh;
+    umulh, umulh;
+    smull, smull;
+    umull, umull;
+}
+
+macro_rules! define_four_register_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, rn: Register, rm: Register, ra: Register) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, rn, rm, ra);
+                }
+            )*
+        }
+    };
+}
+
+define_four_register_macro! {
+    madd, madd;
+    msub, msub;
+    smaddl, smaddl;
+    smsubl, smsubl;
+    umaddl, umaddl;
+    umsubl, umsubl;
+}
+
+macro_rules! define_bitfield_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, rn: Register, lsb: u32, width: u32) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, rn, lsb, width);
+                }
+            )*
+        }
+    };
+}
+
+define_bitfield_macro! {
+    bfi, bfi;
+    bfxil, bfxil;
+    sbfx, sbfx;
+    ubfx, ubfx;
+    sbfiz, sbfiz;
+    ubfiz, ubfiz;
+}
+
+macro_rules! define_fp_two_register_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, fd: VRegister, fn_: VRegister) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(fd, fn_);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_two_register_macro! {
+    fabs_macro, fabs;
+    fneg, fneg;
+    fsqrt, fsqrt;
+    fcvt, fcvt;
+}
+
+macro_rules! define_fp_three_register_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(fd, fn_, fm);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_three_register_macro! {
+    fadd, fadd;
+    fsub, fsub;
+    fmul, fmul;
+    fdiv, fdiv;
+    fmax, fmax;
+    fmin, fmin;
+    fmaxnm, fmaxnm;
+    fminnm, fminnm;
+}
+
+macro_rules! define_fp_four_register_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    fd: VRegister,
+                    fn_: VRegister,
+                    fm: VRegister,
+                    fa: VRegister,
+                ) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(fd, fn_, fm, fa);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_four_register_macro! {
+    fmadd, fmadd;
+    fmsub, fmsub;
+    fnmadd, fnmadd;
+    fnmsub, fnmsub;
+}
+
+macro_rules! define_fp_convert_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, fn_: VRegister) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, fn_);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_convert_macro! {
+    fcvtas, fcvtas_register;
+    fcvtau, fcvtau_register;
+    fcvtms, fcvtms_register;
+    fcvtmu, fcvtmu_register;
+    fcvtns, fcvtns_register;
+    fcvtnu, fcvtnu_register;
+}
+
+macro_rules! define_fp_convert_fbits_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rd: Register, fn_: VRegister, fbits: u32) {
+                    debug_assert!(self.allow_macro_instructions());
+                    debug_assert!(!rd.is_zero());
+                    self.asm.$op(rd, fn_, fbits);
+                }
+            )*
+        }
+    };
+}
+
+define_fp_convert_fbits_macro! {
+    fcvtzs, fcvtzs;
+    fcvtzu, fcvtzu;
+}
+
+impl MacroAssembler {
+    fn load_store_pair_macro(
+        &mut self,
+        rt: CPURegister,
+        rt2: CPURegister,
+        addr: MemOperand,
+        op: Instr,
+    ) {
+        if addr.is_register_offset() {
+            let mut temps = UseScratchRegisterScope::new(self);
+            let base = addr.base();
+            let temp = temps.acquire_same_size_as(self, base);
+            self.add(temp, base, addr.regoffset());
+            self.asm
+                .load_store_pair(rt, rt2, MemOperand::new(temp, 0, AddrMode::Offset), op);
+            temps.close(self);
+            return;
+        }
+
+        let offset = addr.offset();
+        let size = Assembler::calc_ls_pair_data_size(op);
+
+        if Assembler::is_imm_ls_pair(offset, size) {
+            self.asm.load_store_pair(rt, rt2, addr, op);
+        } else {
+            let base = addr.base();
+            if addr.is_immediate_offset() {
+                let mut temps = UseScratchRegisterScope::new(self);
+                let temp = temps.acquire_same_size_as(self, base);
+                self.add(temp, base, offset);
+                self.asm
+                    .load_store_pair(rt, rt2, MemOperand::new(temp, 0, AddrMode::Offset), op);
+                temps.close(self);
+            } else if addr.is_post_index() {
+                self.asm
+                    .load_store_pair(rt, rt2, MemOperand::new(base, 0, AddrMode::Offset), op);
+                self.add(base, base, offset);
+            } else {
+                debug_assert!(addr.is_pre_index());
+                self.add(base, base, offset);
+                self.asm
+                    .load_store_pair(rt, rt2, MemOperand::new(base, 0, AddrMode::Offset), op);
+            }
+        }
+    }
+
+    fn conditional_compare_macro(
+        &mut self,
+        rn: Register,
+        operand: Operand,
+        nzcv: u32,
+        cond: Condition,
+        op: Instr,
+    ) {
+        debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+        if (operand.is_shifted_register() && (operand.shift_amount() == 0))
+            || (operand.is_immediate()
+                && Assembler::is_imm_conditional_compare(operand.immediate_value()))
+        {
+            self.asm.conditional_compare(rn, operand, nzcv, cond, op);
+        } else {
+            let mut temps = UseScratchRegisterScope::new(self);
+            let temp = temps.acquire_same_size_as(self, rn);
+            self.mov(temp, operand);
+            self.asm.conditional_compare(rn, temp.into(), nzcv, cond, op);
+            temps.close(self);
+        }
+    }
+
+    fn add_sub_with_carry_macro(
+        &mut self,
+        rd: Register,
+        rn: Register,
+        operand: Operand,
+        s: FlagsUpdate,
+        op: Instr,
+    ) {
+        debug_assert_eq!(rd.size_in_bits(), rn.size_in_bits());
+        let mut temps = UseScratchRegisterScope::new(self);
+
+        if operand.is_immediate()
+            || (operand.is_shifted_register() && (operand.shift() == Shift::Ror))
+        {
+            let temp = temps.acquire_same_size_as(self, rn);
+            self.mov(temp, operand);
+            self.asm.add_sub_with_carry(rd, rn, temp.into(), s, op);
+        } else if operand.is_shifted_register() && (operand.shift_amount() != 0) {
+            debug_assert_eq!(operand.reg().size_in_bits(), rd.size_in_bits());
+            debug_assert!(operand.shift() != Shift::Ror);
+            debug_assert!(crate::utils::utils::is_uintn(
+                operand.shift_amount() as i64,
+                if rd.size_in_bits() == kXRegSizeInBits as u32 {
+                    kXRegSizeInBitsLog2 as u32
+                } else {
+                    kWRegSizeInBitsLog2 as u32
+                }
+            ));
+            let temp = temps.acquire_same_size_as(self, rn);
+            self.emit_shift(temp, operand.reg(), operand.shift(), operand.shift_amount());
+            self.asm.add_sub_with_carry(rd, rn, temp.into(), s, op);
+        } else if operand.is_extended_register() {
+            debug_assert!(operand.shift_amount() <= 4);
+            debug_assert!(
+                operand.reg().is_64_bits()
+                    || ((operand.extend() != Extend::Uxtx)
+                        && (operand.extend() != Extend::Sxtx))
+            );
+            let temp = temps.acquire_same_size_as(self, rn);
+            self.emit_extend_shift(temp, operand.reg(), operand.extend(), operand.shift_amount());
+            self.asm.add_sub_with_carry(rd, rn, temp.into(), s, op);
+        } else {
+            self.asm.add_sub_with_carry(rd, rn, operand, s, op);
+        }
+        temps.close(self);
+    }
+
+    pub fn ccmp(&mut self, rn: Register, operand: impl Into<Operand>, nzcv: u32, cond: Condition) {
+        debug_assert!(self.allow_macro_instructions());
+        let operand = operand.into();
+        if operand.is_immediate() && (operand.immediate_value() < 0) {
+            let negated = Operand::from(-operand.immediate_value());
+            self.conditional_compare_macro(rn, negated, nzcv, cond, CCMN);
+        } else {
+            self.conditional_compare_macro(rn, operand, nzcv, cond, CCMP);
+        }
+    }
+
+    pub fn ccmn(&mut self, rn: Register, operand: impl Into<Operand>, nzcv: u32, cond: Condition) {
+        debug_assert!(self.allow_macro_instructions());
+        let operand = operand.into();
+        if operand.is_immediate() && (operand.immediate_value() < 0) {
+            let negated = Operand::from(-operand.immediate_value());
+            self.conditional_compare_macro(rn, negated, nzcv, cond, CCMP);
+        } else {
+            self.conditional_compare_macro(rn, operand, nzcv, cond, CCMN);
+        }
+    }
+
+    pub fn adc(&mut self, rd: Register, rn: Register, operand: impl Into<Operand>) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.add_sub_with_carry_macro(rd, rn, operand.into(), FlagsUpdate::LeaveFlags, ADC);
+    }
+
+    pub fn adcs(&mut self, rd: Register, rn: Register, operand: impl Into<Operand>) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.add_sub_with_carry_macro(rd, rn, operand.into(), FlagsUpdate::SetFlags, ADC);
+    }
+
+    pub fn sbc(&mut self, rd: Register, rn: Register, operand: impl Into<Operand>) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.add_sub_with_carry_macro(rd, rn, operand.into(), FlagsUpdate::LeaveFlags, SBC);
+    }
+
+    pub fn sbcs(&mut self, rd: Register, rn: Register, operand: impl Into<Operand>) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.add_sub_with_carry_macro(rd, rn, operand.into(), FlagsUpdate::SetFlags, SBC);
+    }
+
+    pub fn ngc(&mut self, rd: Register, operand: impl Into<Operand>) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        let zr = MacroAssembler::appropriate_zero_reg_for(rd);
+        self.sbc(rd, zr, operand);
+    }
+
+    pub fn ngcs(&mut self, rd: Register, operand: impl Into<Operand>) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        let zr = MacroAssembler::appropriate_zero_reg_for(rd);
+        self.sbcs(rd, zr, operand);
+    }
+
+    pub fn czero_x(&mut self, rd: Register, cond: Condition) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_sp() && rd.is_64_bits());
+        debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+        self.asm.csel(rd, xzr, rd, cond);
+    }
+
+    pub fn cmov_x(&mut self, rd: Register, rn: Register, cond: Condition) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_sp());
+        debug_assert!(rd.is_64_bits() && rn.is_64_bits());
+        debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+        if rd != rn {
+            self.asm.csel(rd, rn, rd, cond);
+        }
+    }
+
+    pub fn csdb(&mut self) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.csdb();
+    }
+
+    pub fn cpy(&mut self, rd: Register, rs: Register, rn: Register) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(rd.is_64_bits());
+        debug_assert!(rs.is_64_bits());
+        debug_assert!(rn.is_64_bits());
+        debug_assert!(!rd.is_zero());
+        debug_assert!(!rs.is_zero());
+        debug_assert!(!rn.is_zero());
+
+        self.asm.cpyp(rd, rs, rn);
+        self.asm.cpym(rd, rs, rn);
+        self.asm.cpye(rd, rs, rn);
+    }
+
+    pub fn set(&mut self, rd: Register, rn: Register, rs: Register) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(rd.is_64_bits());
+        debug_assert!(rn.is_64_bits());
+        debug_assert!(rs.is_64_bits());
+        debug_assert!(!rd.is_zero());
+        debug_assert!(!rn.is_zero());
+
+        self.asm.setp(rd, rn, rs);
+        self.asm.setm(rd, rn, rs);
+        self.asm.sete(rd, rn, rs);
+    }
+
+    pub fn dmb(&mut self, domain: BarrierDomain, barrier_type: BarrierType) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.dmb(domain, barrier_type);
+    }
+
+    pub fn dsb(&mut self, domain: BarrierDomain, barrier_type: BarrierType) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.dsb(domain, barrier_type);
+    }
+
+    pub fn isb(&mut self) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.isb();
+    }
+
+    pub fn debug(&mut self, message: &str, code: u32, params: Instr) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.debug(message, code, params);
+    }
+
+    pub fn extr(&mut self, rd: Register, rn: Register, rm: Register, lsb: u32) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.asm.extr(rd, rn, rm, lsb);
+    }
+
+    pub fn fccmp(&mut self, fn_: VRegister, fm: VRegister, nzcv: u32, cond: Condition) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+        self.asm.fccmp(fn_, fm, nzcv, cond);
+    }
+
+    pub fn fcmp(&mut self, fn_: VRegister, fm: VRegister) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.fcmp(fn_, fm);
+    }
+
+    pub fn fcsel(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, cond: Condition) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+        self.asm.fcsel(fd, fn_, fm, cond);
+    }
+
+    pub fn fmov_register(&mut self, fd: VRegister, fn_: VRegister) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.fmov(fd, fn_);
+    }
+
+    pub fn fmov_from_register(&mut self, fd: VRegister, rn: Register) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.fmov_from_register(fd, rn);
+    }
+
+    pub fn fmov_to_register(&mut self, rd: Register, fn_: VRegister) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.asm.fmov_to_register(rd, fn_);
+    }
+
+    pub fn scvtf(&mut self, fd: VRegister, rn: Register, fbits: u32) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.scvtf(fd, rn, fbits);
+    }
+
+    pub fn ucvtf(&mut self, fd: VRegister, rn: Register, fbits: u32) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.ucvtf(fd, rn, fbits);
+    }
+
+    pub fn hint(&mut self, code: SystemHint) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.hint(code);
+    }
+
+    pub fn hlt(&mut self, code: i32) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.hlt(code);
+    }
+
+    pub fn brk(&mut self, code: i32) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.brk(code);
+    }
+
+    pub fn br(&mut self, xn: Register) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!xn.is_zero());
+        self.asm.br(xn);
+    }
+
+    pub fn ret(&mut self, xn: Register) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!xn.is_zero());
+        self.asm.ret(xn);
+    }
+
+    pub fn movk(&mut self, rd: Register, imm: u64, shift: i32) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rd.is_zero());
+        self.asm.movk(rd, imm, shift);
+    }
+
+    pub fn mrs(&mut self, rt: Register, sysreg: SystemRegister) {
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!rt.is_zero());
+        self.asm.mrs(rt, sysreg);
+    }
+
+    pub fn msr(&mut self, sysreg: SystemRegister, rt: Register) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.msr(sysreg, rt);
+    }
+
+    pub fn bind(&mut self, label: LabelId) {
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.bind(label);
+    }
+
+    pub fn call(&mut self, label: LabelId) {
+        self.asm.block_pools();
+        debug_assert!(self.allow_macro_instructions());
+        self.asm.bl(label);
+        self.asm.release_pools();
+    }
+
+    pub fn call_register(&mut self, xn: Register) {
+        self.asm.block_pools();
+        debug_assert!(self.allow_macro_instructions());
+        debug_assert!(!xn.is_zero());
+        self.asm.blr(xn);
+        self.asm.release_pools();
+    }
+}
+
+macro_rules! define_load_store_macro {
+    ($($name:ident, $op:expr;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rt: Register, addr: MemOperand) {
+                    debug_assert!(self.allow_macro_instructions());
+                    let op = $op(rt);
+                    self.load_store_macro(rt.into(), addr, op);
+                }
+            )*
+        }
+    };
+}
+
+define_load_store_macro! {
+    ldrb, |_rt: Register| LDRB_w;
+    strb, |_rt: Register| STRB_w;
+    ldrsb, |rt: Register| if rt.is_64_bits() { LDRSB_x } else { LDRSB_w };
+    ldrh, |_rt: Register| LDRH_w;
+    strh, |_rt: Register| STRH_w;
+    ldrsh, |rt: Register| if rt.is_64_bits() { LDRSH_x } else { LDRSH_w };
+    ldrsw, |_rt: Register| LDRSW_x;
+}
+
+macro_rules! define_load_store_pair_macro {
+    ($($name:ident, $op:expr;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    rt: impl Into<CPURegister> + Copy,
+                    rt2: impl Into<CPURegister> + Copy,
+                    addr: MemOperand,
+                ) {
+                    debug_assert!(self.allow_macro_instructions());
+                    let op = $op(rt.into(), rt2.into());
+                    self.load_store_pair_macro(rt.into(), rt2.into(), addr, op);
+                }
+            )*
+        }
+    };
+}
+
+define_load_store_pair_macro! {
+    ldp, |rt: CPURegister, rt2: CPURegister| Assembler::load_pair_op_for_macro(rt, rt2);
+    stp, |rt: CPURegister, rt2: CPURegister| Assembler::store_pair_op_for_macro(rt, rt2);
+    ldpsw, |_rt: CPURegister, _rt2: CPURegister| LDPSW_x;
+}
+
+macro_rules! define_acquire_release_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rt: Register, rn: Register) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(rt, rn);
+                }
+            )*
+        }
+    };
+}
+
+define_acquire_release_macro! {
+    ldarb, ldarb;
+    ldarh, ldarh;
+    ldar, ldar;
+    ldaxrb, ldaxrb;
+    ldaxrh, ldaxrh;
+    ldaxr, ldaxr;
+    stlrb, stlrb;
+    stlrh, stlrh;
+    stlr, stlr;
+}
+
+macro_rules! define_store_exclusive_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rs: Register, rt: Register, rn: Register) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(rs, rt, rn);
+                }
+            )*
+        }
+    };
+}
+
+define_store_exclusive_macro! {
+    stlxrb, stlxrb;
+    stlxrh, stlxrh;
+    stlxr, stlxr;
+}
+
+macro_rules! define_compare_and_swap_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(&mut self, rs: Register, rt: Register, src: MemOperand) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(rs, rt, src);
+                }
+            )*
+        }
+    };
+}
+
+define_compare_and_swap_macro! {
+    cas, cas;
+    casa, casa;
+    casl, casl;
+    casal, casal;
+    casb, casb;
+    casab, casab;
+    caslb, caslb;
+    casalb, casalb;
+    cash, cash;
+    casah, casah;
+    caslh, caslh;
+    casalh, casalh;
+}
+
+macro_rules! define_compare_and_swap_pair_macro {
+    ($($name:ident, $op:ident;)*) => {
+        impl MacroAssembler {
+            $(
+                pub fn $name(
+                    &mut self,
+                    rs: Register,
+                    rs2: Register,
+                    rt: Register,
+                    rt2: Register,
+                    src: MemOperand,
+                ) {
+                    debug_assert!(self.allow_macro_instructions());
+                    self.asm.$op(rs, rs2, rt, rt2, src);
+                }
+            )*
+        }
+    };
+}
+
+define_compare_and_swap_pair_macro! {
+    casp, casp;
+    caspa, caspa;
+    caspl, caspl;
+    caspal, caspal;
 }

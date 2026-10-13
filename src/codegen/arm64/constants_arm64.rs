@@ -335,6 +335,17 @@ pub const NFlag: u32 = N_mask;
 pub const ZFlag: u32 = Z_mask;
 pub const CFlag: u32 = C_mask;
 pub const VFlag: u32 = V_mask;
+pub const NZFlag: u32 = NFlag | ZFlag;
+pub const NCFlag: u32 = NFlag | CFlag;
+pub const NVFlag: u32 = NFlag | VFlag;
+pub const ZCFlag: u32 = ZFlag | CFlag;
+pub const ZVFlag: u32 = ZFlag | VFlag;
+pub const CVFlag: u32 = CFlag | VFlag;
+pub const NZCFlag: u32 = NFlag | ZFlag | CFlag;
+pub const NZVFlag: u32 = NFlag | ZFlag | VFlag;
+pub const NCVFlag: u32 = NFlag | CFlag | VFlag;
+pub const ZCVFlag: u32 = ZFlag | CFlag | VFlag;
+pub const NZCVFlag: u32 = NFlag | ZFlag | CFlag | VFlag;
 
 pub const ADR: Instr = PCRelAddressingFixed | 0x00000000;
 pub const ADRP: Instr = PCRelAddressingFixed | 0x80000000;
