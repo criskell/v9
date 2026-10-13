@@ -341,6 +341,7 @@ pub const fp: Register = x29;
 pub const lr: Register = x30;
 pub const xzr: Register = x31;
 pub const wzr: Register = w31;
+pub const v8_: VRegister = v8;
 pub const padreg: Register = x31;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -417,7 +418,7 @@ define_v_registers!(
     (b5, h5, s5, d5, q5, v5, 5),
     (b6, h6, s6, d6, q6, v6, 6),
     (b7, h7, s7, d7, q7, v7, 7),
-    (b8, h8, s8, d8, q8, v8_, 8),
+    (b8, h8, s8, d8, q8, v8, 8),
     (b9, h9, s9, d9, q9, v9, 9),
     (b10, h10, s10, d10, q10, v10, 10),
     (b11, h11, s11, d11, q11, v11, 11),

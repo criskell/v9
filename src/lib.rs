@@ -3,6 +3,7 @@ pub mod base;
 pub mod builtins;
 pub mod codegen;
 pub mod common;
+pub mod diagnostics;
 pub mod execution;
 pub mod flags;
 pub mod handles;

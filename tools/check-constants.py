@@ -138,6 +138,107 @@ VX_ONLY = {
 }
 
 
+
+def value_mismatches(v8_root, vx_root):
+    """Constants whose vx value differs from the value V8 computes."""
+    text = open(os.path.join(v8_root, 'src/codegen/arm64/constants-arm64.h')).read()
+
+    def collect_macros(t):
+        macros = {}
+        for m in re.finditer(r'#define (\w+)\(([^)]*)\)((?:[^\n]*\\\n)*[^\n]*)', t):
+            macros[m.group(1)] = ([p.strip() for p in m.group(2).split(',') if p.strip()],
+                                  m.group(3).replace('\\\n', '\n'))
+        return macros
+
+    macros = collect_macros(text)
+
+    def split_args(s):
+        args, depth, cur, q = [], 0, '', False
+        for ch in s:
+            if q:
+                cur += ch
+                if ch == '"': q = False
+                continue
+            if ch == '"': q = True; cur += ch; continue
+            if ch == ',' and depth == 0: args.append(cur); cur = ''; continue
+            if ch == '(': depth += 1
+            elif ch == ')': depth -= 1
+            cur += ch
+        args.append(cur)
+        return args
+
+    pieces = []
+    for m in re.finditer(r'\b([A-Z][A-Z_0-9]+)\((\w+)\)', text):
+        list_name, macro = m.group(1), m.group(2)
+        if list_name not in macros or macro not in macros:
+            continue
+        _, list_body = macros[list_name]
+        params, body = macros[macro]
+        for call in re.finditer(r'\bV\(([^()]*(?:\([^()]*\)[^()]*)*)\)', list_body):
+            piece = body
+            for p, a in zip(params, split_args(call.group(1))):
+                piece = re.sub(r'\b'+p+r'\b', a.strip(), piece)
+            piece = re.sub(r'\s*##\s*', '', piece).strip()
+            if not piece.endswith(';'):
+                piece += ';'
+            pieces.append(piece)
+
+    whole = re.sub(r'//[^\n]*', '', text + '\n' + '\n'.join(pieces))
+    v8 = {}
+    for name, expr in re.findall(r'constexpr\s+\w+\s+(\w+)\s*=\s*([^;]+);', whole, re.S):
+        v8.setdefault(name, ' '.join(expr.split()))
+    # enum members with explicit values
+    for block in re.finditer(r'enum \w+ \{(.*?)\};', whole, re.S):
+        for item in block.group(1).split(','):
+            m = re.match(r'\s*(\w+)\s*=\s*(.+)', item, re.S)
+            if m:
+                v8.setdefault(m.group(1), ' '.join(m.group(2).split()))
+
+    def evaluate(name, table, seen=None):
+        seen = seen or set()
+        if name in seen:
+            return None
+        expr = table.get(name)
+        if expr is None:
+            return None
+        e = expr
+        e = re.sub(r'\bstatic_cast<[^>]*>', '', e)
+        e = re.sub(r'\b(0x[0-9a-fA-F]+|\d+)[uUlL]+\b', r'\1', e)
+        names = set(re.findall(r'\b([A-Za-z_]\w*)\b', e))
+        env = {}
+        for n in names:
+            if n in ('u', 'U', 'L'):
+                continue
+            value = evaluate(n, table, seen | {name})
+            if value is None:
+                return None
+            env[n] = value
+        try:
+            return eval(e, {'__builtins__': {}}, env) & 0xFFFFFFFFFFFFFFFF
+        except Exception:
+            return None
+
+    vx_text = open(os.path.join(vx_root, 'src/codegen/arm64/constants_arm64.rs'),
+                   encoding='utf8').read()
+    vx = {}
+    for m in re.finditer(r'pub const (\w+)\s*:\s*\w+\s*=\s*([^;]+);', vx_text):
+        vx[m.group(1)] = ' '.join(m.group(2).split())
+
+    bad = []
+    checked = 0
+    for name, expr in sorted(vx.items()):
+        if name not in v8:
+            continue
+        want = evaluate(name, v8)
+        got = evaluate(name, vx)
+        if want is None or got is None:
+            continue
+        checked += 1
+        if want != got:
+            bad.append((name, got, want))
+    return bad, checked
+
+
 def main():
     if len(sys.argv) < 2:
         print(f'usage: {sys.argv[0]} <path-to-v8-checkout>', file=sys.stderr)
@@ -155,9 +256,14 @@ def main():
 
     for path, name in unknown:
         print(f'{path:42}  {name}')
-    print(f'\n{len(unknown)} of {len(declared)} arm64 constants are not spelled '
+    print(f'{len(unknown)} of {len(declared)} arm64 constants are not spelled '
           f'the way V8 spells them')
-    return 1 if unknown else 0
+
+    bad, checked = value_mismatches(v8_root, vx_root)
+    for name, got, want in bad:
+        print(f'{name:42}  vx=0x{got:X}  v8=0x{want:X}')
+    print(f'{len(bad)} of {checked} arm64 constants have a different value from V8')
+    return 1 if unknown or bad else 0
 
 
 if __name__ == '__main__':

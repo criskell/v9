@@ -170,6 +170,30 @@ impl Instruction {
     }
 
     #[inline]
+    pub fn imm_hint(self) -> u32 {
+        self.bits(ImmHint_offset + 6, ImmHint_offset)
+    }
+
+    pub fn imm_system_register(self) -> u32 {
+        self.bits(ImmSystemRegister_offset + 14, ImmSystemRegister_offset)
+    }
+
+    pub fn neon_load(self) -> u32 {
+        self.bits(NEONLoad_offset, NEONLoad_offset)
+    }
+
+    pub fn prefetch_mode(self) -> u32 {
+        self.bits(PrefetchMode_offset + 4, PrefetchMode_offset)
+    }
+
+    pub fn imm_barrier_domain(self) -> u32 {
+        self.bits(ImmBarrierDomain_offset + 1, ImmBarrierDomain_offset)
+    }
+
+    pub fn imm_barrier_type(self) -> u32 {
+        self.bits(ImmBarrierType_offset + 1, ImmBarrierType_offset)
+    }
+
     pub fn rs(self) -> u32 {
         self.bits(Rs_offset + 4, Rs_offset)
     }
@@ -234,6 +258,13 @@ impl Instruction {
         self.bits(
             ImmNEONImmh_offset + ImmNEONImmh_width - 1,
             ImmNEONImmh_offset,
+        )
+    }
+
+    pub fn imm_neon_immb(self) -> u32 {
+        self.bits(
+            ImmNEONImmb_offset + ImmNEONImmb_width - 1,
+            ImmNEONImmb_offset,
         )
     }
 
@@ -761,6 +792,12 @@ pub const fn neon_format_map(bits: [u8; kNEONFormatMaxBits], entries: &[NEONForm
     NEONFormatMap { bits, map }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SubstitutionMode {
+    Placeholder,
+    Format,
+}
+
 pub struct NEONFormatDecoder {
     instrbits: Instr,
     formats: [&'static NEONFormatMap; 4],
@@ -777,6 +814,83 @@ impl NEONFormatDecoder {
             _ => decoder.set_format_maps(formats),
         }
         decoder
+    }
+
+    pub fn substitute_placeholders(&self, string: &str) -> String {
+        self.substitute(
+            string,
+            [
+                SubstitutionMode::Placeholder,
+                SubstitutionMode::Placeholder,
+                SubstitutionMode::Placeholder,
+                SubstitutionMode::Placeholder,
+            ],
+        )
+    }
+
+    pub fn substitute(&self, string: &str, modes: [SubstitutionMode; 4]) -> String {
+        let mut out = String::new();
+        let mut index = 0;
+        let mut rest = string;
+        while let Some(position) = rest.find("%s") {
+            out.push_str(&rest[..position]);
+            out.push_str(self.get_substitute(index, modes[index]));
+            index += 1;
+            rest = &rest[position + 2..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    pub fn mnemonic(&self, mnemonic: &str) -> String {
+        if (self.instrbits & NEON_Q) != 0 {
+            return format!("{}2", mnemonic);
+        }
+        mnemonic.to_string()
+    }
+
+    fn get_substitute(&self, index: usize, mode: SubstitutionMode) -> &'static str {
+        if mode == SubstitutionMode::Format {
+            return NEONFormatDecoder::neon_format_as_string(
+                self.get_neon_format(self.formats[index]),
+            );
+        }
+        debug_assert_eq!(mode, SubstitutionMode::Placeholder);
+        NEONFormatDecoder::neon_format_as_placeholder(self.get_neon_format(self.formats[index]))
+    }
+
+    fn neon_format_as_string(format: NEONFormat) -> &'static str {
+        const formats: [&str; 13] = [
+            "undefined", "8b", "16b", "4h", "8h", "2s", "4s", "1d", "2d", "b", "h", "s", "d",
+        ];
+        debug_assert!((format as usize) < formats.len());
+        formats[format as usize]
+    }
+
+    fn neon_format_as_placeholder(format: NEONFormat) -> &'static str {
+        debug_assert!(
+            (format == NEONFormat::NF_B)
+                || (format == NEONFormat::NF_H)
+                || (format == NEONFormat::NF_S)
+                || (format == NEONFormat::NF_D)
+                || (format == NEONFormat::NF_UNDEF)
+        );
+        const formats: [&str; 13] = [
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "'B",
+            "'H",
+            "'S",
+            "'D",
+        ];
+        formats[format as usize]
     }
 
     pub fn set_format_maps(&mut self, formats: &[&'static NEONFormatMap]) {
