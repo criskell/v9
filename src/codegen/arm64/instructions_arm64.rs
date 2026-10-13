@@ -558,6 +558,15 @@ impl Instruction {
         }
     }
 
+    pub fn imm_branch_range(branch_type: ImmBranchType) -> i32 {
+        (1 << (Instruction::imm_branch_range_bitwidth(branch_type) + kInstrSizeLog2 as u32)) / 2
+            - kInstrSize as i32
+    }
+
+    pub fn is_target_in_imm_pc_offset_range(self, distance: i64) -> bool {
+        Instruction::is_valid_imm_pc_offset(self.branch_type(), distance)
+    }
+
     pub fn is_valid_imm_pc_offset(branch_type: ImmBranchType, offset: i64) -> bool {
         debug_assert_eq!(offset % kInstrSize as i64, 0);
         crate::utils::utils::is_intn(

@@ -1,11 +1,87 @@
 #![allow(non_upper_case_globals)]
 
-use crate::codegen::arm64::assembler_arm64::{Assembler, MemOperand, Operand};
+use crate::codegen::arm64::assembler_arm64::{Assembler, LabelId, MemOperand, Operand};
 use crate::codegen::arm64::constants_arm64::*;
+use crate::codegen::arm64::instructions_arm64::Instruction;
 use crate::codegen::arm64::register_arm64::*;
 use crate::codegen::arm64::reglist_arm64::CPURegList;
 use crate::codegen::arm64::utils_arm64::count_leading_zeros;
 use crate::utils::utils::{is_int32, is_uint32};
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum BranchType {
+    IntegerEq = Condition::Eq as isize,
+    IntegerNe = Condition::Ne as isize,
+    IntegerHs = Condition::Hs as isize,
+    IntegerLo = Condition::Lo as isize,
+    IntegerMi = Condition::Mi as isize,
+    IntegerPl = Condition::Pl as isize,
+    IntegerVs = Condition::Vs as isize,
+    IntegerVc = Condition::Vc as isize,
+    IntegerHi = Condition::Hi as isize,
+    IntegerLs = Condition::Ls as isize,
+    IntegerGe = Condition::Ge as isize,
+    IntegerLt = Condition::Lt as isize,
+    IntegerGt = Condition::Gt as isize,
+    IntegerLe = Condition::Le as isize,
+    IntegerAl = Condition::Al as isize,
+    IntegerNv = Condition::Nv as isize,
+
+    Always,
+    Never,
+    RegZero,
+    RegNotZero,
+    RegBitClear,
+    RegBitSet,
+}
+
+pub const kBranchTypeFirstCondition: BranchType = BranchType::IntegerEq;
+pub const kBranchTypeLastCondition: BranchType = BranchType::IntegerNv;
+pub const kBranchTypeFirstUsingReg: BranchType = BranchType::RegZero;
+pub const kBranchTypeFirstUsingBit: BranchType = BranchType::RegBitClear;
+
+pub fn invert_branch_type(branch_type: BranchType) -> BranchType {
+    if kBranchTypeFirstCondition <= branch_type && branch_type <= kBranchTypeLastCondition {
+        BranchType::from_isize(negate_condition(branch_type.to_condition()) as isize)
+    } else {
+        BranchType::from_isize(branch_type as isize ^ 1)
+    }
+}
+
+impl BranchType {
+    pub fn to_condition(self) -> Condition {
+        debug_assert!(kBranchTypeFirstCondition <= self && self <= kBranchTypeLastCondition);
+        condition_from_bits(self as u32)
+    }
+
+    fn from_isize(value: isize) -> BranchType {
+        match value {
+            x if x == BranchType::IntegerEq as isize => BranchType::IntegerEq,
+            x if x == BranchType::IntegerNe as isize => BranchType::IntegerNe,
+            x if x == BranchType::IntegerHs as isize => BranchType::IntegerHs,
+            x if x == BranchType::IntegerLo as isize => BranchType::IntegerLo,
+            x if x == BranchType::IntegerMi as isize => BranchType::IntegerMi,
+            x if x == BranchType::IntegerPl as isize => BranchType::IntegerPl,
+            x if x == BranchType::IntegerVs as isize => BranchType::IntegerVs,
+            x if x == BranchType::IntegerVc as isize => BranchType::IntegerVc,
+            x if x == BranchType::IntegerHi as isize => BranchType::IntegerHi,
+            x if x == BranchType::IntegerLs as isize => BranchType::IntegerLs,
+            x if x == BranchType::IntegerGe as isize => BranchType::IntegerGe,
+            x if x == BranchType::IntegerLt as isize => BranchType::IntegerLt,
+            x if x == BranchType::IntegerGt as isize => BranchType::IntegerGt,
+            x if x == BranchType::IntegerLe as isize => BranchType::IntegerLe,
+            x if x == BranchType::IntegerAl as isize => BranchType::IntegerAl,
+            x if x == BranchType::IntegerNv as isize => BranchType::IntegerNv,
+            x if x == BranchType::Always as isize => BranchType::Always,
+            x if x == BranchType::Never as isize => BranchType::Never,
+            x if x == BranchType::RegZero as isize => BranchType::RegZero,
+            x if x == BranchType::RegNotZero as isize => BranchType::RegNotZero,
+            x if x == BranchType::RegBitClear as isize => BranchType::RegBitClear,
+            x if x == BranchType::RegBitSet as isize => BranchType::RegBitSet,
+            _ => unreachable!(),
+        }
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PreShiftImmMode {
@@ -136,6 +212,127 @@ impl MacroAssembler {
 
     pub fn buffer_start(&self) -> &[u8] {
         self.asm.buffer_start()
+    }
+
+    fn need_extra_instructions_or_register_branch(
+        &mut self,
+        label: LabelId,
+        branch_type: ImmBranchType,
+    ) -> bool {
+        debug_assert!(
+            (branch_type == ImmBranchType::CondBranchType)
+                || (branch_type == ImmBranchType::CompareBranchType)
+                || (branch_type == ImmBranchType::TestBranchType)
+        );
+
+        let mut need_longer_range = false;
+        if self.asm.label(label).is_bound() || self.asm.label(label).is_linked() {
+            let distance = (self.asm.label(label).pos() - self.pc_offset()) as i64;
+            need_longer_range = !Instruction::is_valid_imm_pc_offset(branch_type, distance);
+        }
+        if !need_longer_range && !self.asm.label(label).is_bound() {
+            self.asm
+                .register_pending_unresolved_branch(branch_type, label);
+        }
+        need_longer_range
+    }
+
+    pub fn b(&mut self, label: LabelId) {
+        self.asm.b(label);
+        self.asm
+            .check_veneer_pool(false, false, Assembler::kVeneerDistanceMargin);
+    }
+
+    pub fn b_cond(&mut self, label: LabelId, cond: Condition) {
+        debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+        let need_extra_instructions =
+            self.need_extra_instructions_or_register_branch(label, ImmBranchType::CondBranchType);
+        if need_extra_instructions {
+            let done = self.asm.new_label();
+            self.asm.b_cond(done, negate_condition(cond));
+            self.b(label);
+            self.asm.bind(done);
+        } else {
+            self.asm.b_cond(label, cond);
+        }
+    }
+
+    pub fn b_branch_type(
+        &mut self,
+        label: LabelId,
+        branch_type: BranchType,
+        reg: Register,
+        bit: i32,
+    ) {
+        debug_assert!(
+            (reg == NoReg || branch_type >= kBranchTypeFirstUsingReg)
+                && (bit == -1 || branch_type >= kBranchTypeFirstUsingBit)
+        );
+        if kBranchTypeFirstCondition <= branch_type && branch_type <= kBranchTypeLastCondition {
+            self.b_cond(label, branch_type.to_condition());
+        } else {
+            match branch_type {
+                BranchType::Always => self.b(label),
+                BranchType::Never => (),
+                BranchType::RegZero => self.cbz(reg, label),
+                BranchType::RegNotZero => self.cbnz(reg, label),
+                BranchType::RegBitClear => self.tbz(reg, bit as u32, label),
+                BranchType::RegBitSet => self.tbnz(reg, bit as u32, label),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    pub fn cbnz(&mut self, rt: Register, label: LabelId) {
+        let need_extra_instructions = self
+            .need_extra_instructions_or_register_branch(label, ImmBranchType::CompareBranchType);
+        if need_extra_instructions {
+            let done = self.asm.new_label();
+            self.asm.cbz(rt, done);
+            self.b(label);
+            self.asm.bind(done);
+        } else {
+            self.asm.cbnz(rt, label);
+        }
+    }
+
+    pub fn cbz(&mut self, rt: Register, label: LabelId) {
+        let need_extra_instructions = self
+            .need_extra_instructions_or_register_branch(label, ImmBranchType::CompareBranchType);
+        if need_extra_instructions {
+            let done = self.asm.new_label();
+            self.asm.cbnz(rt, done);
+            self.b(label);
+            self.asm.bind(done);
+        } else {
+            self.asm.cbz(rt, label);
+        }
+    }
+
+    pub fn tbnz(&mut self, rt: Register, bit_pos: u32, label: LabelId) {
+        let need_extra_instructions =
+            self.need_extra_instructions_or_register_branch(label, ImmBranchType::TestBranchType);
+        if need_extra_instructions {
+            let done = self.asm.new_label();
+            self.asm.tbz(rt, bit_pos, done);
+            self.b(label);
+            self.asm.bind(done);
+        } else {
+            self.asm.tbnz(rt, bit_pos, label);
+        }
+    }
+
+    pub fn tbz(&mut self, rt: Register, bit_pos: u32, label: LabelId) {
+        let need_extra_instructions =
+            self.need_extra_instructions_or_register_branch(label, ImmBranchType::TestBranchType);
+        if need_extra_instructions {
+            let done = self.asm.new_label();
+            self.asm.tbnz(rt, bit_pos, done);
+            self.b(label);
+            self.asm.bind(done);
+        } else {
+            self.asm.tbz(rt, bit_pos, label);
+        }
     }
 
     pub fn mov_immediate(&mut self, rd: Register, imm: u64) {

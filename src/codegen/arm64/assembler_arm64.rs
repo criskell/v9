@@ -5,6 +5,7 @@ use crate::codegen::arm64::instructions_arm64::Instruction;
 use crate::codegen::arm64::register_arm64::*;
 use crate::codegen::assembler::AssemblerBase;
 use crate::codegen::label::{Distance, Label};
+use std::collections::{BTreeMap, HashMap};
 use crate::codegen::arm64::utils_arm64::{count_leading_zeros, largest_power_of_2_divisor};
 use crate::utils::utils::{
     checked_truncate_to_int14, checked_truncate_to_int19, checked_truncate_to_int26,
@@ -255,9 +256,42 @@ impl MemOperand {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct LabelId(usize);
+
+pub trait BranchTarget {
+    fn branch_instruction_offset(self, assm: &mut Assembler) -> i32;
+    fn byte_offset(self, assm: &mut Assembler) -> i32;
+}
+
+impl BranchTarget for i32 {
+    fn branch_instruction_offset(self, _assm: &mut Assembler) -> i32 {
+        self
+    }
+
+    fn byte_offset(self, _assm: &mut Assembler) -> i32 {
+        self
+    }
+}
+
+impl BranchTarget for LabelId {
+    fn branch_instruction_offset(self, assm: &mut Assembler) -> i32 {
+        assm.link_and_get_branch_instruction_offset_to(self)
+    }
+
+    fn byte_offset(self, assm: &mut Assembler) -> i32 {
+        assm.link_and_get_byte_offset_to(self)
+    }
+}
+
 pub struct Assembler {
     base: AssemblerBase,
     constpool: crate::codegen::arm64::constant_pool_arm64::ConstantPool,
+    labels: Vec<Label>,
+    unresolved_branches: BTreeMap<i32, LabelId>,
+    branch_link_chain_back_edge: HashMap<i32, i32>,
+    veneer_pool_blocked_nesting: i32,
+    next_veneer_pool_check: i32,
 }
 
 impl Default for Assembler {
@@ -268,11 +302,34 @@ impl Default for Assembler {
 
 impl Assembler {
     pub const kStartOfLabelLinkChain: i32 = 0;
+    pub const kVeneerCodeSize: i32 = 1 * kInstrSize as i32;
+    pub const kVeneerDistanceMargin: usize = 1 * crate::common::globals::K_KB;
+    pub const kVeneerNoProtectionFactor: usize = 2;
+    const kVeneerDistanceCheckMargin: i32 =
+        (Assembler::kVeneerNoProtectionFactor * Assembler::kVeneerDistanceMargin) as i32;
+
+    pub fn new_label(&mut self) -> LabelId {
+        self.labels.push(Label::new());
+        LabelId(self.labels.len() - 1)
+    }
+
+    pub fn label(&self, id: LabelId) -> &Label {
+        &self.labels[id.0]
+    }
+
+    fn label_mut(&mut self, id: LabelId) -> &mut Label {
+        &mut self.labels[id.0]
+    }
 
     pub fn new() -> Assembler {
         Assembler {
             base: AssemblerBase::new(),
             constpool: crate::codegen::arm64::constant_pool_arm64::ConstantPool::new(),
+            labels: Vec::new(),
+            unresolved_branches: BTreeMap::new(),
+            branch_link_chain_back_edge: HashMap::new(),
+            veneer_pool_blocked_nesting: 0,
+            next_veneer_pool_check: kMaxInt,
         }
     }
 
@@ -302,12 +359,14 @@ impl Assembler {
         self.check_buffer();
     }
 
-    pub fn bind(&mut self, label: &mut Label) {
-        debug_assert!(!label.is_near_linked());
-        debug_assert!(!label.is_bound());
+    pub fn bind(&mut self, label: LabelId) {
+        debug_assert!(!self.label(label).is_near_linked());
+        debug_assert!(!self.label(label).is_bound());
 
-        while label.is_linked() {
-            let linkoffset = label.pos();
+        self.delete_unresolved_branch_info_for_label(label);
+
+        while self.label(label).is_linked() {
+            let linkoffset = self.label(label).pos();
             let mut link = self.instruction_at(linkoffset);
             let prevlinkoffset = linkoffset + link.imm_pc_offset() as i32;
 
@@ -322,40 +381,331 @@ impl Assembler {
             link.set_imm_pc_offset_target((self.pc_offset() - linkoffset) as i64);
             self.set_instruction_at(linkoffset, link);
 
+            self.branch_link_chain_back_edge.remove(&linkoffset);
+
             if linkoffset - prevlinkoffset == Assembler::kStartOfLabelLinkChain {
-                label.unuse();
+                self.label_mut(label).unuse();
             } else {
-                label.link_to(prevlinkoffset, Distance::Far);
+                self.label_mut(label).link_to(prevlinkoffset, Distance::Far);
             }
         }
-        label.bind_to(self.pc_offset());
+        let pc_offset = self.pc_offset();
+        self.label_mut(label).bind_to(pc_offset);
 
-        debug_assert!(label.is_bound());
-        debug_assert!(!label.is_linked());
+        debug_assert!(self.label(label).is_bound());
+        debug_assert!(!self.label(label).is_linked());
     }
 
-    fn link_and_get_byte_offset_to(&mut self, label: &mut Label) -> i32 {
+    fn link_and_get_byte_offset_to(&mut self, label: LabelId) -> i32 {
         let offset;
-        if label.is_bound() {
-            offset = label.pos() - self.pc_offset();
+        if self.label(label).is_bound() {
+            offset = self.label(label).pos() - self.pc_offset();
             debug_assert!(offset <= 0);
         } else {
-            if label.is_linked() {
-                offset = label.pos() - self.pc_offset();
+            if self.label(label).is_linked() {
+                offset = self.label(label).pos() - self.pc_offset();
                 debug_assert_ne!(offset, Assembler::kStartOfLabelLinkChain);
             } else {
                 offset = Assembler::kStartOfLabelLinkChain;
             }
-            label.link_to(self.pc_offset(), Distance::Far);
+            let pc_offset = self.pc_offset();
+            self.label_mut(label).link_to(pc_offset, Distance::Far);
         }
         offset
     }
 
-    fn link_and_get_branch_instruction_offset_to(&mut self, label: &mut Label) -> i32 {
+    fn link_and_get_branch_instruction_offset_to(&mut self, label: LabelId) -> i32 {
         debug_assert_eq!(Assembler::kStartOfLabelLinkChain, 0);
         let offset = self.link_and_get_byte_offset_to(label);
         debug_assert_eq!(offset % kInstrSize as i32, 0);
+        if self.label(label).is_linked() && (offset != Assembler::kStartOfLabelLinkChain) {
+            let pc_offset = self.pc_offset();
+            self.branch_link_chain_back_edge
+                .insert(pc_offset + offset, pc_offset);
+        }
         offset >> kInstrSizeLog2
+    }
+
+    pub fn start_block_veneer_pool(&mut self) {
+        self.veneer_pool_blocked_nesting += 1;
+    }
+
+    pub fn end_block_veneer_pool(&mut self) {
+        self.veneer_pool_blocked_nesting -= 1;
+        debug_assert!(self.veneer_pool_blocked_nesting >= 0);
+    }
+
+    pub fn is_veneer_pool_blocked(&self) -> bool {
+        self.veneer_pool_blocked_nesting > 0
+    }
+
+    fn unresolved_branches_first_limit(&self) -> i32 {
+        debug_assert!(!self.unresolved_branches.is_empty());
+        *self.unresolved_branches.keys().next().unwrap() & !1
+    }
+
+    fn max_pc_offset_after_veneer_pool_if_emitted_now(&self, margin: usize) -> isize {
+        const kBranchSizeInBytes: i32 = kInstrSize as i32;
+        const kGuardSizeInBytes: i32 = kInstrSize as i32;
+        let max_veneer_size_in_bytes =
+            self.unresolved_branches.len() * Assembler::kVeneerCodeSize as usize;
+        (self.pc_offset() + kBranchSizeInBytes + kGuardSizeInBytes) as isize
+            + max_veneer_size_in_bytes as isize
+            + margin as isize
+    }
+
+    fn should_emit_veneer(&self, max_reachable_pc: i32, margin: usize) -> bool {
+        (max_reachable_pc as isize) < self.max_pc_offset_after_veneer_pool_if_emitted_now(margin)
+    }
+
+    pub fn should_emit_veneers(&self, margin: usize) -> bool {
+        self.should_emit_veneer(self.unresolved_branches_first_limit(), margin)
+    }
+
+    pub fn register_pending_unresolved_branch(
+        &mut self,
+        branch_type: ImmBranchType,
+        label: LabelId,
+    ) {
+        let max_reachable_pc = self.pc_offset() + Instruction::imm_branch_range(branch_type);
+        let branch_type_tag = if branch_type == ImmBranchType::TestBranchType {
+            1
+        } else {
+            0
+        };
+        self.unresolved_branches
+            .insert(max_reachable_pc + branch_type_tag, label);
+        self.next_veneer_pool_check = std::cmp::min(
+            self.next_veneer_pool_check,
+            max_reachable_pc - Assembler::kVeneerDistanceCheckMargin,
+        );
+    }
+
+    fn imm_pc_offset_target(&self, offset: i32) -> i32 {
+        offset + self.instruction_at(offset).imm_pc_offset() as i32
+    }
+
+    fn set_imm_pc_offset_target(&mut self, offset: i32, target: i32) {
+        let mut instr = self.instruction_at(offset);
+        instr.set_imm_pc_offset_target((target - offset) as i64);
+        self.set_instruction_at(offset, instr);
+    }
+
+    fn erase_unresolved_branch(&mut self, link_offset: i32) {
+        let link = self.instruction_at(link_offset);
+        if link.is_cond_branch_imm() || link.is_compare_branch() {
+            debug_assert_eq!(
+                Instruction::imm_branch_range(ImmBranchType::CondBranchType),
+                Instruction::imm_branch_range(ImmBranchType::CompareBranchType)
+            );
+            let max_reachable_pc =
+                link_offset + Instruction::imm_branch_range(ImmBranchType::CondBranchType);
+            self.unresolved_branches.remove(&max_reachable_pc);
+        } else if link.is_test_branch() {
+            let max_reachable_pc =
+                link_offset + Instruction::imm_branch_range(ImmBranchType::TestBranchType) + 1;
+            self.unresolved_branches.remove(&max_reachable_pc);
+        }
+    }
+
+    fn remove_branch_from_label_link_chain(
+        &mut self,
+        branch: i32,
+        label: LabelId,
+        label_veneer: Option<i32>,
+    ) {
+        debug_assert!(self.label(label).is_linked());
+
+        let mut link = self.label(label).pos();
+        let mut prev_link = link;
+
+        if link != branch {
+            debug_assert!(self.branch_link_chain_back_edge.contains_key(&branch));
+            prev_link = self.branch_link_chain_back_edge[&branch];
+            link = branch;
+        }
+
+        debug_assert_eq!(branch, link);
+        let mut next_link = self.imm_pc_offset_target(branch);
+
+        if branch == prev_link {
+            if branch == next_link {
+                self.label_mut(label).unuse();
+            } else {
+                self.label_mut(label).link_to(next_link, Distance::Far);
+                self.branch_link_chain_back_edge.remove(&next_link);
+            }
+        } else if branch == next_link {
+            self.set_imm_pc_offset_target(prev_link, prev_link);
+            self.branch_link_chain_back_edge.remove(&branch);
+        } else {
+            if self.branch_link_chain_back_edge.contains_key(&next_link) {
+                self.branch_link_chain_back_edge
+                    .insert(next_link, prev_link);
+                self.branch_link_chain_back_edge.remove(&branch);
+            }
+
+            let distance = (next_link - prev_link) as i64;
+            if self
+                .instruction_at(prev_link)
+                .is_target_in_imm_pc_offset_range(distance)
+            {
+                self.set_imm_pc_offset_target(prev_link, next_link);
+            } else if let Some(veneer) = label_veneer {
+                self.set_imm_pc_offset_target(prev_link, prev_link);
+
+                let mut end_of_chain = false;
+                link = next_link;
+                while !end_of_chain {
+                    next_link = self.imm_pc_offset_target(link);
+                    end_of_chain = link == next_link;
+                    self.set_imm_pc_offset_target(link, veneer);
+                    self.erase_unresolved_branch(link);
+                    link = next_link;
+                }
+            } else {
+                assert!(self
+                    .instruction_at(prev_link)
+                    .is_target_in_imm_pc_offset_range(distance));
+                unreachable!();
+            }
+        }
+    }
+
+    fn delete_unresolved_branch_info_for_label_traverse(&mut self, label: LabelId) {
+        debug_assert!(self.label(label).is_linked());
+
+        let mut link_offset = self.label(label).pos();
+        let mut link_pcoffset;
+        let mut end_of_chain = false;
+
+        while !end_of_chain {
+            let link = self.instruction_at(link_offset);
+            let mut max_reachable_pc = link_offset;
+
+            if link.is_cond_branch_imm() || link.is_compare_branch() {
+                debug_assert_eq!(
+                    Instruction::imm_branch_range(ImmBranchType::CondBranchType),
+                    Instruction::imm_branch_range(ImmBranchType::CompareBranchType)
+                );
+                max_reachable_pc += Instruction::imm_branch_range(ImmBranchType::CondBranchType);
+                self.unresolved_branches.remove(&max_reachable_pc);
+                link_pcoffset = link.imm_cond_branch() * kInstrSize as i32;
+            } else if link.is_test_branch() {
+                max_reachable_pc +=
+                    Instruction::imm_branch_range(ImmBranchType::TestBranchType) + 1;
+                self.unresolved_branches.remove(&max_reachable_pc);
+                link_pcoffset = link.imm_test_branch() * kInstrSize as i32;
+            } else if link.is_uncond_branch_imm() {
+                link_pcoffset = link.imm_uncond_branch() * kInstrSize as i32;
+            } else {
+                link_pcoffset = link.imm_pc_offset() as i32;
+            }
+
+            end_of_chain = link_pcoffset == 0;
+            link_offset += link_pcoffset;
+        }
+    }
+
+    fn delete_unresolved_branch_info_for_label(&mut self, label: LabelId) {
+        if self.unresolved_branches.is_empty() {
+            debug_assert_eq!(self.next_veneer_pool_check, kMaxInt);
+            return;
+        }
+
+        if self.label(label).is_linked() {
+            self.delete_unresolved_branch_info_for_label_traverse(label);
+        }
+        if self.unresolved_branches.is_empty() {
+            self.next_veneer_pool_check = kMaxInt;
+        } else {
+            self.next_veneer_pool_check =
+                self.unresolved_branches_first_limit() - Assembler::kVeneerDistanceCheckMargin;
+        }
+    }
+
+    pub fn emit_veneers_guard(&mut self) {
+        self.emit_pool_guard();
+    }
+
+    pub fn emit_veneers(&mut self, force_emit: bool, need_protection: bool, margin: usize) {
+        self.constpool.start_block();
+        self.start_block_veneer_pool();
+
+        let end = self.new_label();
+        if need_protection {
+            self.b(end);
+        }
+
+        self.emit_veneers_guard();
+
+        let max_pc_after_veneers = self.max_pc_offset_after_veneer_pool_if_emitted_now(margin);
+
+        let mut tasks: Vec<(i32, LabelId)> = Vec::new();
+        for (&key, &label) in self.unresolved_branches.iter() {
+            if !force_emit && ((key & !1) as isize) > max_pc_after_veneers {
+                break;
+            }
+            tasks.push((key, label));
+        }
+
+        for (key, label) in tasks {
+            if !self.unresolved_branches.contains_key(&key) {
+                continue;
+            }
+            let mut pc_offset = key;
+            if (pc_offset & 1) != 0 {
+                pc_offset -= Instruction::imm_branch_range(ImmBranchType::TestBranchType) + 1;
+            } else {
+                debug_assert_eq!(
+                    Instruction::imm_branch_range(ImmBranchType::CondBranchType),
+                    Instruction::imm_branch_range(ImmBranchType::CompareBranchType)
+                );
+                pc_offset -= Instruction::imm_branch_range(ImmBranchType::CondBranchType);
+            }
+            let veneer = self.pc_offset();
+            self.remove_branch_from_label_link_chain(pc_offset, label, Some(veneer));
+            self.set_imm_pc_offset_target(pc_offset, veneer);
+            self.b(label);
+            self.unresolved_branches.remove(&key);
+        }
+
+        if self.unresolved_branches.is_empty() {
+            self.next_veneer_pool_check = kMaxInt;
+        } else {
+            self.next_veneer_pool_check =
+                self.unresolved_branches_first_limit() - Assembler::kVeneerDistanceCheckMargin;
+        }
+
+        self.bind(end);
+
+        self.end_block_veneer_pool();
+        self.constpool.end_block();
+    }
+
+    pub fn check_veneer_pool(&mut self, force_emit: bool, require_jump: bool, margin: usize) {
+        if self.unresolved_branches.is_empty() {
+            debug_assert_eq!(self.next_veneer_pool_check, kMaxInt);
+            return;
+        }
+
+        debug_assert!(self.pc_offset() < self.unresolved_branches_first_limit());
+
+        if self.is_veneer_pool_blocked() {
+            debug_assert!(!force_emit);
+            return;
+        }
+
+        let mut margin = margin;
+        if !require_jump {
+            margin *= Assembler::kVeneerNoProtectionFactor;
+        }
+        if force_emit || self.should_emit_veneers(margin) {
+            self.emit_veneers(force_emit, require_jump, margin);
+        } else {
+            self.next_veneer_pool_check =
+                self.unresolved_branches_first_limit() - Assembler::kVeneerDistanceCheckMargin;
+        }
     }
 
     fn rd(rd: impl Into<CPURegister>) -> Instr {
@@ -544,56 +894,36 @@ impl Assembler {
         size_log2
     }
 
-    pub fn b(&mut self, imm26: i32) {
+    pub fn b(&mut self, imm26: impl BranchTarget) {
+        let imm26 = imm26.branch_instruction_offset(self);
         let instruction = B | Assembler::imm_uncond_branch(imm26);
         self.emit(instruction);
     }
 
-    pub fn b_label(&mut self, label: &mut Label) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.b(offset);
-    }
-
-    pub fn b_cond(&mut self, imm19: i32, cond: Condition) {
+    pub fn b_cond(&mut self, imm19: impl BranchTarget, cond: Condition) {
+        let imm19 = imm19.branch_instruction_offset(self);
         let instruction = B_cond | Assembler::imm_cond_branch(imm19) | (cond as Instr);
         self.emit(instruction);
     }
 
-    pub fn b_cond_label(&mut self, label: &mut Label, cond: Condition) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.b_cond(offset, cond);
-    }
-
-    pub fn bl(&mut self, imm26: i32) {
+    pub fn bl(&mut self, imm26: impl BranchTarget) {
+        let imm26 = imm26.branch_instruction_offset(self);
         let instruction = BL | Assembler::imm_uncond_branch(imm26);
         self.emit(instruction);
     }
 
-    pub fn bl_label(&mut self, label: &mut Label) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.bl(offset);
-    }
-
-    pub fn cbz(&mut self, rt: Register, imm19: i32) {
+    pub fn cbz(&mut self, rt: Register, imm19: impl BranchTarget) {
+        let imm19 = imm19.branch_instruction_offset(self);
         let instruction =
             Assembler::sf(rt) | CBZ | Assembler::imm_cmp_branch(imm19) | Assembler::rt(rt);
         self.emit(instruction);
     }
 
-    pub fn cbz_label(&mut self, rt: Register, label: &mut Label) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.cbz(rt, offset);
-    }
-
-    pub fn cbnz(&mut self, rt: Register, imm19: i32) {
+    pub fn cbnz(&mut self, rt: Register, imm19: impl BranchTarget) {
+        let imm19 = imm19.branch_instruction_offset(self);
         let instruction =
             Assembler::sf(rt) | CBNZ | Assembler::imm_cmp_branch(imm19) | Assembler::rt(rt);
         self.emit(instruction);
-    }
-
-    pub fn cbnz_label(&mut self, rt: Register, label: &mut Label) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.cbnz(rt, offset);
     }
 
     pub fn br(&mut self, xn: Register) {
@@ -1469,7 +1799,8 @@ impl Assembler {
         self.data_processing_3_source(rd, rn, rm, xzr, UMULH_x);
     }
 
-    pub fn tbz(&mut self, rt: Register, bit_pos: u32, imm14: i32) {
+    pub fn tbz(&mut self, rt: Register, bit_pos: u32, imm14: impl BranchTarget) {
+        let imm14 = imm14.branch_instruction_offset(self);
         debug_assert!(rt.is_64_bits() || (rt.is_32_bits() && (bit_pos < kWRegSizeInBits as u32)));
         let instruction = TBZ
             | Assembler::imm_test_branch_bit(bit_pos)
@@ -1478,12 +1809,8 @@ impl Assembler {
         self.emit(instruction);
     }
 
-    pub fn tbz_label(&mut self, rt: Register, bit_pos: u32, label: &mut Label) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.tbz(rt, bit_pos, offset);
-    }
-
-    pub fn tbnz(&mut self, rt: Register, bit_pos: u32, imm14: i32) {
+    pub fn tbnz(&mut self, rt: Register, bit_pos: u32, imm14: impl BranchTarget) {
+        let imm14 = imm14.branch_instruction_offset(self);
         debug_assert!(rt.is_64_bits() || (rt.is_32_bits() && (bit_pos < kWRegSizeInBits as u32)));
         let instruction = TBNZ
             | Assembler::imm_test_branch_bit(bit_pos)
@@ -1492,20 +1819,11 @@ impl Assembler {
         self.emit(instruction);
     }
 
-    pub fn tbnz_label(&mut self, rt: Register, bit_pos: u32, label: &mut Label) {
-        let offset = self.link_and_get_branch_instruction_offset_to(label);
-        self.tbnz(rt, bit_pos, offset);
-    }
-
-    pub fn adr(&mut self, rd: Register, imm21: i32) {
+    pub fn adr(&mut self, rd: Register, imm21: impl BranchTarget) {
+        let imm21 = imm21.byte_offset(self);
         debug_assert!(rd.is_64_bits());
         let instruction = ADR | crate::codegen::arm64::instructions_arm64::imm_pc_rel_address(imm21) | Assembler::rd(rd);
         self.emit(instruction);
-    }
-
-    pub fn adr_label(&mut self, rd: Register, label: &mut Label) {
-        let offset = self.link_and_get_byte_offset_to(label);
-        self.adr(rd, offset);
     }
 
     pub fn ldp(&mut self, rt: impl Into<CPURegister> + Copy, rt2: impl Into<CPURegister> + Copy, src: MemOperand) {
@@ -1908,6 +2226,9 @@ impl Assembler {
     }
 
     pub fn check_buffer(&mut self) {
+        if self.pc_offset() >= self.next_veneer_pool_check {
+            self.check_veneer_pool(false, true, Assembler::kVeneerDistanceMargin);
+        }
         if self.constpool.is_blocked() {
             return;
         }

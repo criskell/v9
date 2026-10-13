@@ -5,7 +5,6 @@ use vx::codegen::arm64::constants_arm64::{
     AddrMode, Condition, Shift, SystemHint, CFlag, NoFlag, NFlag, VFlag, ZFlag,
 };
 use vx::codegen::arm64::register_arm64::*;
-use vx::codegen::label::Label;
 
 fn words(assembler: &Assembler) -> Vec<u32> {
     assembler
@@ -134,11 +133,11 @@ fn a_breakpoint_and_a_nop() {
 #[test]
 fn two_branches_to_one_forward_label_are_patched_when_it_binds() {
     let mut assembler = Assembler::new();
-    let mut fwd = Label::new();
-    assembler.b_cond_label(&mut fwd, Condition::Eq);
-    assembler.b_label(&mut fwd);
+    let fwd = assembler.new_label();
+    assembler.b_cond(fwd, Condition::Eq);
+    assembler.b(fwd);
     assembler.nop();
-    assembler.bind(&mut fwd);
+    assembler.bind(fwd);
     assembler.nop();
     assert_eq!(
         words(&assembler),
@@ -149,13 +148,13 @@ fn two_branches_to_one_forward_label_are_patched_when_it_binds() {
 #[test]
 fn branches_to_a_bound_label_point_backwards() {
     let mut assembler = Assembler::new();
-    let mut back = Label::new();
+    let back = assembler.new_label();
     assembler.nop();
-    assembler.bind(&mut back);
+    assembler.bind(back);
     assembler.nop();
-    assembler.b_label(&mut back);
-    assembler.cbz_label(x0, &mut back);
-    assembler.cbnz_label(w1, &mut back);
+    assembler.b(back);
+    assembler.cbz(x0, back);
+    assembler.cbnz(w1, back);
     assert_eq!(
         words(&assembler),
         vec![
@@ -167,9 +166,9 @@ fn branches_to_a_bound_label_point_backwards() {
 #[test]
 fn a_label_bound_at_the_instruction_after_a_branch_to_it() {
     let mut assembler = Assembler::new();
-    let mut back = Label::new();
-    assembler.b_cond_label(&mut back, Condition::Ne);
-    assembler.bind(&mut back);
+    let back = assembler.new_label();
+    assembler.b_cond(back, Condition::Ne);
+    assembler.bind(back);
     assembler.ret(lr);
     assert_eq!(words(&assembler), vec![0x54000021, 0xd65f03c0]);
 }
@@ -363,10 +362,10 @@ fn a_frame_prologue_and_epilogue() {
 #[test]
 fn a_test_and_branch_on_one_bit() {
     let mut assembler = Assembler::new();
-    let mut fwd = Label::new();
-    assembler.tbz_label(x0, 3, &mut fwd);
-    assembler.tbnz_label(w1, 31, &mut fwd);
-    assembler.bind(&mut fwd);
+    let fwd = assembler.new_label();
+    assembler.tbz(x0, 3, fwd);
+    assembler.tbnz(w1, 31, fwd);
+    assembler.bind(fwd);
     assembler.nop();
     assert_eq!(
         words(&assembler),
@@ -377,10 +376,10 @@ fn a_test_and_branch_on_one_bit() {
 #[test]
 fn an_address_of_a_label() {
     let mut assembler = Assembler::new();
-    let mut here = Label::new();
-    assembler.adr_label(x0, &mut here);
+    let here = assembler.new_label();
+    assembler.adr(x0, here);
     assembler.nop();
-    assembler.bind(&mut here);
+    assembler.bind(here);
     assert_eq!(words(&assembler), vec![0x10000040, 0xd503201f]);
 }
 

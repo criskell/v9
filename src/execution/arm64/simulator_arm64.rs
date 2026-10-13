@@ -243,27 +243,6 @@ impl Simulator {
         !self.condition_passed(cond)
     }
 
-    fn condition_from_bits(bits: u32) -> Condition {
-        match bits {
-            0 => Condition::Eq,
-            1 => Condition::Ne,
-            2 => Condition::Hs,
-            3 => Condition::Lo,
-            4 => Condition::Mi,
-            5 => Condition::Pl,
-            6 => Condition::Vs,
-            7 => Condition::Vc,
-            8 => Condition::Hi,
-            9 => Condition::Ls,
-            10 => Condition::Ge,
-            11 => Condition::Lt,
-            12 => Condition::Gt,
-            13 => Condition::Le,
-            14 => Condition::Al,
-            _ => Condition::Nv,
-        }
-    }
-
     fn add_with_carry(
         &mut self,
         reg_size: u32,
@@ -397,7 +376,7 @@ impl Simulator {
         let mask = if reg_size == 32 { u32::MAX as u64 } else { u64::MAX };
         let op1 = self.xreg(instr.rn()) & mask;
         let op2 = op2 & mask;
-        let cond = Simulator::condition_from_bits(instr.condition());
+        let cond = condition_from_bits(instr.condition());
         if self.condition_passed(cond) {
             if instr.mask(ConditionalCompareMask) == CCMP {
                 self.add_with_carry(reg_size, true, op1, (!op2) & mask, 1);
@@ -1036,7 +1015,7 @@ impl DecoderVisitor for Simulator {
     }
 
     fn visit_conditional_branch(&mut self, instr: Instruction) {
-        let cond = Simulator::condition_from_bits(instr.condition_branch());
+        let cond = condition_from_bits(instr.condition_branch());
         if self.condition_passed(cond) {
             let target = self.pc + instr.imm_pc_offset() as i32;
             self.set_pc(target);
@@ -1108,7 +1087,7 @@ impl DecoderVisitor for Simulator {
 
     fn visit_conditional_select(&mut self, instr: Instruction) {
         let mut new_val = self.xreg(instr.rn());
-        let cond = Simulator::condition_from_bits(instr.condition());
+        let cond = condition_from_bits(instr.condition());
         if self.condition_failed(cond) {
             new_val = self.xreg(instr.rm());
             match instr.mask(ConditionalSelectMask) {

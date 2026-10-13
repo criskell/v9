@@ -3,7 +3,6 @@
 use crate::codegen::arm64::assembler_arm64::Assembler;
 use crate::codegen::arm64::constants_arm64::*;
 use crate::codegen::arm64::register_arm64::xzr;
-use crate::codegen::label::Label;
 use std::collections::BTreeMap;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -314,9 +313,9 @@ impl ConstantPool {
         let size = self.compute_size(require_jump, require_alignment);
         let size_check = assm.pc_offset();
 
-        let mut after_pool = Label::new();
+        let after_pool = assm.new_label();
         if require_jump == Jump::Required {
-            assm.b_label(&mut after_pool);
+            assm.b(after_pool);
         }
 
         self.emit_prologue(assm, require_alignment);
@@ -325,8 +324,8 @@ impl ConstantPool {
         }
         self.emit_entries(assm);
 
-        if after_pool.is_linked() {
-            assm.bind(&mut after_pool);
+        if assm.label(after_pool).is_linked() {
+            assm.bind(after_pool);
         }
 
         debug_assert_eq!(assm.pc_offset() - size_check, size);

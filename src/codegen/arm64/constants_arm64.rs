@@ -90,9 +90,8 @@ pub enum Condition {
 pub const cs: Condition = Condition::Hs;
 pub const cc: Condition = Condition::Lo;
 
-pub fn negate_condition(cond: Condition) -> Condition {
-    debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
-    match cond as u32 ^ 1 {
+pub fn condition_from_bits(bits: u32) -> Condition {
+    match bits {
         0 => Condition::Eq,
         1 => Condition::Ne,
         2 => Condition::Hs,
@@ -107,8 +106,14 @@ pub fn negate_condition(cond: Condition) -> Condition {
         11 => Condition::Lt,
         12 => Condition::Gt,
         13 => Condition::Le,
-        _ => unreachable!(),
+        14 => Condition::Al,
+        _ => Condition::Nv,
     }
+}
+
+pub fn negate_condition(cond: Condition) -> Condition {
+    debug_assert!((cond != Condition::Al) && (cond != Condition::Nv));
+    condition_from_bits(cond as u32 ^ 1)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

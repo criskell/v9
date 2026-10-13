@@ -1,7 +1,8 @@
 #![allow(non_upper_case_globals)]
 
 use vx::codegen::arm64::assembler_arm64::{MemOperand, Operand};
-use vx::codegen::arm64::constants_arm64::{AddrMode, Shift};
+use vx::codegen::arm64::constants_arm64::{condition_from_bits, AddrMode, Condition, Shift};
+use vx::codegen::arm64::instructions_arm64::Instruction;
 use vx::codegen::arm64::macro_assembler_arm64::MacroAssembler;
 use vx::codegen::arm64::register_arm64::*;
 use vx::execution::arm64::simulator_arm64::Simulator;
@@ -217,4 +218,72 @@ fn a_comparison_through_the_macro_assembler() {
     });
     assert_eq!(simulator.xreg(1), 1);
     assert_eq!(simulator.xreg(2), 1);
+}
+
+#[test]
+fn a_test_branch_to_a_far_forward_label_is_sent_through_a_veneer() {
+    let mut masm = MacroAssembler::new();
+    let far = masm.asm().new_label();
+    masm.tbz(x0, 3, far);
+    let branch = 0;
+    while masm.pc_offset() < 40 * 1024 {
+        masm.asm().nop();
+    }
+    masm.asm().bind(far);
+
+    let code = words(&masm);
+    let tbz = Instruction::new(code[branch as usize]);
+    assert!(tbz.is_test_branch());
+    let veneer = branch + tbz.imm_pc_offset() as i32;
+    assert!(veneer < masm.asm().label(far).pos());
+
+    let veneer_instruction = Instruction::new(code[(veneer / 4) as usize]);
+    assert!(veneer_instruction.is_uncond_branch_imm());
+    assert_eq!(
+        veneer + veneer_instruction.imm_pc_offset() as i32,
+        masm.asm().label(far).pos()
+    );
+}
+
+#[test]
+fn a_far_test_branch_still_reaches_its_label_when_simulated() {
+    let simulator = run(|m| {
+        let far = m.asm().new_label();
+        let end = m.asm().new_label();
+        m.mov_immediate(x0, 0);
+        m.mov_immediate(x1, 7);
+        m.tbz(x1, 3, far);
+        m.mov_immediate(x0, 1);
+        m.asm().b(end);
+        while m.pc_offset() < 40 * 1024 {
+            m.asm().nop();
+        }
+        m.asm().bind(far);
+        m.mov_immediate(x0, 42);
+        m.asm().bind(end);
+    });
+    assert_eq!(simulator.xreg(0), 42);
+}
+
+#[test]
+fn a_conditional_branch_to_a_bound_label_out_of_range_gets_an_inverted_branch() {
+    let mut masm = MacroAssembler::new();
+    let back = masm.asm().new_label();
+    masm.asm().bind(back);
+    while masm.pc_offset() < 2 * 1024 * 1024 {
+        masm.asm().nop();
+    }
+    let at = masm.pc_offset();
+    masm.b_cond(back, Condition::Eq);
+
+    let code = words(&masm);
+    let inverted = Instruction::new(code[(at / 4) as usize]);
+    assert!(inverted.is_cond_branch_imm());
+    assert_eq!(
+        condition_from_bits(inverted.condition_branch()),
+        Condition::Ne
+    );
+    let over = Instruction::new(code[(at / 4 + 1) as usize]);
+    assert!(over.is_uncond_branch_imm());
+    assert_eq!(at + 4 + over.imm_pc_offset() as i32, 0);
 }

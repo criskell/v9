@@ -5,7 +5,6 @@ use vx::codegen::arm64::constants_arm64::{AddrMode, Condition, Shift};
 #[allow(unused_imports)]
 use vx::codegen::arm64::register_arm64::{d0, d1, d2, d3, d4, d5, d6, d7, s0, s1, s2, s3};
 use vx::codegen::arm64::register_arm64::*;
-use vx::codegen::label::Label;
 use vx::execution::arm64::simulator_arm64::Simulator;
 
 fn run(build: impl FnOnce(&mut Assembler)) -> Simulator {
@@ -110,17 +109,17 @@ fn multiplication_and_division() {
 #[test]
 fn a_loop_that_sums_the_first_ten_integers() {
     let simulator = run(|a| {
-        let mut top = Label::new();
-        let mut done = Label::new();
+        let top = a.new_label();
+        let done = a.new_label();
         a.movz(x0, 0, -1);
         a.movz(x1, 1, -1);
-        a.bind(&mut top);
+        a.bind(top);
         a.cmp(x1, 10);
-        a.b_cond_label(&mut done, Condition::Gt);
+        a.b_cond(done, Condition::Gt);
         a.add(x0, x0, x1);
         a.add(x1, x1, 1);
-        a.b_label(&mut top);
-        a.bind(&mut done);
+        a.b(top);
+        a.bind(done);
     });
     assert_eq!(simulator.xreg(0), 55);
     assert_eq!(simulator.xreg(1), 11);
@@ -160,15 +159,15 @@ fn a_pair_store_and_load_with_writeback() {
 #[test]
 fn a_call_and_return_through_the_link_register() {
     let simulator = run(|a| {
-        let mut callee = Label::new();
-        let mut after = Label::new();
+        let callee = a.new_label();
+        let after = a.new_label();
         a.movz(x0, 3, -1);
-        a.bl_label(&mut callee);
-        a.b_label(&mut after);
-        a.bind(&mut callee);
+        a.bl(callee);
+        a.b(after);
+        a.bind(callee);
         a.add(x0, x0, x0);
         a.ret(lr);
-        a.bind(&mut after);
+        a.bind(after);
         a.add(x0, x0, 1);
     });
     assert_eq!(simulator.xreg(0), 7);
@@ -177,17 +176,17 @@ fn a_call_and_return_through_the_link_register() {
 #[test]
 fn a_compare_and_branch_on_zero() {
     let simulator = run(|a| {
-        let mut skip = Label::new();
+        let skip = a.new_label();
         a.movz(x0, 0, -1);
         a.movz(x1, 1, -1);
-        a.cbz_label(x0, &mut skip);
+        a.cbz(x0, skip);
         a.movz(x1, 99, -1);
-        a.bind(&mut skip);
-        let mut skip2 = Label::new();
+        a.bind(skip);
+        let skip2 = a.new_label();
         a.movz(x2, 8, -1);
-        a.tbnz_label(x2, 3, &mut skip2);
+        a.tbnz(x2, 3, skip2);
         a.movz(x2, 77, -1);
-        a.bind(&mut skip2);
+        a.bind(skip2);
     });
     assert_eq!(simulator.xreg(1), 1);
     assert_eq!(simulator.xreg(2), 8);
@@ -219,10 +218,10 @@ fn an_extended_register_add_and_a_shifted_register_add() {
 #[test]
 fn an_address_of_a_label_is_loaded_by_adr() {
     let simulator = run(|a| {
-        let mut here = Label::new();
-        a.adr_label(x0, &mut here);
+        let here = a.new_label();
+        a.adr(x0, here);
         a.nop();
-        a.bind(&mut here);
+        a.bind(here);
     });
     assert_eq!(simulator.xreg(0), 8);
 }
