@@ -21,7 +21,8 @@ ARM64_DIRS = ('codegen/arm64', 'execution/arm64', 'diagnostics/arm64')
 # vx's codegen/{assembler,label}.rs and utils/utils.rs map onto these, and the
 # arm64 modules use the constants they declare.
 SHARED_FILES = ('codegen/register-base.h', 'codegen/assembler.h',
-                'codegen/label.h', 'common/globals.h', 'utils/utils.h')
+                'codegen/label.h', 'codegen/reloc-info.h', 'codegen/cpu-features.h',
+                'common/globals.h', 'utils/utils.h', 'base/vlq.h')
 
 
 def v8_names(v8_root):
@@ -47,8 +48,18 @@ def v8_names(v8_root):
             r'^\s*(?:V8_EXPORT_PRIVATE\s+)?const\s+[A-Za-z_][\w:<>]*\s+(?:\w+::)?(\w+)\s*=',
             src, re.M))
         names |= set(re.findall(r'static\s+const(?:expr)?\s+[\w:<>]+\s+(\w+)\s*=', src))
-        for body in re.finditer(r'enum\s+(?:class\s+)?\w*[^{;]*\{([^}]*)\}', src, re.S):
-            members = re.sub(r'//[^\n]*', '', body.group(1))
+        for start in re.finditer(r'enum\s+(?:class\s+)?\w*[^{;]*\{', src):
+            depth, i = 0, start.end() - 1
+            while i < len(src):
+                if src[i] == '{':
+                    depth += 1
+                elif src[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            members = re.sub(r'//[^\n]*', '', src[start.end():i])
+            members = re.sub(r'^\s*#[^\n]*', '', members, flags=re.M)
             for member in members.split(','):
                 match = re.match(r'\s*(\w+)', member)
                 if match:
@@ -110,7 +121,8 @@ def v8_names(v8_root):
 def vx_constants(vx_root):
     """Every constant vx declares in its arm64 modules, with its file."""
     declared = []
-    for directory in ('src/codegen/arm64', 'src/execution/arm64'):
+    for directory in ('src/codegen/arm64', 'src/execution/arm64',
+                      'src/diagnostics/arm64'):
         if not os.path.isdir(os.path.join(vx_root, directory)):
             continue
         for entry in sorted(os.listdir(os.path.join(vx_root, directory))):
@@ -127,6 +139,14 @@ def vx_constants(vx_root):
                 for row in re.findall(
                         r'\((\w+), (\w+), (\w+), (\w+), (\w+), (\w+), ', macro.group(1)):
                     declared += [(relative, name) for name in row]
+    for relative in ('src/codegen/reloc_info.rs', 'src/codegen/cpu_features.rs',
+                     'src/base/vlq.rs'):
+        path = os.path.join(vx_root, relative)
+        if not os.path.isfile(path):
+            continue
+        src = open(path, encoding='utf8').read()
+        for name in re.findall(r'pub const (\w+)\s*:', src):
+            declared.append((relative[4:], name))
     return declared
 
 

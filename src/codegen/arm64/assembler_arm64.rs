@@ -1,10 +1,23 @@
 #![allow(non_upper_case_globals)]
 
 use crate::codegen::arm64::constants_arm64::*;
-use crate::codegen::arm64::instructions_arm64::Instruction;
+use crate::codegen::arm64::instructions_arm64::{
+    kDebugCodeOffset, kDebugMessageOffset, kDebugParamsOffset, kImmExceptionIsDebug,
+    kImmExceptionIsUnreachable, DebugParameters, Instruction,
+};
 use crate::codegen::arm64::register_arm64::*;
 use crate::codegen::assembler::AssemblerBase;
+use crate::codegen::cpu_features::CpuFeature;
 use crate::codegen::label::{Distance, Label};
+use crate::codegen::arm64::constant_pool_arm64::RelocInfoStatus;
+use crate::codegen::reloc_info::{Mode, RelocInfo, RelocInfoWriter};
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ConstantPoolMode {
+    NeedsPoolEntry,
+    NoPoolEntry,
+}
+
 use std::collections::{BTreeMap, HashMap};
 use crate::codegen::arm64::utils_arm64::{count_leading_zeros, largest_power_of_2_divisor};
 use crate::utils::utils::{
@@ -286,6 +299,8 @@ impl BranchTarget for LabelId {
 
 pub struct Assembler {
     base: AssemblerBase,
+    reloc_info_writer: RelocInfoWriter,
+    internal_reference_positions: Vec<i32>,
     constpool: crate::codegen::arm64::constant_pool_arm64::ConstantPool,
     labels: Vec<Label>,
     unresolved_branches: BTreeMap<i32, LabelId>,
@@ -324,6 +339,8 @@ impl Assembler {
     pub fn new() -> Assembler {
         Assembler {
             base: AssemblerBase::new(),
+            reloc_info_writer: RelocInfoWriter::new(),
+            internal_reference_positions: Vec::new(),
             constpool: crate::codegen::arm64::constant_pool_arm64::ConstantPool::new(),
             labels: Vec::new(),
             unresolved_branches: BTreeMap::new(),
@@ -368,7 +385,11 @@ impl Assembler {
         while self.label(label).is_linked() {
             let linkoffset = self.label(label).pos();
             let mut link = self.instruction_at(linkoffset);
-            let prevlinkoffset = linkoffset + link.imm_pc_offset() as i32;
+            let prevlinkoffset = if self.is_unresolved_internal_reference(linkoffset) {
+                linkoffset + self.imm_unresolved_internal_reference(linkoffset)
+            } else {
+                linkoffset + link.imm_pc_offset() as i32
+            };
 
             debug_assert!(linkoffset >= 0);
             debug_assert!(linkoffset < self.pc_offset());
@@ -378,10 +399,16 @@ impl Assembler {
             );
             debug_assert!(prevlinkoffset >= 0);
 
-            link.set_imm_pc_offset_target((self.pc_offset() - linkoffset) as i64);
-            self.set_instruction_at(linkoffset, link);
+            if self.is_unresolved_internal_reference(linkoffset) {
+                self.internal_reference_positions.push(linkoffset);
+                let target = self.pc_offset() as u64;
+                self.base.write_bytes_at(linkoffset, &target.to_le_bytes());
+            } else {
+                link.set_imm_pc_offset_target((self.pc_offset() - linkoffset) as i64);
+                self.set_instruction_at(linkoffset, link);
 
-            self.branch_link_chain_back_edge.remove(&linkoffset);
+                self.branch_link_chain_back_edge.remove(&linkoffset);
+            }
 
             if linkoffset - prevlinkoffset == Assembler::kStartOfLabelLinkChain {
                 self.label_mut(label).unuse();
@@ -486,6 +513,10 @@ impl Assembler {
     }
 
     fn set_imm_pc_offset_target(&mut self, offset: i32, target: i32) {
+        if self.is_unresolved_internal_reference(offset) {
+            self.set_unresolved_internal_reference_imm_target(offset, target - offset);
+            return;
+        }
         let mut instr = self.instruction_at(offset);
         instr.set_imm_pc_offset_target((target - offset) as i64);
         self.set_instruction_at(offset, instr);
@@ -546,9 +577,10 @@ impl Assembler {
             }
 
             let distance = (next_link - prev_link) as i64;
-            if self
-                .instruction_at(prev_link)
-                .is_target_in_imm_pc_offset_range(distance)
+            if self.is_unresolved_internal_reference(prev_link)
+                || self
+                    .instruction_at(prev_link)
+                    .is_target_in_imm_pc_offset_range(distance)
             {
                 self.set_imm_pc_offset_target(prev_link, next_link);
             } else if let Some(veneer) = label_veneer {
@@ -639,6 +671,7 @@ impl Assembler {
 
         self.emit_veneers_guard();
 
+        let veneer_pool_relocinfo_loc = self.pc_offset();
         let max_pc_after_veneers = self.max_pc_offset_after_veneer_pool_if_emitted_now(margin);
 
         let mut tasks: Vec<(i32, LabelId)> = Vec::new();
@@ -676,6 +709,9 @@ impl Assembler {
             self.next_veneer_pool_check =
                 self.unresolved_branches_first_limit() - Assembler::kVeneerDistanceCheckMargin;
         }
+
+        let pool_size = self.pc_offset() - veneer_pool_relocinfo_loc;
+        self.record_veneer_pool(veneer_pool_relocinfo_loc, pool_size);
 
         self.bind(end);
 
@@ -2176,9 +2212,12 @@ impl Assembler {
     pub fn ldr_literal(&mut self, rt: impl Into<CPURegister> + Copy, imm: u64) {
         self.block_pools();
         if rt.into().is_32_bits() {
-            self.constpool.record_entry_32(imm as u32, self.pc_offset());
+            let pc_offset = self.pc_offset();
+            self.constpool
+                .record_entry(imm as u32, Mode::NoInfo, pc_offset);
         } else {
-            self.constpool.record_entry_64(imm, self.pc_offset());
+            let pc_offset = self.pc_offset();
+            self.constpool.record_entry(imm, Mode::NoInfo, pc_offset);
         }
         self.ldr_pcrel(rt, 0);
         self.release_pools();
@@ -2186,6 +2225,63 @@ impl Assembler {
 
     pub fn emit_pool_guard(&mut self) {
         let instruction = BLR | Assembler::rn(xzr);
+        self.emit(instruction);
+    }
+
+    pub fn emit_data(&mut self, data: &[u8]) {
+        self.base.emit_bytes(data);
+    }
+
+    pub fn emit_string_data(&mut self, string: &str) {
+        let mut bytes = string.as_bytes().to_vec();
+        bytes.push(0);
+        self.emit_data(&bytes);
+        let pad = [0u8; kInstrSize as usize];
+        let aligned = (self.pc_offset() + kInstrSize as i32 - 1) & !(kInstrSize as i32 - 1);
+        let padding = (aligned - self.pc_offset()) as usize;
+        self.emit_data(&pad[..padding]);
+    }
+
+    pub fn debug(&mut self, message: &str, code: u32, params: Instr) {
+        if self.base.options().enable_simulator_code {
+            let size_of_debug_sequence = 4 * kInstrSize as i32
+                + ((message.len() as i32 + 1 + kInstrSize as i32 - 1) & !(kInstrSize as i32 - 1));
+
+            self.block_pools();
+
+            let start = self.pc_offset();
+
+            self.hlt(kImmExceptionIsDebug as i32);
+            debug_assert_eq!(self.pc_offset() - start, kDebugCodeOffset as i32);
+            self.dc32(code);
+            debug_assert_eq!(self.pc_offset() - start, kDebugParamsOffset as i32);
+            self.dc32(params);
+            debug_assert_eq!(self.pc_offset() - start, kDebugMessageOffset as i32);
+            self.emit_string_data(message);
+            self.hlt(kImmExceptionIsUnreachable as i32);
+            debug_assert_eq!(self.pc_offset() - start, size_of_debug_sequence);
+
+            self.release_pools();
+            return;
+        }
+
+        if (params & DebugParameters::BREAK as u32) != 0 {
+            self.brk(0);
+        }
+    }
+
+    pub fn bc(&mut self, imm19: impl BranchTarget, cond: Condition) {
+        let imm19 = imm19.branch_instruction_offset(self);
+        let instruction = BC_cond | Assembler::imm_cond_branch(imm19) | (cond as Instr);
+        self.emit(instruction);
+    }
+
+    pub fn ctz(&mut self, rd: Register, rn: Register) {
+        debug_assert!(self.base.is_enabled(CpuFeature::CSSC));
+        debug_assert!(rd.is_same_size_and_type(*rn));
+
+        let instruction =
+            0x5ac01800 | Assembler::sf(rd) | Assembler::rd(rd) | Assembler::rn(rn);
         self.emit(instruction);
     }
 
@@ -2215,6 +2311,244 @@ impl Assembler {
         self.block_pools();
         self.dc64(data);
         self.release_pools();
+    }
+
+    pub fn set_options(&mut self, options: crate::codegen::assembler::AssemblerOptions) {
+        self.base.set_options(options);
+    }
+
+    pub fn enable_cpu_feature(&mut self, feature: CpuFeature) {
+        self.base.enable_cpu_feature(feature);
+    }
+
+    pub fn reloc_info(&self) -> &[u8] {
+        self.reloc_info_writer.buffer()
+    }
+
+    pub fn internal_reference_positions(&self) -> &[i32] {
+        &self.internal_reference_positions
+    }
+
+    fn should_record_reloc_info(&self, rmode: Mode) -> bool {
+        debug_assert!(rmode != Mode::NoInfo);
+        true
+    }
+
+    fn is_unresolved_internal_reference(&self, offset: i32) -> bool {
+        if offset + 2 * kInstrSize as i32 > self.pc_offset() {
+            return false;
+        }
+        self.instruction_at(offset).is_brk()
+            && self.instruction_at(offset + kInstrSize as i32).is_brk()
+    }
+
+    fn imm_unresolved_internal_reference(&self, offset: i32) -> i32 {
+        debug_assert!(self.is_unresolved_internal_reference(offset));
+        let high16 = self.instruction_at(offset).imm_exception() as i32;
+        let low16 = self
+            .instruction_at(offset + kInstrSize as i32)
+            .imm_exception() as i32;
+        ((high16 << 16) | low16) * kInstrSize as i32
+    }
+
+    fn set_unresolved_internal_reference_imm_target(&mut self, offset: i32, distance: i32) {
+        debug_assert!(self.is_unresolved_internal_reference(offset));
+        debug_assert_eq!(distance % kInstrSize as i32, 0);
+        let target_offset = distance / kInstrSize as i32;
+        let high16 = crate::codegen::arm64::instructions_arm64::unsigned_bitextract_32(
+            31,
+            16,
+            target_offset as u32,
+        );
+        let low16 = crate::codegen::arm64::instructions_arm64::unsigned_bitextract_32(
+            15,
+            0,
+            target_offset as u32,
+        );
+        let high = BRK | Assembler::imm_exception(high16 as i32);
+        let low = BRK | Assembler::imm_exception(low16 as i32);
+        self.base.write_bytes_at(offset, &high.to_le_bytes());
+        self.base
+            .write_bytes_at(offset + kInstrSize as i32, &low.to_le_bytes());
+    }
+
+    pub fn record_reloc_info(
+        &mut self,
+        rmode: Mode,
+        data: i64,
+        constant_pool_mode: ConstantPoolMode,
+    ) {
+        if rmode == Mode::InternalReference
+            || rmode == Mode::ConstPool
+            || rmode == Mode::VeneerPool
+            || rmode == Mode::DeoptScriptOffset
+            || rmode == Mode::DeoptInliningId
+            || rmode == Mode::DeoptReason
+            || rmode == Mode::DeoptId
+            || rmode == Mode::DeoptNodeId
+        {
+            debug_assert!(
+                RelocInfo::is_deopt_reason(rmode)
+                    || RelocInfo::is_deopt_id(rmode)
+                    || RelocInfo::is_deopt_node_id(rmode)
+                    || RelocInfo::is_deopt_position(rmode)
+                    || RelocInfo::is_internal_reference(rmode)
+                    || RelocInfo::is_const_pool(rmode)
+                    || RelocInfo::is_veneer_pool(rmode)
+            );
+        } else if constant_pool_mode == ConstantPoolMode::NeedsPoolEntry {
+            let pc_offset = self.pc_offset();
+            let status = if rmode == Mode::CompressedEmbeddedObject {
+                self.constpool
+                    .record_entry(data as u32, rmode, pc_offset)
+            } else {
+                self.constpool
+                    .record_entry(data as u64, rmode, pc_offset)
+            };
+            if status == RelocInfoStatus::MustOmitForDuplicate {
+                return;
+            }
+        }
+
+        if !self.should_record_reloc_info(rmode) {
+            return;
+        }
+
+        debug_assert!(self.constpool.is_blocked());
+
+        let rinfo = RelocInfo::new(self.pc_offset(), rmode, data);
+        self.reloc_info_writer.write(&rinfo);
+    }
+
+    pub fn record_const_pool(&mut self, size: i32) {
+        self.block_pools();
+        self.record_reloc_info(Mode::ConstPool, size as i64, ConstantPoolMode::NoPoolEntry);
+        self.release_pools();
+    }
+
+    pub fn record_veneer_pool(&mut self, location_offset: i32, size: i32) {
+        self.constpool.start_block();
+        self.start_block_veneer_pool();
+        let rinfo = RelocInfo::new(location_offset, Mode::VeneerPool, size as i64);
+        self.reloc_info_writer.write(&rinfo);
+        self.end_block_veneer_pool();
+        self.constpool.end_block();
+    }
+
+    pub fn near_jump(&mut self, offset: i32, rmode: Mode) {
+        self.block_pools();
+        if rmode != Mode::NoInfo {
+            self.record_reloc_info(rmode, offset as i64, ConstantPoolMode::NoPoolEntry);
+        }
+        self.b(offset);
+        self.release_pools();
+    }
+
+    pub fn near_call(&mut self, offset: i32, rmode: Mode) {
+        self.block_pools();
+        if rmode != Mode::NoInfo {
+            self.record_reloc_info(rmode, offset as i64, ConstantPoolMode::NoPoolEntry);
+        }
+        self.bl(offset);
+        self.release_pools();
+    }
+
+    pub fn dcptr(&mut self, label: LabelId) {
+        self.block_pools();
+        self.record_reloc_info(
+            Mode::InternalReference,
+            0,
+            ConstantPoolMode::NoPoolEntry,
+        );
+        if self.label(label).is_bound() {
+            let position = self.pc_offset();
+            self.internal_reference_positions.push(position);
+            let target = self.label(label).pos() as u64;
+            self.dc64(target);
+        } else {
+            let offset = self.link_and_get_branch_instruction_offset_to(label);
+
+            let high16 = crate::codegen::arm64::instructions_arm64::unsigned_bitextract_32(31, 16, offset as u32);
+            let low16 = crate::codegen::arm64::instructions_arm64::unsigned_bitextract_32(15, 0, offset as u32);
+
+            self.brk(high16 as i32);
+            self.brk(low16 as i32);
+        }
+        self.release_pools();
+    }
+
+    pub fn target_pointer_address_at(&self, pc: i32) -> i32 {
+        let instr = self.instruction_at(pc);
+        debug_assert!(instr.is_ldr_literal_x() || instr.is_ldr_literal_w());
+        pc + instr.imm_pc_offset() as i32
+    }
+
+    pub fn set_embedded_object_index_referenced_from(&mut self, pc: i32, data: u64) {
+        let instr = self.instruction_at(pc);
+        let slot = self.target_pointer_address_at(pc);
+        if instr.is_ldr_literal_x() {
+            self.base.write_bytes_at(slot, &data.to_le_bytes());
+        } else {
+            debug_assert!(instr.is_ldr_literal_w());
+            debug_assert!(crate::utils::utils::is_uint32(data as i64));
+            self.base
+                .write_bytes_at(slot, &(data as u32).to_le_bytes());
+        }
+    }
+
+    pub fn embedded_object_index_referenced_from(&self, pc: i32) -> u64 {
+        let instr = self.instruction_at(pc);
+        let slot = self.target_pointer_address_at(pc) as usize;
+        let bytes = self.buffer_start();
+        if instr.is_ldr_literal_x() {
+            let mut word = [0u8; 8];
+            word.copy_from_slice(&bytes[slot..slot + 8]);
+            u64::from_le_bytes(word)
+        } else {
+            debug_assert!(instr.is_ldr_literal_w());
+            let mut word = [0u8; 4];
+            word.copy_from_slice(&bytes[slot..slot + 4]);
+            u32::from_le_bytes(word) as u64
+        }
+    }
+
+    pub fn set_target_address_at(&mut self, pc: i32, target: i32) {
+        let mut instr = self.instruction_at(pc);
+        if instr.is_ldr_literal_x() {
+            let slot = self.target_pointer_address_at(pc);
+            self.base
+                .write_bytes_at(slot, &(target as u64).to_le_bytes());
+        } else {
+            debug_assert!(instr.is_branch_and_link() || instr.is_unconditional_branch());
+            let target = if target == 0 { pc } else { target };
+            instr.set_branch_imm_target(
+                ImmBranchType::UncondBranchType,
+                (target - pc) as i64,
+            );
+            self.set_instruction_at(pc, instr);
+        }
+    }
+
+    pub fn set_target_compressed_address_at(&mut self, pc: i32, target: u32) {
+        let instr = self.instruction_at(pc);
+        assert!(instr.is_ldr_literal_w());
+        let slot = self.target_pointer_address_at(pc);
+        self.base.write_bytes_at(slot, &target.to_le_bytes());
+    }
+
+    pub fn set_uint32_constant_at(&mut self, pc: i32, new_constant: u32) {
+        let instr = self.instruction_at(pc);
+        assert!(instr.is_ldr_literal_w());
+        let slot = self.target_pointer_address_at(pc);
+        self.base.write_bytes_at(slot, &new_constant.to_le_bytes());
+    }
+
+    pub fn deserialization_set_target_internal_reference_at(
+        &mut self,
+        pc: i32,
+        target: u64,
+    ) {
+        self.base.write_bytes_at(pc, &target.to_le_bytes());
     }
 
     pub fn block_pools(&mut self) {

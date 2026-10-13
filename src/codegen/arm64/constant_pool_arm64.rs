@@ -2,6 +2,7 @@
 
 use crate::codegen::arm64::assembler_arm64::Assembler;
 use crate::codegen::arm64::constants_arm64::*;
+use crate::codegen::reloc_info::{Mode, RelocInfo};
 use crate::codegen::arm64::register_arm64::xzr;
 use std::collections::BTreeMap;
 
@@ -9,21 +10,44 @@ use std::collections::BTreeMap;
 pub struct ConstantPoolKey {
     is_value32: bool,
     value: u64,
+    rmode: Mode,
+}
+
+pub trait ConstantPoolData {
+    fn key(self, rmode: Mode) -> ConstantPoolKey;
+}
+
+impl ConstantPoolData for u32 {
+    fn key(self, rmode: Mode) -> ConstantPoolKey {
+        ConstantPoolKey::new_value32(self, rmode)
+    }
+}
+
+impl ConstantPoolData for u64 {
+    fn key(self, rmode: Mode) -> ConstantPoolKey {
+        ConstantPoolKey::new_value64(self, rmode)
+    }
 }
 
 impl ConstantPoolKey {
-    pub fn new_value64(value: u64) -> ConstantPoolKey {
+    pub fn new_value64(value: u64, rmode: Mode) -> ConstantPoolKey {
         ConstantPoolKey {
             is_value32: false,
             value,
+            rmode,
         }
     }
 
-    pub fn new_value32(value: u32) -> ConstantPoolKey {
+    pub fn new_value32(value: u32, rmode: Mode) -> ConstantPoolKey {
         ConstantPoolKey {
             is_value32: true,
             value: value as u64,
+            rmode,
         }
+    }
+
+    pub fn rmode(&self) -> Mode {
+        self.rmode
     }
 
     pub fn value64(&self) -> u64 {
@@ -41,7 +65,25 @@ impl ConstantPoolKey {
     }
 
     pub fn allows_deduplication(&self) -> bool {
-        true
+        debug_assert!(
+            self.rmode != Mode::ConstPool
+                && self.rmode != Mode::VeneerPool
+                && self.rmode != Mode::DeoptScriptOffset
+                && self.rmode != Mode::DeoptInliningId
+                && self.rmode != Mode::DeoptReason
+                && self.rmode != Mode::DeoptId
+                && self.rmode != Mode::DeoptNodeId
+        );
+        let is_sharable_code_target = self.rmode == Mode::CodeTarget
+            && (if self.is_value32() {
+                self.value32() != 0
+            } else {
+                self.value64() != 0
+            });
+        let is_sharable_embedded_object = RelocInfo::is_embedded_object_mode(self.rmode);
+        RelocInfo::is_shareable_reloc_mode(self.rmode)
+            || is_sharable_code_target
+            || is_sharable_embedded_object
     }
 }
 
@@ -104,15 +146,13 @@ impl ConstantPool {
         }
     }
 
-    pub fn record_entry_32(&mut self, data: u32, pc_offset: i32) -> RelocInfoStatus {
-        let key = ConstantPoolKey::new_value32(data);
-        assert!(key.is_value32());
-        self.record_key(key, pc_offset)
-    }
-
-    pub fn record_entry_64(&mut self, data: u64, pc_offset: i32) -> RelocInfoStatus {
-        let key = ConstantPoolKey::new_value64(data);
-        assert!(!key.is_value32());
+    pub fn record_entry(
+        &mut self,
+        data: impl ConstantPoolData,
+        rmode: Mode,
+        pc_offset: i32,
+    ) -> RelocInfoStatus {
+        let key = data.key(rmode);
         self.record_key(key, pc_offset)
     }
 
@@ -312,6 +352,7 @@ impl ConstantPool {
             self.is_alignment_required_if_emitted_at(require_jump, assm.pc_offset());
         let size = self.compute_size(require_jump, require_alignment);
         let size_check = assm.pc_offset();
+        assm.record_const_pool(size);
 
         let after_pool = assm.new_label();
         if require_jump == Jump::Required {

@@ -5,6 +5,10 @@ use vx::codegen::arm64::constants_arm64::{
     AddrMode, Condition, Shift, SystemHint, CFlag, NoFlag, NFlag, VFlag, ZFlag,
 };
 use vx::codegen::arm64::register_arm64::*;
+use vx::codegen::arm64::instructions_arm64::DebugParameters;
+use vx::codegen::assembler::AssemblerOptions;
+use vx::codegen::cpu_features::CpuFeature;
+use vx::codegen::reloc_info::{Mode, RelocInfo, RelocIterator};
 
 fn words(assembler: &Assembler) -> Vec<u32> {
     assembler
@@ -541,4 +545,104 @@ fn a_literal_load_of_a_double() {
         ((words[words.len() - 1] as u64) << 32) | words[words.len() - 2] as u64,
         1.5f64.to_bits()
     );
+}
+
+#[test]
+fn near_call_and_near_jump_record_their_relocation_mode() {
+    let mut assembler = Assembler::new();
+    assembler.near_jump(2, Mode::CodeTarget);
+    assembler.near_call(4, Mode::ExternalReference);
+    assembler.nop();
+
+    assert_eq!(words(&assembler), vec![0x14000002, 0x94000004, 0xd503201f]);
+
+    let reloc = assembler.reloc_info().to_vec();
+    let mut entries = Vec::new();
+    let mut iterator = RelocIterator::new(&reloc, RelocIterator::kAllModesMask);
+    while !iterator.done() {
+        let rinfo = iterator.rinfo();
+        entries.push((rinfo.pc(), rinfo.rmode(), rinfo.data()));
+        iterator.next();
+    }
+    assert_eq!(
+        entries,
+        vec![(0, Mode::CodeTarget, 0), (4, Mode::ExternalReference, 0)]
+    );
+}
+
+#[test]
+fn a_pointer_to_a_bound_label_is_emitted_by_dcptr() {
+    let mut assembler = Assembler::new();
+    let here = assembler.new_label();
+    assembler.nop();
+    assembler.bind(here);
+    assembler.dcptr(here);
+
+    let bytes = assembler.buffer_start();
+    let mut target = [0u8; 8];
+    target.copy_from_slice(&bytes[4..12]);
+    assert_eq!(u64::from_le_bytes(target), 4);
+    assert_eq!(assembler.internal_reference_positions(), &[4]);
+}
+
+#[test]
+fn a_pointer_to_a_forward_label_is_patched_when_it_binds() {
+    let mut assembler = Assembler::new();
+    let forward = assembler.new_label();
+    assembler.dcptr(forward);
+    assembler.nop();
+    assembler.bind(forward);
+
+    let bytes = assembler.buffer_start();
+    let mut target = [0u8; 8];
+    target.copy_from_slice(&bytes[0..8]);
+    assert_eq!(u64::from_le_bytes(target), 12);
+    assert_eq!(assembler.internal_reference_positions(), &[0]);
+}
+
+#[test]
+fn the_constant_pool_records_its_size_in_the_relocation_stream() {
+    let mut assembler = Assembler::new();
+    assembler.ldr_literal(x0, 0x1234_5678_9abc_def0);
+    assembler.force_constant_pool_emission();
+
+    let reloc = assembler.reloc_info().to_vec();
+    let mut iterator =
+        RelocIterator::new(&reloc, RelocInfo::mode_mask(Mode::ConstPool));
+    assert!(!iterator.done());
+    assert_eq!(iterator.rinfo().rmode(), Mode::ConstPool);
+    assert!(iterator.rinfo().data() > 0);
+}
+
+#[test]
+fn a_hinted_conditional_branch_encodes_like_a_conditional_branch() {
+    assert_eq!(
+        assemble(|a| a.bc(2, Condition::Eq)),
+        vec![0x54000050]
+    );
+}
+
+#[test]
+fn count_trailing_zeros_needs_the_feature_enabled() {
+    let mut assembler = Assembler::new();
+    assembler.enable_cpu_feature(CpuFeature::CSSC);
+    assembler.ctz(x0, x1);
+    assert_eq!(words(&assembler), vec![0xdac01820]);
+}
+
+#[test]
+fn the_debug_marker_carries_its_message() {
+    let mut assembler = Assembler::new();
+    assembler.set_options(AssemblerOptions {
+        enable_simulator_code: true,
+    });
+    assembler.debug("hello", 7, DebugParameters::BREAK as u32);
+
+    let words = words(&assembler);
+    assert_eq!(words[0], 0xd45bd600);
+    assert_eq!(words[1], 7);
+    assert_eq!(words[2], DebugParameters::BREAK as u32);
+    let bytes = &assembler.buffer_start()[12..];
+    assert_eq!(&bytes[..6], b"hello\0");
+    assert_eq!(*words.last().unwrap(), 0xd45bd7e0);
 }

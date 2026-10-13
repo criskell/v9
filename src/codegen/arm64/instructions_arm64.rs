@@ -19,7 +19,24 @@ pub fn unsigned_bitextract_32(msb: u32, lsb: u32, x: u32) -> u32 {
     (x >> lsb) & ((1 << (msb - lsb + 1)) - 1)
 }
 
-#[inline]
+pub const kImmExceptionIsUnreachable: Instr = 0xdebf;
+pub const kImmExceptionIsDebug: Instr = 0xdeb0;
+pub const kDebugCodeOffset: u32 = 1 * kInstrSize as u32;
+pub const kDebugParamsOffset: u32 = 2 * kInstrSize as u32;
+pub const kDebugMessageOffset: u32 = 3 * kInstrSize as u32;
+
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum DebugParameters {
+    NO_PARAM = 0,
+    BREAK = 1 << 0,
+    LOG_DISASM = 1 << 1,
+    LOG_REGS = 1 << 2,
+    LOG_VREGS = 1 << 3,
+    LOG_SYS_REGS = 1 << 4,
+    LOG_WRITE = 1 << 5,
+}
+
 pub fn rotate_right(value: u64, rotate: u32, width: u32) -> u64 {
     debug_assert!(width <= 64);
     let rotate = rotate & 63;
@@ -591,6 +608,26 @@ impl Instruction {
 
     pub fn is_ldr_literal(self) -> bool {
         self.mask(LoadLiteralFMask) == LoadLiteralFixed
+    }
+
+    pub fn is_brk(self) -> bool {
+        self.mask(ExceptionMask) == BRK
+    }
+
+    pub fn is_ldr_literal_w(self) -> bool {
+        self.mask(LoadLiteralMask) == LDR_w_lit
+    }
+
+    pub fn is_unconditional_branch(self) -> bool {
+        self.mask(UnconditionalBranchMask) == B
+    }
+
+    pub fn is_branch_and_link(self) -> bool {
+        self.mask(UnconditionalBranchMask) == BL
+    }
+
+    pub fn is_branch_and_link_to_register(self) -> bool {
+        self.mask(UnconditionalBranchToRegisterMask) == BLR
     }
 
     pub fn is_ldr_literal_x(self) -> bool {

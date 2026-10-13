@@ -1,5 +1,8 @@
 #![allow(non_upper_case_globals)]
 
+use crate::codegen::cpu_features::{CpuFeature, CpuFeatureSet};
+
+
 pub struct AssemblerBuffer {
     buffer: Vec<u8>,
 }
@@ -26,15 +29,40 @@ impl Default for AssemblerBuffer {
     }
 }
 
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct AssemblerOptions {
+    pub enable_simulator_code: bool,
+}
+
 pub struct AssemblerBase {
     buffer: AssemblerBuffer,
+    options: AssemblerOptions,
+    enabled_cpu_features: CpuFeatureSet,
 }
 
 impl AssemblerBase {
     pub fn new() -> AssemblerBase {
         AssemblerBase {
             buffer: AssemblerBuffer::new(),
+            options: AssemblerOptions::default(),
+            enabled_cpu_features: CpuFeatureSet::new(),
         }
+    }
+
+    pub fn options(&self) -> &AssemblerOptions {
+        &self.options
+    }
+
+    pub fn set_options(&mut self, options: AssemblerOptions) {
+        self.options = options;
+    }
+
+    pub fn is_enabled(&self, feature: CpuFeature) -> bool {
+        self.enabled_cpu_features.contains(feature)
+    }
+
+    pub fn enable_cpu_feature(&mut self, feature: CpuFeature) {
+        self.enabled_cpu_features.add(feature);
     }
 
     #[inline]
