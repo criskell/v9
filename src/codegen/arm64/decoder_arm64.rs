@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::instructions_arm64::Instruction;
 
 pub trait DecoderVisitor {

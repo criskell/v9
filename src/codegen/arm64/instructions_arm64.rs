@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::constants_arm64::*;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -39,29 +41,29 @@ pub fn repeat_bits_across_reg(reg_size: u32, value: u64, width: u32) -> u64 {
 }
 
 pub fn calc_ls_data_size_log2(op: Instr) -> u32 {
-    let mut size_log2 = op >> LS_SIZE_OFFSET;
-    if (op & LS_VECTOR_MASK) != 0
+    let mut size_log2 = op >> LSSize_offset;
+    if (op & LSVector_mask) != 0
         && size_log2 == 0
-        && ((op & LS_OPC_MASK) >> LS_OPC_OFFSET) >= 2
+        && ((op & LSOpc_mask) >> LSOpc_offset) >= 2
     {
-        size_log2 = K_Q_REG_SIZE_LOG2 as u32;
+        size_log2 = kQRegSizeLog2 as u32;
     }
     size_log2
 }
 
 pub fn calc_ls_pair_data_size(op: Instr) -> u32 {
     match op {
-        STP_Q | LDP_Q => K_Q_REG_SIZE_LOG2 as u32,
-        STP_X | LDP_X | STP_D | LDP_D => K_X_REG_SIZE_LOG2 as u32,
-        _ => K_W_REG_SIZE_LOG2 as u32,
+        STP_q | LDP_q => kQRegSizeLog2 as u32,
+        STP_x | LDP_x | STP_d | LDP_d => kXRegSizeLog2 as u32,
+        _ => kWRegSizeLog2 as u32,
     }
 }
 
 pub fn imm_pc_rel_address(imm21: i32) -> Instr {
     let imm = crate::utils::utils::checked_truncate_to_int21(imm21 as i64) as Instr;
-    let immhi = (imm >> IMM_PC_REL_LO_WIDTH) << IMM_PC_REL_HI_OFFSET;
-    let immlo = imm << IMM_PC_REL_LO_OFFSET;
-    (immhi & IMM_PC_REL_HI_MASK) | (immlo & IMM_PC_REL_LO_MASK)
+    let immhi = (imm >> ImmPCRelLo_width) << ImmPCRelHi_offset;
+    let immlo = imm << ImmPCRelLo_offset;
+    (immhi & ImmPCRelHi_mask) | (immlo & ImmPCRelLo_mask)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -120,14 +122,14 @@ impl Instruction {
 
     #[inline]
     pub fn imm_pc_rel_lo(self) -> i32 {
-        ((self.0 & IMM_PC_REL_LO_MASK) >> IMM_PC_REL_LO_OFFSET) as i32
+        ((self.0 & ImmPCRelLo_mask) >> ImmPCRelLo_offset) as i32
     }
 
     pub fn imm_pc_rel(self) -> i32 {
         debug_assert!(self.is_pc_rel_addressing());
-        let offset = ((self.imm_pc_rel_hi() as u32) << IMM_PC_REL_LO_WIDTH)
+        let offset = ((self.imm_pc_rel_hi() as u32) << ImmPCRelLo_width)
             | (self.imm_pc_rel_lo() as u32);
-        let width = IMM_PC_REL_LO_WIDTH + IMM_PC_REL_HI_WIDTH;
+        let width = ImmPCRelLo_width + ImmPCRelHi_width;
         signed_bitextract_32(width - 1, 0, offset)
     }
 
@@ -303,19 +305,19 @@ impl Instruction {
 
     #[inline]
     pub fn size_ls(self) -> u32 {
-        calc_ls_data_size_log2(self.mask(LOAD_STORE_MASK))
+        calc_ls_data_size_log2(self.mask(LoadStoreMask))
     }
 
     #[inline]
     pub fn size_lsp(self) -> u32 {
-        calc_ls_pair_data_size(self.mask(LOAD_STORE_PAIR_MASK))
+        calc_ls_pair_data_size(self.mask(LoadStorePairMask))
     }
 
     pub fn imm_logical(self) -> u64 {
         let reg_size = if self.sixty_four_bits() != 0 {
-            K_X_REG_SIZE_IN_BITS as u32
+            kXRegSizeInBits as u32
         } else {
-            K_W_REG_SIZE_IN_BITS as u32
+            kWRegSizeInBits as u32
         };
         let n = self.bit_n();
         let imm_s = self.imm_set_bits();
@@ -351,26 +353,26 @@ impl Instruction {
     }
 
     pub fn is_add_sub_immediate(self) -> bool {
-        self.mask(ADD_SUB_IMMEDIATE_F_MASK) == ADD_SUB_IMMEDIATE_FIXED
+        self.mask(AddSubImmediateFMask) == AddSubImmediateFixed
     }
 
     pub fn is_add_sub_extended(self) -> bool {
-        self.mask(ADD_SUB_EXTENDED_F_MASK) == ADD_SUB_EXTENDED_FIXED
+        self.mask(AddSubExtendedFMask) == AddSubExtendedFixed
     }
 
     pub fn is_logical_immediate(self) -> bool {
-        self.mask(LOGICAL_IMMEDIATE_F_MASK) == LOGICAL_IMMEDIATE_FIXED
+        self.mask(LogicalImmediateFMask) == LogicalImmediateFixed
     }
 
     pub fn rd_mode(self) -> Reg31Mode {
         if self.is_add_sub_immediate() || self.is_add_sub_extended() {
-            if self.mask(ADD_SUB_SET_FLAGS_BIT) != 0 {
+            if self.mask(AddSubSetFlagsBit) != 0 {
                 return Reg31Mode::Reg31IsZeroRegister;
             }
             return Reg31Mode::Reg31IsStackPointer;
         }
         if self.is_logical_immediate() {
-            if self.mask(LOGICAL_IMMEDIATE_MASK & LOGICAL_OP_MASK) == ANDS {
+            if self.mask(LogicalImmediateMask & LogicalOpMask) == ANDS {
                 return Reg31Mode::Reg31IsZeroRegister;
             }
             return Reg31Mode::Reg31IsStackPointer;
@@ -390,33 +392,33 @@ impl Instruction {
     }
 
     pub fn is_load_store(self) -> bool {
-        self.mask(LOAD_STORE_ANY_F_MASK) == LOAD_STORE_ANY_FIXED
+        self.mask(LoadStoreAnyFMask) == LoadStoreAnyFixed
     }
 
     pub fn is_load(self) -> bool {
-        if self.mask(LOAD_STORE_ANY_F_MASK) != LOAD_STORE_ANY_FIXED {
+        if self.mask(LoadStoreAnyFMask) != LoadStoreAnyFixed {
             return false;
         }
-        if self.mask(LOAD_STORE_PAIR_ANY_F_MASK) == LOAD_STORE_PAIR_ANY_FIXED {
-            return self.mask(LOAD_STORE_PAIR_L_BIT) != 0;
+        if self.mask(LoadStorePairAnyFMask) == LoadStorePairAnyFixed {
+            return self.mask(LoadStorePairLBit) != 0;
         }
         matches!(
-            self.mask(LOAD_STORE_MASK),
-            LDRB_W | LDRH_W | LDR_W | LDR_X | LDRSB_W | LDRSB_X | LDRSH_W | LDRSH_X
-                | LDRSW_X | LDR_B | LDR_H | LDR_S | LDR_D | LDR_Q
+            self.mask(LoadStoreMask),
+            LDRB_w | LDRH_w | LDR_w | LDR_x | LDRSB_w | LDRSB_x | LDRSH_w | LDRSH_x
+                | LDRSW_x | LDR_b | LDR_h | LDR_s | LDR_d | LDR_q
         )
     }
 
     pub fn is_store(self) -> bool {
-        if self.mask(LOAD_STORE_ANY_F_MASK) != LOAD_STORE_ANY_FIXED {
+        if self.mask(LoadStoreAnyFMask) != LoadStoreAnyFixed {
             return false;
         }
-        if self.mask(LOAD_STORE_PAIR_ANY_F_MASK) == LOAD_STORE_PAIR_ANY_FIXED {
-            return self.mask(LOAD_STORE_PAIR_L_BIT) == 0;
+        if self.mask(LoadStorePairAnyFMask) == LoadStorePairAnyFixed {
+            return self.mask(LoadStorePairLBit) == 0;
         }
         matches!(
-            self.mask(LOAD_STORE_MASK),
-            STRB_W | STRH_W | STR_W | STR_X | STR_B | STR_H | STR_S | STR_D | STR_Q
+            self.mask(LoadStoreMask),
+            STRB_w | STRH_w | STR_w | STR_x | STR_b | STR_h | STR_s | STR_d | STR_q
         )
     }
 
@@ -462,11 +464,11 @@ impl Instruction {
     }
 
     pub fn is_ldr_literal(self) -> bool {
-        self.mask(LOAD_LITERAL_F_MASK) == LOAD_LITERAL_FIXED
+        self.mask(LoadLiteralFMask) == LoadLiteralFixed
     }
 
     pub fn is_ldr_literal_x(self) -> bool {
-        self.mask(LOAD_LITERAL_MASK) == LDR_X_LIT
+        self.mask(LoadLiteralMask) == LDR_x_lit
     }
 
     #[inline]
@@ -476,37 +478,37 @@ impl Instruction {
 
     pub fn set_imm_l_literal(&mut self, distance: i64) {
         debug_assert!(self.is_ldr_literal());
-        debug_assert_eq!(distance % K_INSTR_SIZE as i64, 0);
+        debug_assert_eq!(distance % kInstrSize as i64, 0);
         let imm = (crate::utils::utils::checked_truncate_to_int19(
-            distance >> K_LOAD_LITERAL_SCALE_LOG2,
+            distance >> kLoadLiteralScaleLog2,
         ) as Instr)
-            << IMM_L_LITERAL_OFFSET;
-        let bits = self.mask(!IMM_L_LITERAL_MASK) | imm;
+            << ImmLLiteral_offset;
+        let bits = self.mask(!ImmLLiteral_mask) | imm;
         self.set_instruction_bits(bits);
     }
 
     pub fn is_adr(self) -> bool {
-        self.mask(PC_REL_ADDRESSING_MASK) == ADR
+        self.mask(PCRelAddressingMask) == ADR
     }
 
     pub fn is_pc_rel_addressing(self) -> bool {
-        self.mask(PC_REL_ADDRESSING_F_MASK) == PC_REL_ADDRESSING_FIXED
+        self.mask(PCRelAddressingFMask) == PCRelAddressingFixed
     }
 
     pub fn is_cond_branch_imm(self) -> bool {
-        self.mask(CONDITIONAL_BRANCH_F_MASK) == CONDITIONAL_BRANCH_FIXED
+        self.mask(ConditionalBranchFMask) == ConditionalBranchFixed
     }
 
     pub fn is_uncond_branch_imm(self) -> bool {
-        self.mask(UNCONDITIONAL_BRANCH_F_MASK) == UNCONDITIONAL_BRANCH_FIXED
+        self.mask(UnconditionalBranchFMask) == UnconditionalBranchFixed
     }
 
     pub fn is_compare_branch(self) -> bool {
-        self.mask(COMPARE_BRANCH_F_MASK) == COMPARE_BRANCH_FIXED
+        self.mask(CompareBranchFMask) == CompareBranchFixed
     }
 
     pub fn is_test_branch(self) -> bool {
-        self.mask(TEST_BRANCH_F_MASK) == TEST_BRANCH_FIXED
+        self.mask(TestBranchFMask) == TestBranchFixed
     }
 
     pub fn branch_type(self) -> ImmBranchType {
@@ -538,10 +540,10 @@ impl Instruction {
         if self.is_pc_rel_addressing() {
             offset = self.imm_pc_rel() as i64;
         } else if self.branch_type() != ImmBranchType::UnknownBranchType {
-            offset = self.imm_branch() as i64 * K_INSTR_SIZE as i64;
+            offset = self.imm_branch() as i64 * kInstrSize as i64;
         } else {
             debug_assert!(self.is_ldr_literal());
-            offset = self.imm_l_literal() as i64 * K_INSTR_SIZE as i64;
+            offset = self.imm_l_literal() as i64 * kInstrSize as i64;
         }
         offset
     }
@@ -549,17 +551,17 @@ impl Instruction {
     pub fn imm_branch_range_bitwidth(branch_type: ImmBranchType) -> u32 {
         match branch_type {
             ImmBranchType::UnknownBranchType => unreachable!(),
-            ImmBranchType::CondBranchType => IMM_COND_BRANCH_WIDTH,
-            ImmBranchType::UncondBranchType => IMM_UNCOND_BRANCH_WIDTH,
-            ImmBranchType::CompareBranchType => IMM_CMP_BRANCH_WIDTH,
-            ImmBranchType::TestBranchType => IMM_TEST_BRANCH_WIDTH,
+            ImmBranchType::CondBranchType => ImmCondBranch_width,
+            ImmBranchType::UncondBranchType => ImmUncondBranch_width,
+            ImmBranchType::CompareBranchType => ImmCmpBranch_width,
+            ImmBranchType::TestBranchType => ImmTestBranch_width,
         }
     }
 
     pub fn is_valid_imm_pc_offset(branch_type: ImmBranchType, offset: i64) -> bool {
-        debug_assert_eq!(offset % K_INSTR_SIZE as i64, 0);
+        debug_assert_eq!(offset % kInstrSize as i64, 0);
         crate::utils::utils::is_intn(
-            offset / K_INSTR_SIZE as i64,
+            offset / kInstrSize as i64,
             Instruction::imm_branch_range_bitwidth(branch_type),
         )
     }
@@ -568,25 +570,25 @@ impl Instruction {
         use crate::utils::utils::{
             checked_truncate_to_int14, checked_truncate_to_int19, checked_truncate_to_int26,
         };
-        debug_assert_eq!(distance % K_INSTR_SIZE as i64, 0);
-        let offset = distance >> K_INSTR_SIZE_LOG2;
+        debug_assert_eq!(distance % kInstrSize as i64, 0);
+        let offset = distance >> kInstrSizeLog2;
         let branch_imm;
         let imm_mask;
         match branch_type {
             ImmBranchType::CondBranchType | ImmBranchType::CompareBranchType => {
                 branch_imm =
-                    (checked_truncate_to_int19(offset) as u32) << IMM_COND_BRANCH_OFFSET;
-                imm_mask = IMM_COND_BRANCH_MASK;
+                    (checked_truncate_to_int19(offset) as u32) << ImmCondBranch_offset;
+                imm_mask = ImmCondBranch_mask;
             }
             ImmBranchType::UncondBranchType => {
                 branch_imm =
-                    (checked_truncate_to_int26(offset) as u32) << IMM_UNCOND_BRANCH_OFFSET;
-                imm_mask = IMM_UNCOND_BRANCH_MASK;
+                    (checked_truncate_to_int26(offset) as u32) << ImmUncondBranch_offset;
+                imm_mask = ImmUncondBranch_mask;
             }
             ImmBranchType::TestBranchType => {
                 branch_imm =
-                    (checked_truncate_to_int14(offset) as u32) << IMM_TEST_BRANCH_OFFSET;
-                imm_mask = IMM_TEST_BRANCH_MASK;
+                    (checked_truncate_to_int14(offset) as u32) << ImmTestBranch_offset;
+                imm_mask = ImmTestBranch_mask;
             }
             ImmBranchType::UnknownBranchType => unreachable!(),
         }
@@ -602,7 +604,7 @@ impl Instruction {
         debug_assert!(self.is_adr());
         debug_assert!(Instruction::is_valid_pc_rel_offset(distance));
         let imm = imm_pc_rel_address(distance as i32);
-        let bits = self.mask(!IMM_PC_REL_MASK) | imm;
+        let bits = self.mask(!ImmPCRel_mask) | imm;
         self.set_instruction_bits(bits);
     }
 

@@ -1,8 +1,10 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::constants_arm64::*;
-use crate::codegen::arm64::register_arm64::{CPURegister, RegisterType};
+use crate::codegen::arm64::register_arm64::{padreg, CPURegister, RegisterType};
 use crate::codegen::arm64::utils_arm64::count_set_bits;
 
-pub const K_REG_LIST_SIZE_IN_BITS: i32 = 64;
+pub const kRegListSizeInBits: i32 = 64;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CPURegList {
@@ -36,9 +38,9 @@ impl CPURegList {
         last_reg: i32,
     ) -> CPURegList {
         debug_assert!(
-            ((reg_type == RegisterType::Register) && (last_reg < K_NUMBER_OF_REGISTERS))
+            ((reg_type == RegisterType::Register) && (last_reg < kNumberOfRegisters))
                 || ((reg_type == RegisterType::VRegister)
-                    && (last_reg < K_NUMBER_OF_V_REGISTERS))
+                    && (last_reg < kNumberOfVRegisters))
         );
         debug_assert!(last_reg >= first_reg);
         let mut list = (1u64 << (last_reg + 1)) - 1;
@@ -120,9 +122,14 @@ impl CPURegList {
     }
 
     pub fn align(&mut self) {
-        while (self.count() % 2) != 0 {
-            self.combine_code(PADREG_CODE);
+        if (self.count() % 2) != 0 {
+            if self.includes_alias_of(*padreg) {
+                self.remove_register(*padreg);
+            } else {
+                self.combine_register(*padreg);
+            }
         }
+        debug_assert_eq!(self.count() % 2, 0);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -137,7 +144,7 @@ impl CPURegList {
     }
 
     pub fn count(&self) -> i32 {
-        count_set_bits(self.list, K_REG_LIST_SIZE_IN_BITS)
+        count_set_bits(self.list, kRegListSizeInBits)
     }
 
     pub fn register_size_in_bits(&self) -> u32 {
@@ -185,4 +192,3 @@ impl CPURegList {
     }
 }
 
-pub const PADREG_CODE: i32 = 31;

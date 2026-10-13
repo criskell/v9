@@ -1,6 +1,8 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::assembler_arm64::Assembler;
 use crate::codegen::arm64::constants_arm64::*;
-use crate::codegen::arm64::register_arm64::XZR;
+use crate::codegen::arm64::register_arm64::xzr;
 use crate::codegen::label::Label;
 use std::collections::BTreeMap;
 
@@ -68,14 +70,14 @@ pub enum RelocInfoStatus {
     MustOmitForDuplicate,
 }
 
-pub const K_MAX_DIST_TO_POOL_32: usize = 1024 * 1024;
-pub const K_MAX_DIST_TO_POOL_64: usize = 1024 * 1024;
-pub const K_CHECK_INTERVAL: usize = 128 * K_INSTR_SIZE as usize;
-pub const K_APPROX_DIST_TO_POOL_32: usize = 64 * 1024;
-pub const K_APPROX_DIST_TO_POOL_64: usize = K_APPROX_DIST_TO_POOL_32;
-pub const K_OPPORTUNITY_DIST_TO_POOL_32: usize = 64 * 1024;
-pub const K_OPPORTUNITY_DIST_TO_POOL_64: usize = 64 * 1024;
-pub const K_APPROX_MAX_ENTRY_COUNT: usize = 512;
+pub const kMaxDistToPool32: usize = 1024 * 1024;
+pub const kMaxDistToPool64: usize = 1024 * 1024;
+pub const kCheckInterval: usize = 128 * kInstrSize as usize;
+pub const kApproxDistToPool32: usize = 64 * 1024;
+pub const kApproxDistToPool64: usize = kApproxDistToPool32;
+pub const kOpportunityDistToPool32: usize = 64 * 1024;
+pub const kOpportunityDistToPool64: usize = 64 * 1024;
+pub const kApproxMaxEntryCount: usize = 512;
 
 #[derive(Default)]
 pub struct ConstantPool {
@@ -132,7 +134,7 @@ impl ConstantPool {
         }
         self.entries.entry(key).or_default().push(offset);
 
-        if self.entry_32_count() + self.entry_64_count() > K_APPROX_MAX_ENTRY_COUNT {
+        if self.entry_32_count() + self.entry_64_count() > kApproxMaxEntryCount {
             self.set_next_check_in(1, offset);
         }
 
@@ -165,7 +167,7 @@ impl ConstantPool {
     pub fn start_block(&mut self) {
         if self.blocked_nesting == 0 {
             self.old_next_check = self.next_check;
-            self.next_check = K_MAX_INT;
+            self.next_check = kMaxInt;
         }
         self.blocked_nesting += 1;
     }
@@ -178,7 +180,7 @@ impl ConstantPool {
     }
 
     pub fn set_next_check_in(&mut self, instructions: usize, pc_offset: i32) {
-        self.next_check = pc_offset + (instructions * K_INSTR_SIZE as usize) as i32;
+        self.next_check = pc_offset + (instructions * kInstrSize as usize) as i32;
     }
 
     pub fn clear(&mut self) {
@@ -193,24 +195,24 @@ impl ConstantPool {
 
     pub fn prologue_size(&self, require_jump: Jump) -> i32 {
         let mut prologue_size = if require_jump == Jump::Required {
-            K_INSTR_SIZE as i32
+            kInstrSize as i32
         } else {
             0
         };
-        prologue_size += 2 * K_INSTR_SIZE as i32;
+        prologue_size += 2 * kInstrSize as i32;
         prologue_size
     }
 
     pub fn compute_size(&self, require_jump: Jump, require_alignment: Alignment) -> i32 {
         let size_up_to_marker = self.prologue_size(require_jump);
         let alignment = if require_alignment == Alignment::Required {
-            K_INSTR_SIZE as i32
+            kInstrSize as i32
         } else {
             0
         };
-        let size_after_marker = self.entry_32_count() as i32 * K_INT32_SIZE
+        let size_after_marker = self.entry_32_count() as i32 * kInt32Size
             + alignment
-            + self.entry_64_count() as i32 * K_INT64_SIZE;
+            + self.entry_64_count() as i32 * kInt64Size;
         size_up_to_marker + size_after_marker
     }
 
@@ -220,7 +222,7 @@ impl ConstantPool {
         pc_offset: i32,
     ) -> Alignment {
         let size_up_to_marker = self.prologue_size(require_jump);
-        if self.entry_64_count() != 0 && (pc_offset + size_up_to_marker) % K_INT64_SIZE != 0 {
+        if self.entry_64_count() != 0 && (pc_offset + size_up_to_marker) % kInt64Size != 0 {
             return Alignment::Required;
         }
         Alignment::Omitted
@@ -230,11 +232,11 @@ impl ConstantPool {
         let require_alignment =
             self.is_alignment_required_if_emitted_at(Jump::Required, pc_offset);
         let pool_end_32 = pc_offset + self.compute_size(Jump::Required, require_alignment);
-        let pool_end_64 = pool_end_32 - self.entry_32_count() as i32 * K_INT32_SIZE;
+        let pool_end_64 = pool_end_32 - self.entry_32_count() as i32 * kInt32Size;
         let entries_in_range_32 = self.entry_32_count() == 0
-            || (pool_end_32) < self.first_use_32 + K_MAX_DIST_TO_POOL_32 as i32;
+            || (pool_end_32) < self.first_use_32 + kMaxDistToPool32 as i32;
         let entries_in_range_64 = self.entry_64_count() == 0
-            || (pool_end_64) < self.first_use_64 + K_MAX_DIST_TO_POOL_64 as i32;
+            || (pool_end_64) < self.first_use_64 + kMaxDistToPool64 as i32;
         entries_in_range_32 && entries_in_range_64
     }
 
@@ -242,18 +244,18 @@ impl ConstantPool {
         if self.is_empty() {
             return false;
         }
-        if self.entry_32_count() + self.entry_64_count() > K_APPROX_MAX_ENTRY_COUNT {
+        if self.entry_32_count() + self.entry_64_count() > kApproxMaxEntryCount {
             return true;
         }
         let worst_case_size = self.compute_size(Jump::Required, Alignment::Required);
         let pool_end_32 = pc_offset as usize + margin + worst_case_size as usize;
-        let pool_end_64 = pool_end_32 - self.entry_32_count() * K_INT32_SIZE as usize;
+        let pool_end_64 = pool_end_32 - self.entry_32_count() * kInt32Size as usize;
         if self.entry_64_count() != 0 {
             let dist64 = pool_end_64 - self.first_use_64 as usize;
-            let next_check_too_late = dist64 + 2 * K_CHECK_INTERVAL >= K_MAX_DIST_TO_POOL_64;
+            let next_check_too_late = dist64 + 2 * kCheckInterval >= kMaxDistToPool64;
             let opportune_emission_without_jump =
-                require_jump == Jump::Omitted && (dist64 >= K_OPPORTUNITY_DIST_TO_POOL_64);
-            let approximate_distance_exceeded = dist64 >= K_APPROX_DIST_TO_POOL_64;
+                require_jump == Jump::Omitted && (dist64 >= kOpportunityDistToPool64);
+            let approximate_distance_exceeded = dist64 >= kApproxDistToPool64;
             if next_check_too_late
                 || opportune_emission_without_jump
                 || approximate_distance_exceeded
@@ -263,10 +265,10 @@ impl ConstantPool {
         }
         if self.entry_32_count() != 0 {
             let dist32 = pool_end_32 - self.first_use_32 as usize;
-            let next_check_too_late = dist32 + 2 * K_CHECK_INTERVAL >= K_MAX_DIST_TO_POOL_32;
+            let next_check_too_late = dist32 + 2 * kCheckInterval >= kMaxDistToPool32;
             let opportune_emission_without_jump =
-                require_jump == Jump::Omitted && (dist32 >= K_OPPORTUNITY_DIST_TO_POOL_32);
-            let approximate_distance_exceeded = dist32 >= K_APPROX_DIST_TO_POOL_32;
+                require_jump == Jump::Omitted && (dist32 >= kOpportunityDistToPool32);
+            let approximate_distance_exceeded = dist32 >= kApproxDistToPool32;
             if next_check_too_late
                 || opportune_emission_without_jump
                 || approximate_distance_exceeded
@@ -295,7 +297,7 @@ impl ConstantPool {
         {
             self.emit_and_clear(assm, require_jump);
         }
-        self.set_next_check_in(K_CHECK_INTERVAL / K_INSTR_SIZE as usize, assm.pc_offset());
+        self.set_next_check_in(kCheckInterval / kInstrSize as usize, assm.pc_offset());
     }
 
     pub fn maybe_check(&mut self, assm: &mut Assembler) {
@@ -319,7 +321,7 @@ impl ConstantPool {
 
         self.emit_prologue(assm, require_alignment);
         if require_alignment == Alignment::Required {
-            assm.align(K_INT64_SIZE);
+            assm.align(kInt64Size);
         }
         self.emit_entries(assm);
 
@@ -335,9 +337,9 @@ impl ConstantPool {
     fn emit_prologue(&self, assm: &mut Assembler, require_alignment: Alignment) {
         let marker_size = 1;
         let word_count =
-            self.compute_size(Jump::Omitted, require_alignment) / K_INT32_SIZE - marker_size;
+            self.compute_size(Jump::Omitted, require_alignment) / kInt32Size - marker_size;
         let instruction =
-            LDR_X_LIT | Assembler::imm_l_literal(word_count) | Assembler::rt_of(XZR);
+            LDR_x_lit | Assembler::imm_l_literal(word_count) | Assembler::rt_of(xzr);
         assm.emit_instruction(instruction);
         assm.emit_pool_guard();
     }

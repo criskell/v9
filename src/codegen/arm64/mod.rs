@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 pub mod assembler_arm64;
 pub mod constants_arm64;
 pub mod instructions_arm64;

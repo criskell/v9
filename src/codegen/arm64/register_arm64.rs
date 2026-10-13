@@ -1,6 +1,8 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::constants_arm64::*;
 
-pub const K_CODE_NO_REG: i32 = -1;
+pub const kCode_no_reg: i32 = -1;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RegisterType {
@@ -20,7 +22,7 @@ pub struct CPURegister {
 impl CPURegister {
     pub const fn no_reg() -> CPURegister {
         CPURegister {
-            reg_code: K_CODE_NO_REG,
+            reg_code: kCode_no_reg,
             reg_size: 0,
             reg_type: RegisterType::NoRegister,
             lane_count: 1,
@@ -43,7 +45,7 @@ impl CPURegister {
 
     #[inline]
     pub fn is_valid(self) -> bool {
-        self.reg_code != K_CODE_NO_REG
+        self.reg_code != kCode_no_reg
     }
 
     #[inline]
@@ -85,13 +87,13 @@ impl CPURegister {
     #[inline]
     pub fn is_zero(self) -> bool {
         debug_assert!(self.is_valid());
-        self.is_register() && (self.code() == K_ZERO_REG_CODE)
+        self.is_register() && (self.code() == kZeroRegCode)
     }
 
     #[inline]
     pub fn is_sp(self) -> bool {
         debug_assert!(self.is_valid());
-        self.is_register() && (self.code() == K_SP_REG_INTERNAL_CODE)
+        self.is_register() && (self.code() == kSPRegInternalCode)
     }
 
     #[inline]
@@ -242,87 +244,87 @@ impl Register {
     }
 
     pub fn x_reg_from_code(code: u32) -> Register {
-        if code as i32 == K_SP_REG_INTERNAL_CODE {
-            return SP;
+        if code as i32 == kSPRegInternalCode {
+            return sp;
         }
-        debug_assert!((code as i32) < K_NUMBER_OF_REGISTERS);
-        Register::create(code as i32, K_X_REG_SIZE_IN_BITS as u32)
+        debug_assert!((code as i32) < kNumberOfRegisters);
+        Register::create(code as i32, kXRegSizeInBits as u32)
     }
 
     pub fn w_reg_from_code(code: u32) -> Register {
-        if code as i32 == K_SP_REG_INTERNAL_CODE {
-            return WSP;
+        if code as i32 == kSPRegInternalCode {
+            return wsp;
         }
-        debug_assert!((code as i32) < K_NUMBER_OF_REGISTERS);
-        Register::create(code as i32, K_W_REG_SIZE_IN_BITS as u32)
+        debug_assert!((code as i32) < kNumberOfRegisters);
+        Register::create(code as i32, kWRegSizeInBits as u32)
     }
 
     pub fn from_code(code: i32) -> Register {
-        Register::create(code, K_X_REG_SIZE_IN_BITS as u32)
+        Register::create(code, kXRegSizeInBits as u32)
     }
 }
 
-pub const NO_REG: Register = Register::no_reg();
+pub const NoReg: Register = Register::no_reg();
 
 macro_rules! define_registers {
     ($(($w:ident, $x:ident, $code:expr)),* $(,)?) => {
         $(
-            pub const $w: Register = Register::create($code, K_W_REG_SIZE_IN_BITS as u32);
-            pub const $x: Register = Register::create($code, K_X_REG_SIZE_IN_BITS as u32);
+            pub const $w: Register = Register::create($code, kWRegSizeInBits as u32);
+            pub const $x: Register = Register::create($code, kXRegSizeInBits as u32);
         )*
     };
 }
 
 define_registers!(
-    (W0, X0, 0),
-    (W1, X1, 1),
-    (W2, X2, 2),
-    (W3, X3, 3),
-    (W4, X4, 4),
-    (W5, X5, 5),
-    (W6, X6, 6),
-    (W7, X7, 7),
-    (W8, X8, 8),
-    (W9, X9, 9),
-    (W10, X10, 10),
-    (W11, X11, 11),
-    (W12, X12, 12),
-    (W13, X13, 13),
-    (W14, X14, 14),
-    (W15, X15, 15),
-    (W16, X16, 16),
-    (W17, X17, 17),
-    (W18, X18, 18),
-    (W19, X19, 19),
-    (W20, X20, 20),
-    (W21, X21, 21),
-    (W22, X22, 22),
-    (W23, X23, 23),
-    (W24, X24, 24),
-    (W25, X25, 25),
-    (W26, X26, 26),
-    (W27, X27, 27),
-    (W28, X28, 28),
-    (W29, X29, 29),
-    (W30, X30, 30),
-    (W31, X31, 31),
+    (w0, x0, 0),
+    (w1, x1, 1),
+    (w2, x2, 2),
+    (w3, x3, 3),
+    (w4, x4, 4),
+    (w5, x5, 5),
+    (w6, x6, 6),
+    (w7, x7, 7),
+    (w8, x8, 8),
+    (w9, x9, 9),
+    (w10, x10, 10),
+    (w11, x11, 11),
+    (w12, x12, 12),
+    (w13, x13, 13),
+    (w14, x14, 14),
+    (w15, x15, 15),
+    (w16, x16, 16),
+    (w17, x17, 17),
+    (w18, x18, 18),
+    (w19, x19, 19),
+    (w20, x20, 20),
+    (w21, x21, 21),
+    (w22, x22, 22),
+    (w23, x23, 23),
+    (w24, x24, 24),
+    (w25, x25, 25),
+    (w26, x26, 26),
+    (w27, x27, 27),
+    (w28, x28, 28),
+    (w29, x29, 29),
+    (w30, x30, 30),
+    (w31, x31, 31),
 );
 
-pub const WSP: Register = Register::create(K_SP_REG_INTERNAL_CODE, K_W_REG_SIZE_IN_BITS as u32);
-pub const SP: Register = Register::create(K_SP_REG_INTERNAL_CODE, K_X_REG_SIZE_IN_BITS as u32);
+pub const wsp: Register = Register::create(kSPRegInternalCode, kWRegSizeInBits as u32);
+pub const sp: Register = Register::create(kSPRegInternalCode, kXRegSizeInBits as u32);
 
-pub const IP0: Register = X16;
-pub const IP1: Register = X17;
-pub const WIP0: Register = W16;
-pub const WIP1: Register = W17;
-pub const K_ROOT_REGISTER: Register = X26;
-pub const RR: Register = X26;
-pub const CP: Register = X27;
-pub const FP: Register = X29;
-pub const LR: Register = X30;
-pub const XZR: Register = X31;
-pub const WZR: Register = W31;
-pub const PADREG: Register = X31;
+pub const ip0: Register = x16;
+pub const ip1: Register = x17;
+pub const wip0: Register = w16;
+pub const wip1: Register = w17;
+pub const kRootRegister: Register = x26;
+pub const rr: Register = x26;
+pub const cp: Register = x27;
+pub const fp: Register = x29;
+pub const lr: Register = x30;
+pub const xzr: Register = x31;
+pub const wzr: Register = w31;
+pub const padreg: Register = x31;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct VRegister(CPURegister);
@@ -356,72 +358,72 @@ impl VRegister {
     }
 
     pub fn b_reg_from_code(code: u32) -> VRegister {
-        VRegister::create(code as i32, K_B_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, kBRegSizeInBits as u32, 1)
     }
 
     pub fn h_reg_from_code(code: u32) -> VRegister {
-        VRegister::create(code as i32, K_H_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, kHRegSizeInBits as u32, 1)
     }
 
     pub fn s_reg_from_code(code: u32) -> VRegister {
-        VRegister::create(code as i32, K_S_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, kSRegSizeInBits as u32, 1)
     }
 
     pub fn d_reg_from_code(code: u32) -> VRegister {
-        VRegister::create(code as i32, K_D_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, kDRegSizeInBits as u32, 1)
     }
 
     pub fn q_reg_from_code(code: u32) -> VRegister {
-        VRegister::create(code as i32, K_Q_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(code as i32, kQRegSizeInBits as u32, 1)
     }
 }
 
 macro_rules! define_v_registers {
     ($(($b:ident, $h:ident, $s:ident, $d:ident, $q:ident, $v:ident, $code:expr)),* $(,)?) => {
         $(
-            pub const $b: VRegister = VRegister::create($code, K_B_REG_SIZE_IN_BITS as u32, 1);
-            pub const $h: VRegister = VRegister::create($code, K_H_REG_SIZE_IN_BITS as u32, 1);
-            pub const $s: VRegister = VRegister::create($code, K_S_REG_SIZE_IN_BITS as u32, 1);
-            pub const $d: VRegister = VRegister::create($code, K_D_REG_SIZE_IN_BITS as u32, 1);
-            pub const $q: VRegister = VRegister::create($code, K_Q_REG_SIZE_IN_BITS as u32, 1);
-            pub const $v: VRegister = VRegister::create($code, K_Q_REG_SIZE_IN_BITS as u32, 1);
+            pub const $b: VRegister = VRegister::create($code, kBRegSizeInBits as u32, 1);
+            pub const $h: VRegister = VRegister::create($code, kHRegSizeInBits as u32, 1);
+            pub const $s: VRegister = VRegister::create($code, kSRegSizeInBits as u32, 1);
+            pub const $d: VRegister = VRegister::create($code, kDRegSizeInBits as u32, 1);
+            pub const $q: VRegister = VRegister::create($code, kQRegSizeInBits as u32, 1);
+            pub const $v: VRegister = VRegister::create($code, kQRegSizeInBits as u32, 1);
         )*
     };
 }
 
 define_v_registers!(
-    (B0, H0, S0, D0, Q0, V0, 0),
-    (B1, H1, S1, D1, Q1, V1, 1),
-    (B2, H2, S2, D2, Q2, V2, 2),
-    (B3, H3, S3, D3, Q3, V3, 3),
-    (B4, H4, S4, D4, Q4, V4, 4),
-    (B5, H5, S5, D5, Q5, V5, 5),
-    (B6, H6, S6, D6, Q6, V6, 6),
-    (B7, H7, S7, D7, Q7, V7, 7),
-    (B8, H8, S8, D8, Q8, V8_, 8),
-    (B9, H9, S9, D9, Q9, V9, 9),
-    (B10, H10, S10, D10, Q10, V10, 10),
-    (B11, H11, S11, D11, Q11, V11, 11),
-    (B12, H12, S12, D12, Q12, V12, 12),
-    (B13, H13, S13, D13, Q13, V13, 13),
-    (B14, H14, S14, D14, Q14, V14, 14),
-    (B15, H15, S15, D15, Q15, V15, 15),
-    (B16, H16, S16, D16, Q16, V16, 16),
-    (B17, H17, S17, D17, Q17, V17, 17),
-    (B18, H18, S18, D18, Q18, V18, 18),
-    (B19, H19, S19, D19, Q19, V19, 19),
-    (B20, H20, S20, D20, Q20, V20, 20),
-    (B21, H21, S21, D21, Q21, V21, 21),
-    (B22, H22, S22, D22, Q22, V22, 22),
-    (B23, H23, S23, D23, Q23, V23, 23),
-    (B24, H24, S24, D24, Q24, V24, 24),
-    (B25, H25, S25, D25, Q25, V25, 25),
-    (B26, H26, S26, D26, Q26, V26, 26),
-    (B27, H27, S27, D27, Q27, V27, 27),
-    (B28, H28, S28, D28, Q28, V28, 28),
-    (B29, H29, S29, D29, Q29, V29, 29),
-    (B30, H30, S30, D30, Q30, V30, 30),
-    (B31, H31, S31, D31, Q31, V31, 31),
+    (b0, h0, s0, d0, q0, v0, 0),
+    (b1, h1, s1, d1, q1, v1, 1),
+    (b2, h2, s2, d2, q2, v2, 2),
+    (b3, h3, s3, d3, q3, v3, 3),
+    (b4, h4, s4, d4, q4, v4, 4),
+    (b5, h5, s5, d5, q5, v5, 5),
+    (b6, h6, s6, d6, q6, v6, 6),
+    (b7, h7, s7, d7, q7, v7, 7),
+    (b8, h8, s8, d8, q8, v8_, 8),
+    (b9, h9, s9, d9, q9, v9, 9),
+    (b10, h10, s10, d10, q10, v10, 10),
+    (b11, h11, s11, d11, q11, v11, 11),
+    (b12, h12, s12, d12, q12, v12, 12),
+    (b13, h13, s13, d13, q13, v13, 13),
+    (b14, h14, s14, d14, q14, v14, 14),
+    (b15, h15, s15, d15, q15, v15, 15),
+    (b16, h16, s16, d16, q16, v16, 16),
+    (b17, h17, s17, d17, q17, v17, 17),
+    (b18, h18, s18, d18, q18, v18, 18),
+    (b19, h19, s19, d19, q19, v19, 19),
+    (b20, h20, s20, d20, q20, v20, 20),
+    (b21, h21, s21, d21, q21, v21, 21),
+    (b22, h22, s22, d22, q22, v22, 22),
+    (b23, h23, s23, d23, q23, v23, 23),
+    (b24, h24, s24, d24, q24, v24, 24),
+    (b25, h25, s25, d25, q25, v25, 25),
+    (b26, h26, s26, d26, q26, v26, 26),
+    (b27, h27, s27, d27, q27, v27, 27),
+    (b28, h28, s28, d28, q28, v28, 28),
+    (b29, h29, s29, d29, q29, v29, 29),
+    (b30, h30, s30, d30, q30, v30, 30),
+    (b31, h31, s31, d31, q31, v31, 31),
 );
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -515,15 +517,15 @@ pub fn scalar_format_from_format(vform: VectorFormat) -> VectorFormat {
 pub fn register_size_in_bits_from_format(vform: VectorFormat) -> u32 {
     debug_assert_ne!(vform, VectorFormat::FormatUndefined);
     match vform {
-        VectorFormat::FormatB => K_B_REG_SIZE_IN_BITS as u32,
-        VectorFormat::FormatH => K_H_REG_SIZE_IN_BITS as u32,
-        VectorFormat::FormatS => K_S_REG_SIZE_IN_BITS as u32,
-        VectorFormat::FormatD => K_D_REG_SIZE_IN_BITS as u32,
+        VectorFormat::FormatB => kBRegSizeInBits as u32,
+        VectorFormat::FormatH => kHRegSizeInBits as u32,
+        VectorFormat::FormatS => kSRegSizeInBits as u32,
+        VectorFormat::FormatD => kDRegSizeInBits as u32,
         VectorFormat::Format8B
         | VectorFormat::Format4H
         | VectorFormat::Format2S
-        | VectorFormat::Format1D => K_D_REG_SIZE_IN_BITS as u32,
-        _ => K_Q_REG_SIZE_IN_BITS as u32,
+        | VectorFormat::Format1D => kDRegSizeInBits as u32,
+        _ => kQRegSizeInBits as u32,
     }
 }
 
@@ -615,39 +617,39 @@ pub fn is_vector_format(vform: VectorFormat) -> bool {
 
 impl VRegister {
     pub fn v8b(self) -> VRegister {
-        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 8)
+        VRegister::create(self.code(), kDRegSizeInBits as u32, 8)
     }
 
     pub fn v16b(self) -> VRegister {
-        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 16)
+        VRegister::create(self.code(), kQRegSizeInBits as u32, 16)
     }
 
     pub fn v4h(self) -> VRegister {
-        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 4)
+        VRegister::create(self.code(), kDRegSizeInBits as u32, 4)
     }
 
     pub fn v8h(self) -> VRegister {
-        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 8)
+        VRegister::create(self.code(), kQRegSizeInBits as u32, 8)
     }
 
     pub fn v2s(self) -> VRegister {
-        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 2)
+        VRegister::create(self.code(), kDRegSizeInBits as u32, 2)
     }
 
     pub fn v4s(self) -> VRegister {
-        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 4)
+        VRegister::create(self.code(), kQRegSizeInBits as u32, 4)
     }
 
     pub fn v2d(self) -> VRegister {
-        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 2)
+        VRegister::create(self.code(), kQRegSizeInBits as u32, 2)
     }
 
     pub fn v1d(self) -> VRegister {
-        VRegister::create(self.code(), K_D_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(self.code(), kDRegSizeInBits as u32, 1)
     }
 
     pub fn v1q(self) -> VRegister {
-        VRegister::create(self.code(), K_Q_REG_SIZE_IN_BITS as u32, 1)
+        VRegister::create(self.code(), kQRegSizeInBits as u32, 1)
     }
 
     pub fn format(self, f: VectorFormat) -> VRegister {
@@ -712,22 +714,22 @@ impl VRegister {
 
     #[inline]
     pub fn is_lane_size_b(self) -> bool {
-        self.lane_size_in_bits() == K_B_REG_SIZE_IN_BITS as u32
+        self.lane_size_in_bits() == kBRegSizeInBits as u32
     }
 
     #[inline]
     pub fn is_lane_size_h(self) -> bool {
-        self.lane_size_in_bits() == K_H_REG_SIZE_IN_BITS as u32
+        self.lane_size_in_bits() == kHRegSizeInBits as u32
     }
 
     #[inline]
     pub fn is_lane_size_s(self) -> bool {
-        self.lane_size_in_bits() == K_S_REG_SIZE_IN_BITS as u32
+        self.lane_size_in_bits() == kSRegSizeInBits as u32
     }
 
     #[inline]
     pub fn is_lane_size_d(self) -> bool {
-        self.lane_size_in_bits() == K_D_REG_SIZE_IN_BITS as u32
+        self.lane_size_in_bits() == kDRegSizeInBits as u32
     }
 
     #[inline]
@@ -783,9 +785,9 @@ impl VRegister {
     }
 }
 
-pub const FP_ZERO: VRegister = D15;
-pub const FP_FIXED1: VRegister = D27;
-pub const FP_FIXED2: VRegister = D28;
-pub const FP_SCRATCH: VRegister = D30;
-pub const FP_SCRATCH1: VRegister = D30;
-pub const FP_SCRATCH2: VRegister = D31;
+pub const fp_zero: VRegister = d15;
+pub const fp_fixed1: VRegister = d27;
+pub const fp_fixed2: VRegister = d28;
+pub const fp_scratch: VRegister = d30;
+pub const fp_scratch1: VRegister = d30;
+pub const fp_scratch2: VRegister = d31;

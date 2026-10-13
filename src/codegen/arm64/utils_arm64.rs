@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 #[inline]
 pub fn count_leading_zeros(value: u64, width: i32) -> i32 {
     debug_assert!(crate::base::bits::is_power_of_two(width as u32) && (width <= 64));

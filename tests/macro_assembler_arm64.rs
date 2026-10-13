@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use vx::codegen::arm64::assembler_arm64::{MemOperand, Operand};
 use vx::codegen::arm64::constants_arm64::{AddrMode, Shift};
 use vx::codegen::arm64::macro_assembler_arm64::MacroAssembler;
@@ -29,60 +31,60 @@ fn run(build: impl FnOnce(&mut MacroAssembler)) -> Simulator {
 
 #[test]
 fn a_small_immediate_move_is_one_instruction() {
-    assert_eq!(assemble(|m| m.mov_immediate(X0, 1234)), vec![0xd2809a40]);
+    assert_eq!(assemble(|m| m.mov_immediate(x0, 1234)), vec![0xd2809a40]);
     assert_eq!(
-        assemble(|m| m.mov_immediate(X0, u64::MAX)),
+        assemble(|m| m.mov_immediate(x0, u64::MAX)),
         vec![0x92800000]
     );
     assert_eq!(
-        assemble(|m| m.mov_immediate(X0, 0x5555555555555555)),
+        assemble(|m| m.mov_immediate(x0, 0x5555555555555555)),
         vec![0xb200f3e0]
     );
 }
 
 #[test]
 fn a_register_move_and_a_shifted_move() {
-    assert_eq!(assemble(|m| m.mov(X0, X1)), vec![0xaa0103e0]);
-    assert_eq!(assemble(|m| m.mov(W0, W1)), vec![0x2a0103e0]);
+    assert_eq!(assemble(|m| m.mov(x0, x1)), vec![0xaa0103e0]);
+    assert_eq!(assemble(|m| m.mov(w0, w1)), vec![0x2a0103e0]);
     assert_eq!(
-        assemble(|m| m.mov(X0, Operand::with_shift(X1, Shift::Lsl, 4))),
+        assemble(|m| m.mov(x0, Operand::with_shift(x1, Shift::Lsl, 4))),
         vec![0xd37cec20]
     );
 }
 
 #[test]
 fn an_add_of_a_shifted_immediate_stays_one_instruction() {
-    assert_eq!(assemble(|m| m.add(X0, X1, 4096i64)), vec![0x91400420]);
-    assert_eq!(assemble(|m| m.sub(SP, SP, 32i64)), vec![0xd10083ff]);
-    assert_eq!(assemble(|m| m.add(SP, SP, 32i64)), vec![0x910083ff]);
+    assert_eq!(assemble(|m| m.add(x0, x1, 4096i64)), vec![0x91400420]);
+    assert_eq!(assemble(|m| m.sub(sp, sp, 32i64)), vec![0xd10083ff]);
+    assert_eq!(assemble(|m| m.add(sp, sp, 32i64)), vec![0x910083ff]);
 }
 
 #[test]
 fn an_add_of_zero_to_itself_is_elided() {
-    assert_eq!(assemble(|m| m.add(X0, X0, 0i64)), Vec::<u32>::new());
+    assert_eq!(assemble(|m| m.add(x0, x0, 0i64)), Vec::<u32>::new());
     assert_eq!(assemble(|m| m.claim(0, 8)), Vec::<u32>::new());
     assert_eq!(assemble(|m| m.drop(0, 8)), Vec::<u32>::new());
 }
 
 #[test]
 fn a_push_and_a_pop_of_one_register() {
-    assert_eq!(assemble(|m| m.push(&[X0])), vec![0xf81f8fe0]);
-    assert_eq!(assemble(|m| m.pop(&[X0])), vec![0xf84087e0]);
+    assert_eq!(assemble(|m| m.push(&[x0])), vec![0xf81f8fe0]);
+    assert_eq!(assemble(|m| m.pop(&[x0])), vec![0xf84087e0]);
 }
 
 #[test]
 fn a_push_and_a_pop_of_a_pair() {
-    assert_eq!(assemble(|m| m.push(&[X0, X1])), vec![0xa9bf03e1]);
-    assert_eq!(assemble(|m| m.pop(&[X0, X1])), vec![0xa8c107e0]);
+    assert_eq!(assemble(|m| m.push(&[x0, x1])), vec![0xa9bf03e1]);
+    assert_eq!(assemble(|m| m.pop(&[x0, x1])), vec![0xa8c107e0]);
 }
 
 #[test]
 fn a_wide_immediate_move_expands_to_several_instructions() {
     let simulator = run(|m| {
-        m.mov_immediate(X0, 0x0123456789abcdef);
-        m.mov_immediate(X1, 0xffff0000ffff0000);
-        m.mov_immediate(X2, 1);
-        m.mov_immediate(W3, 0xdeadbeef);
+        m.mov_immediate(x0, 0x0123456789abcdef);
+        m.mov_immediate(x1, 0xffff0000ffff0000);
+        m.mov_immediate(x2, 1);
+        m.mov_immediate(w3, 0xdeadbeef);
     });
     assert_eq!(simulator.xreg(0), 0x0123456789abcdef);
     assert_eq!(simulator.xreg(1), 0xffff0000ffff0000);
@@ -92,18 +94,18 @@ fn a_wide_immediate_move_expands_to_several_instructions() {
 
 #[test]
 fn an_inverted_move_is_chosen_when_it_is_shorter() {
-    let masm_count = assemble(|m| m.mov_immediate(X0, 0xffffffffffff0000)).len();
+    let masm_count = assemble(|m| m.mov_immediate(x0, 0xffffffffffff0000)).len();
     assert_eq!(masm_count, 1);
-    let simulator = run(|m| m.mov_immediate(X0, 0xffffffffffff0000));
+    let simulator = run(|m| m.mov_immediate(x0, 0xffffffffffff0000));
     assert_eq!(simulator.xreg(0), 0xffffffffffff0000);
 }
 
 #[test]
 fn an_add_of_an_immediate_too_large_for_the_field_uses_a_scratch() {
     let simulator = run(|m| {
-        m.mov_immediate(X1, 1000);
-        m.add(X0, X1, 0x123456i64);
-        m.sub(X2, X1, 0x123456i64);
+        m.mov_immediate(x1, 1000);
+        m.add(x0, x1, 0x123456i64);
+        m.sub(x2, x1, 0x123456i64);
     });
     assert_eq!(simulator.xreg(0), 1000 + 0x123456);
     assert_eq!(simulator.xreg(2), (1000i64 - 0x123456) as u64);
@@ -112,10 +114,10 @@ fn an_add_of_an_immediate_too_large_for_the_field_uses_a_scratch() {
 #[test]
 fn a_logical_immediate_that_does_not_encode_uses_a_scratch() {
     let simulator = run(|m| {
-        m.mov_immediate(X1, u64::MAX);
-        m.and_(X0, X1, 0x12345i64);
-        m.orr(X2, XZR, 0x12345i64);
-        m.eor(X3, X1, 0x12345i64);
+        m.mov_immediate(x1, u64::MAX);
+        m.and_(x0, x1, 0x12345i64);
+        m.orr(x2, xzr, 0x12345i64);
+        m.eor(x3, x1, 0x12345i64);
     });
     assert_eq!(simulator.xreg(0), 0x12345);
     assert_eq!(simulator.xreg(2), 0x12345);
@@ -125,11 +127,11 @@ fn a_logical_immediate_that_does_not_encode_uses_a_scratch() {
 #[test]
 fn the_special_cases_of_a_logical_immediate() {
     let simulator = run(|m| {
-        m.mov_immediate(X1, 0xabcd);
-        m.and_(X0, X1, 0i64);
-        m.orr(X2, X1, 0i64);
-        m.and_(X3, X1, -1i64);
-        m.eor(X4, X1, -1i64);
+        m.mov_immediate(x1, 0xabcd);
+        m.and_(x0, x1, 0i64);
+        m.orr(x2, x1, 0i64);
+        m.and_(x3, x1, -1i64);
+        m.eor(x4, x1, -1i64);
     });
     assert_eq!(simulator.xreg(0), 0);
     assert_eq!(simulator.xreg(2), 0xabcd);
@@ -140,12 +142,12 @@ fn the_special_cases_of_a_logical_immediate() {
 #[test]
 fn a_load_with_an_offset_beyond_the_field_uses_a_scratch() {
     let simulator = run(|m| {
-        m.mov_immediate(X0, 0xcafe);
-        m.sub(SP, SP, 0x200i64);
-        m.mov(X1, SP);
-        m.str(X0, MemOperand::new(X1, 300, AddrMode::Offset));
-        m.ldr(X2, MemOperand::new(X1, 300, AddrMode::Offset));
-        m.add(SP, SP, 0x200i64);
+        m.mov_immediate(x0, 0xcafe);
+        m.sub(sp, sp, 0x200i64);
+        m.mov(x1, sp);
+        m.str(x0, MemOperand::new(x1, 300, AddrMode::Offset));
+        m.ldr(x2, MemOperand::new(x1, 300, AddrMode::Offset));
+        m.add(sp, sp, 0x200i64);
     });
     assert_eq!(simulator.xreg(2), 0xcafe);
 }
@@ -153,11 +155,11 @@ fn a_load_with_an_offset_beyond_the_field_uses_a_scratch() {
 #[test]
 fn claim_and_drop_move_the_stack_pointer() {
     let simulator = run(|m| {
-        m.mov(X0, SP);
+        m.mov(x0, sp);
         m.claim(2, 8);
-        m.mov(X1, SP);
+        m.mov(x1, sp);
         m.drop(2, 8);
-        m.mov(X2, SP);
+        m.mov(x2, sp);
     });
     assert_eq!(simulator.xreg(0) - simulator.xreg(1), 16);
     assert_eq!(simulator.xreg(0), simulator.xreg(2));
@@ -166,12 +168,12 @@ fn claim_and_drop_move_the_stack_pointer() {
 #[test]
 fn a_push_and_pop_round_trip_through_the_stack() {
     let simulator = run(|m| {
-        m.mov_immediate(X0, 11);
-        m.mov_immediate(X1, 22);
-        m.push(&[X0, X1]);
-        m.mov_immediate(X0, 0);
-        m.mov_immediate(X1, 0);
-        m.pop(&[X2, X3]);
+        m.mov_immediate(x0, 11);
+        m.mov_immediate(x1, 22);
+        m.push(&[x0, x1]);
+        m.mov_immediate(x0, 0);
+        m.mov_immediate(x1, 0);
+        m.pop(&[x2, x3]);
     });
     assert_eq!(simulator.xreg(2), 22);
     assert_eq!(simulator.xreg(3), 11);
@@ -180,10 +182,10 @@ fn a_push_and_pop_round_trip_through_the_stack() {
 #[test]
 fn a_scratch_register_is_returned_when_the_scope_closes() {
     let simulator = run(|m| {
-        m.mov_immediate(X1, 1);
-        m.add(X0, X1, 0x123456i64);
-        m.add(X2, X1, 0x123456i64);
-        m.add(X3, X1, 0x123456i64);
+        m.mov_immediate(x1, 1);
+        m.add(x0, x1, 0x123456i64);
+        m.add(x2, x1, 0x123456i64);
+        m.add(x3, x1, 0x123456i64);
     });
     assert_eq!(simulator.xreg(0), 1 + 0x123456);
     assert_eq!(simulator.xreg(2), 1 + 0x123456);
@@ -193,12 +195,12 @@ fn a_scratch_register_is_returned_when_the_scope_closes() {
 #[test]
 fn an_extended_register_operand_is_expanded() {
     let simulator = run(|m| {
-        m.mov_immediate(X1, 0xff);
-        m.mov_immediate(X2, 0xabcd);
+        m.mov_immediate(x1, 0xff);
+        m.mov_immediate(x2, 0xabcd);
         m.and_(
-            X0,
-            X2,
-            Operand::with_extend(W1, vx::codegen::arm64::constants_arm64::Extend::Uxtb, 0),
+            x0,
+            x2,
+            Operand::with_extend(w1, vx::codegen::arm64::constants_arm64::Extend::Uxtb, 0),
         );
     });
     assert_eq!(simulator.xreg(0), 0xcd);
@@ -207,11 +209,11 @@ fn an_extended_register_operand_is_expanded() {
 #[test]
 fn a_comparison_through_the_macro_assembler() {
     let simulator = run(|m| {
-        m.mov_immediate(X0, 0x123456);
-        m.cmp(X0, 0x123456i64);
-        m.asm().cset(X1, vx::codegen::arm64::constants_arm64::Condition::Eq);
-        m.tst(X0, 0x123456i64);
-        m.asm().cset(X2, vx::codegen::arm64::constants_arm64::Condition::Ne);
+        m.mov_immediate(x0, 0x123456);
+        m.cmp(x0, 0x123456i64);
+        m.asm().cset(x1, vx::codegen::arm64::constants_arm64::Condition::Eq);
+        m.tst(x0, 0x123456i64);
+        m.asm().cset(x2, vx::codegen::arm64::constants_arm64::Condition::Ne);
     });
     assert_eq!(simulator.xreg(1), 1);
     assert_eq!(simulator.xreg(2), 1);

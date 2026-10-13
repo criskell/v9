@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::assembler_arm64::{Assembler, MemOperand, Operand};
 use crate::codegen::arm64::constants_arm64::*;
 use crate::codegen::arm64::register_arm64::*;
@@ -74,7 +76,7 @@ impl UseScratchRegisterScope {
     fn acquire_next_available(available: &mut CPURegList) -> CPURegister {
         assert!(!available.is_empty());
         let result = available.pop_lowest_index();
-        debug_assert!(!result.aliases(XZR.into()) && !result.aliases(SP.into()));
+        debug_assert!(!result.aliases(xzr.into()) && !result.aliases(sp.into()));
         result
     }
 }
@@ -101,11 +103,11 @@ impl MacroAssembler {
     }
 
     pub fn default_tmp_list() -> CPURegList {
-        CPURegList::new(&[IP0.into(), IP1.into()])
+        CPURegList::new(&[ip0.into(), ip1.into()])
     }
 
     pub fn default_fptmp_list() -> CPURegList {
-        CPURegList::new(&[FP_SCRATCH1.into(), FP_SCRATCH2.into()])
+        CPURegList::new(&[fp_scratch1.into(), fp_scratch2.into()])
     }
 
     pub fn tmp_list(&self) -> &CPURegList {
@@ -257,9 +259,9 @@ impl MacroAssembler {
     fn appropriate_zero_reg_for(reg: impl Into<CPURegister>) -> Register {
         let reg = reg.into();
         if reg.is_64_bits() {
-            XZR
+            xzr
         } else {
-            WZR
+            wzr
         }
     }
 
@@ -273,7 +275,7 @@ impl MacroAssembler {
             let value = if dst.is_64_bits() {
                 !(imm as u64)
             } else {
-                (!(imm as u64)) & (K_W_REG_MASK as u64)
+                (!(imm as u64)) & (kWRegMask as u64)
             };
             self.asm.movn(dst, value, -1);
             return true;
@@ -292,8 +294,8 @@ impl MacroAssembler {
 
     pub fn is_imm_movz(imm: u64, reg_size: u32) -> bool {
         debug_assert!(
-            (reg_size == K_X_REG_SIZE_IN_BITS as u32)
-                || (reg_size == K_W_REG_SIZE_IN_BITS as u32)
+            (reg_size == kXRegSizeInBits as u32)
+                || (reg_size == kWRegSizeInBits as u32)
         );
         MacroAssembler::count_set_half_words(imm, reg_size) <= 1
     }
@@ -372,7 +374,7 @@ impl MacroAssembler {
                     self.asm.sbfm(rd, rn_, non_shift_bits, high_bit)
                 }
                 Extend::Uxtx | Extend::Sxtx => {
-                    debug_assert_eq!(rn.size_in_bits(), K_X_REG_SIZE_IN_BITS as u32);
+                    debug_assert_eq!(rn.size_in_bits(), kXRegSizeInBits as u32);
                     self.asm.lsl(rd, rn_, left_shift)
                 }
                 Extend::NoExtend => unreachable!(),
@@ -492,13 +494,13 @@ impl MacroAssembler {
             let mut temps = UseScratchRegisterScope::new(self);
             let temp = temps.acquire_same_size_as(self, rn);
             if operand.is_immediate() {
-                let mode = if rd == SP {
+                let mode = if rd == sp {
                     if s == FlagsUpdate::SetFlags {
                         PreShiftImmMode::NoShift
                     } else {
                         PreShiftImmMode::LimitShiftForSP
                     }
-                } else if rn == SP {
+                } else if rn == sp {
                     PreShiftImmMode::LimitShiftForSP
                 } else {
                     PreShiftImmMode::AnyShift
@@ -531,7 +533,7 @@ impl MacroAssembler {
             }
 
             if rd.is_32_bits() {
-                immediate &= K_W_REG_MASK;
+                immediate &= kWRegMask;
             }
 
             debug_assert!(rd.is_64_bits() || is_uint32(immediate));
@@ -589,7 +591,7 @@ impl MacroAssembler {
                     .logical_immediate_for_macro(rd, rn, n, imm_s, imm_r, op);
             } else {
                 let temp = temps.acquire_same_size_as(self, rn);
-                let mode = if rn == SP {
+                let mode = if rn == sp {
                     PreShiftImmMode::NoShift
                 } else {
                     PreShiftImmMode::AnyShift
@@ -597,7 +599,7 @@ impl MacroAssembler {
                 let imm_operand = self.move_immediate_for_shifted_op(temp, immediate, mode);
                 if rd.is_sp() {
                     self.asm.logical_for_macro(temp, rn, imm_operand, op);
-                    self.asm.mov(SP, temp);
+                    self.asm.mov(sp, temp);
                 } else {
                     self.asm.logical_for_macro(rd, rn, imm_operand, op);
                 }
@@ -638,31 +640,31 @@ impl MacroAssembler {
         match count {
             1 => self
                 .asm
-                .str(src[0], MemOperand::new(SP, -size, AddrMode::PreIndex)),
+                .str(src[0], MemOperand::new(sp, -size, AddrMode::PreIndex)),
             2 => self.asm.stp(
                 src[1],
                 src[0],
-                MemOperand::new(SP, -2 * size, AddrMode::PreIndex),
+                MemOperand::new(sp, -2 * size, AddrMode::PreIndex),
             ),
             3 => {
                 self.asm.stp(
                     src[2],
                     src[1],
-                    MemOperand::new(SP, -3 * size, AddrMode::PreIndex),
+                    MemOperand::new(sp, -3 * size, AddrMode::PreIndex),
                 );
                 self.asm
-                    .str(src[0], MemOperand::new(SP, 2 * size, AddrMode::Offset));
+                    .str(src[0], MemOperand::new(sp, 2 * size, AddrMode::Offset));
             }
             4 => {
                 self.asm.stp(
                     src[3],
                     src[2],
-                    MemOperand::new(SP, -4 * size, AddrMode::PreIndex),
+                    MemOperand::new(sp, -4 * size, AddrMode::PreIndex),
                 );
                 self.asm.stp(
                     src[1],
                     src[0],
-                    MemOperand::new(SP, 2 * size, AddrMode::Offset),
+                    MemOperand::new(sp, 2 * size, AddrMode::Offset),
                 );
             }
             _ => unreachable!(),
@@ -673,31 +675,31 @@ impl MacroAssembler {
         match count {
             1 => self
                 .asm
-                .ldr(dst[0], MemOperand::new(SP, size, AddrMode::PostIndex)),
+                .ldr(dst[0], MemOperand::new(sp, size, AddrMode::PostIndex)),
             2 => self.asm.ldp(
                 dst[0],
                 dst[1],
-                MemOperand::new(SP, 2 * size, AddrMode::PostIndex),
+                MemOperand::new(sp, 2 * size, AddrMode::PostIndex),
             ),
             3 => {
                 self.asm
-                    .ldr(dst[2], MemOperand::new(SP, 2 * size, AddrMode::Offset));
+                    .ldr(dst[2], MemOperand::new(sp, 2 * size, AddrMode::Offset));
                 self.asm.ldp(
                     dst[0],
                     dst[1],
-                    MemOperand::new(SP, 3 * size, AddrMode::PostIndex),
+                    MemOperand::new(sp, 3 * size, AddrMode::PostIndex),
                 );
             }
             4 => {
                 self.asm.ldp(
                     dst[2],
                     dst[3],
-                    MemOperand::new(SP, 2 * size, AddrMode::Offset),
+                    MemOperand::new(sp, 2 * size, AddrMode::Offset),
                 );
                 self.asm.ldp(
                     dst[0],
                     dst[1],
-                    MemOperand::new(SP, 4 * size, AddrMode::PostIndex),
+                    MemOperand::new(sp, 4 * size, AddrMode::PostIndex),
                 );
             }
             _ => unreachable!(),
@@ -711,7 +713,7 @@ impl MacroAssembler {
             return;
         }
         debug_assert_eq!(size % 16, 0);
-        self.sub(SP, SP, size as i64);
+        self.sub(sp, sp, size as i64);
     }
 
     pub fn drop(&mut self, count: i64, unit_size: u64) {
@@ -721,7 +723,7 @@ impl MacroAssembler {
             return;
         }
         debug_assert_eq!(size % 16, 0);
-        self.add(SP, SP, size as i64);
+        self.add(sp, sp, size as i64);
     }
 
     pub fn ldr(&mut self, rt: impl Into<CPURegister> + Copy, addr: MemOperand) {

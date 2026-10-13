@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 pub struct AssemblerBuffer {
     buffer: Vec<u8>,
 }

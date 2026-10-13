@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use crate::codegen::arm64::constants_arm64::*;
 use crate::codegen::arm64::instructions_arm64::Instruction;
 use crate::codegen::arm64::register_arm64::*;
@@ -22,8 +24,8 @@ pub struct Operand {
 
 impl Operand {
     pub fn with_shift(reg: Register, shift: Shift, shift_amount: u32) -> Operand {
-        debug_assert!(reg.is_64_bits() || (shift_amount < K_W_REG_SIZE_IN_BITS as u32));
-        debug_assert!(reg.is_32_bits() || (shift_amount < K_X_REG_SIZE_IN_BITS as u32));
+        debug_assert!(reg.is_64_bits() || (shift_amount < kWRegSizeInBits as u32));
+        debug_assert!(reg.is_32_bits() || (shift_amount < kXRegSizeInBits as u32));
         debug_assert!(!reg.is_sp() || shift_amount == 0);
         Operand {
             immediate: 0,
@@ -52,7 +54,7 @@ impl Operand {
 
     #[inline]
     pub fn is_immediate(&self) -> bool {
-        self.reg == NO_REG
+        self.reg == NoReg
     }
 
     #[inline]
@@ -138,7 +140,7 @@ impl From<i64> for Operand {
     fn from(immediate: i64) -> Operand {
         Operand {
             immediate,
-            reg: NO_REG,
+            reg: NoReg,
             shift: Shift::NoShift,
             extend: Extend::NoExtend,
             shift_amount: 0,
@@ -168,7 +170,7 @@ impl MemOperand {
         debug_assert!(base.is_64_bits() && !base.is_zero());
         MemOperand {
             base,
-            regoffset: NO_REG,
+            regoffset: NoReg,
             offset,
             addrmode,
             shift: Shift::NoShift,
@@ -234,12 +236,12 @@ impl MemOperand {
 
     #[inline]
     pub fn is_immediate_offset(&self) -> bool {
-        (self.addrmode == AddrMode::Offset) && self.regoffset == NO_REG
+        (self.addrmode == AddrMode::Offset) && self.regoffset == NoReg
     }
 
     #[inline]
     pub fn is_register_offset(&self) -> bool {
-        (self.addrmode == AddrMode::Offset) && self.regoffset != NO_REG
+        (self.addrmode == AddrMode::Offset) && self.regoffset != NoReg
     }
 
     #[inline]
@@ -265,7 +267,7 @@ impl Default for Assembler {
 }
 
 impl Assembler {
-    pub const K_START_OF_LABEL_LINK_CHAIN: i32 = 0;
+    pub const kStartOfLabelLinkChain: i32 = 0;
 
     pub fn new() -> Assembler {
         Assembler {
@@ -286,7 +288,7 @@ impl Assembler {
 
     pub fn instruction_at(&self, offset: i32) -> Instruction {
         let offset = offset as usize;
-        let bytes = &self.base.buffer_start()[offset..offset + K_INSTR_SIZE as usize];
+        let bytes = &self.base.buffer_start()[offset..offset + kInstrSize as usize];
         Instruction::new(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
@@ -313,14 +315,14 @@ impl Assembler {
             debug_assert!(linkoffset < self.pc_offset());
             debug_assert!(
                 (linkoffset > prevlinkoffset)
-                    || (linkoffset - prevlinkoffset == Assembler::K_START_OF_LABEL_LINK_CHAIN)
+                    || (linkoffset - prevlinkoffset == Assembler::kStartOfLabelLinkChain)
             );
             debug_assert!(prevlinkoffset >= 0);
 
             link.set_imm_pc_offset_target((self.pc_offset() - linkoffset) as i64);
             self.set_instruction_at(linkoffset, link);
 
-            if linkoffset - prevlinkoffset == Assembler::K_START_OF_LABEL_LINK_CHAIN {
+            if linkoffset - prevlinkoffset == Assembler::kStartOfLabelLinkChain {
                 label.unuse();
             } else {
                 label.link_to(prevlinkoffset, Distance::Far);
@@ -340,9 +342,9 @@ impl Assembler {
         } else {
             if label.is_linked() {
                 offset = label.pos() - self.pc_offset();
-                debug_assert_ne!(offset, Assembler::K_START_OF_LABEL_LINK_CHAIN);
+                debug_assert_ne!(offset, Assembler::kStartOfLabelLinkChain);
             } else {
-                offset = Assembler::K_START_OF_LABEL_LINK_CHAIN;
+                offset = Assembler::kStartOfLabelLinkChain;
             }
             label.link_to(self.pc_offset(), Distance::Far);
         }
@@ -350,70 +352,70 @@ impl Assembler {
     }
 
     fn link_and_get_branch_instruction_offset_to(&mut self, label: &mut Label) -> i32 {
-        debug_assert_eq!(Assembler::K_START_OF_LABEL_LINK_CHAIN, 0);
+        debug_assert_eq!(Assembler::kStartOfLabelLinkChain, 0);
         let offset = self.link_and_get_byte_offset_to(label);
-        debug_assert_eq!(offset % K_INSTR_SIZE as i32, 0);
-        offset >> K_INSTR_SIZE_LOG2
+        debug_assert_eq!(offset % kInstrSize as i32, 0);
+        offset >> kInstrSizeLog2
     }
 
     fn rd(rd: impl Into<CPURegister>) -> Instr {
         let rd = rd.into();
-        debug_assert_ne!(rd.code(), K_SP_REG_INTERNAL_CODE);
-        (rd.code() as Instr) << RD_OFFSET
+        debug_assert_ne!(rd.code(), kSPRegInternalCode);
+        (rd.code() as Instr) << Rd_offset
     }
 
     fn rn(rn: impl Into<CPURegister>) -> Instr {
         let rn = rn.into();
-        debug_assert_ne!(rn.code(), K_SP_REG_INTERNAL_CODE);
-        (rn.code() as Instr) << RN_OFFSET
+        debug_assert_ne!(rn.code(), kSPRegInternalCode);
+        (rn.code() as Instr) << Rn_offset
     }
 
     fn rm(rm: impl Into<CPURegister>) -> Instr {
         let rm = rm.into();
-        debug_assert_ne!(rm.code(), K_SP_REG_INTERNAL_CODE);
-        (rm.code() as Instr) << RM_OFFSET
+        debug_assert_ne!(rm.code(), kSPRegInternalCode);
+        (rm.code() as Instr) << Rm_offset
     }
 
     fn rt(rt: impl Into<CPURegister>) -> Instr {
         let rt = rt.into();
-        debug_assert_ne!(rt.code(), K_SP_REG_INTERNAL_CODE);
-        (rt.code() as Instr) << RT_OFFSET
+        debug_assert_ne!(rt.code(), kSPRegInternalCode);
+        (rt.code() as Instr) << Rt_offset
     }
 
     fn rd_sp(rd: Register) -> Instr {
         debug_assert!(!rd.is_zero());
-        ((rd.code() as Instr) & K_REG_CODE_MASK) << RD_OFFSET
+        ((rd.code() as Instr) & kRegCodeMask) << Rd_offset
     }
 
     fn rn_sp(rn: Register) -> Instr {
         debug_assert!(!rn.is_zero());
-        ((rn.code() as Instr) & K_REG_CODE_MASK) << RN_OFFSET
+        ((rn.code() as Instr) & kRegCodeMask) << Rn_offset
     }
 
     fn flags(s: FlagsUpdate) -> Instr {
         match s {
-            FlagsUpdate::SetFlags => 1 << FLAGS_UPDATE_OFFSET,
-            FlagsUpdate::LeaveFlags => 0 << FLAGS_UPDATE_OFFSET,
+            FlagsUpdate::SetFlags => 1 << FlagsUpdate_offset,
+            FlagsUpdate::LeaveFlags => 0 << FlagsUpdate_offset,
         }
     }
 
     fn imm_uncond_branch(imm26: i32) -> Instr {
-        (checked_truncate_to_int26(imm26 as i64) as Instr) << IMM_UNCOND_BRANCH_OFFSET
+        (checked_truncate_to_int26(imm26 as i64) as Instr) << ImmUncondBranch_offset
     }
 
     fn imm_cond_branch(imm19: i32) -> Instr {
-        (checked_truncate_to_int19(imm19 as i64) as Instr) << IMM_COND_BRANCH_OFFSET
+        (checked_truncate_to_int19(imm19 as i64) as Instr) << ImmCondBranch_offset
     }
 
     fn imm_cmp_branch(imm19: i32) -> Instr {
-        (checked_truncate_to_int19(imm19 as i64) as Instr) << IMM_CMP_BRANCH_OFFSET
+        (checked_truncate_to_int19(imm19 as i64) as Instr) << ImmCmpBranch_offset
     }
 
     fn sf(rd: Register) -> Instr {
         if rd.is_64_bits() {
-            SIXTY_FOUR_BITS
+            SixtyFourBits
         } else {
-            THIRTY_TWO_BITS
+            ThirtyTwoBits
         }
     }
 
@@ -421,9 +423,9 @@ impl Assembler {
         debug_assert!(Assembler::is_imm_add_sub(imm as i64));
         let mut imm = imm;
         if is_uint12(imm as i64) {
-            imm <<= IMM_ADD_SUB_OFFSET;
+            imm <<= ImmAddSub_offset;
         } else {
-            imm = ((imm >> 12) << IMM_ADD_SUB_OFFSET) | (1 << SHIFT_ADD_SUB_OFFSET);
+            imm = ((imm >> 12) << ImmAddSub_offset) | (1 << ShiftAddSub_offset);
         }
         imm as Instr
     }
@@ -435,41 +437,41 @@ impl Assembler {
                 || shift == Shift::Asr
                 || shift == Shift::Ror
         );
-        (shift as Instr) << SHIFT_DP_OFFSET
+        (shift as Instr) << ShiftDP_offset
     }
 
     fn imm_dp_shift(amount: u32) -> Instr {
         debug_assert!(is_uint6(amount as i64));
-        amount << IMM_DP_SHIFT_OFFSET
+        amount << ImmDPShift_offset
     }
 
     fn imm_ls_unsigned(imm12: i32) -> Instr {
         debug_assert!(is_uint12(imm12 as i64));
-        (imm12 as Instr) << IMM_LS_UNSIGNED_OFFSET
+        (imm12 as Instr) << ImmLSUnsigned_offset
     }
 
     fn imm_ls(imm9: i32) -> Instr {
-        (checked_truncate_to_int9(imm9 as i64) as Instr) << IMM_LS_OFFSET
+        (checked_truncate_to_int9(imm9 as i64) as Instr) << ImmLS_offset
     }
 
     fn imm_exception(imm16: i32) -> Instr {
         debug_assert!(is_uint16(imm16 as i64));
-        (imm16 as Instr) << IMM_EXCEPTION_OFFSET
+        (imm16 as Instr) << ImmException_offset
     }
 
     fn imm_hint(imm7: i32) -> Instr {
         debug_assert!(is_uint7(imm7 as i64));
-        (imm7 as Instr) << IMM_HINT_OFFSET
+        (imm7 as Instr) << ImmHint_offset
     }
 
     fn imm_move_wide(imm: i32) -> Instr {
         debug_assert!(is_uint16(imm as i64));
-        (imm as Instr) << IMM_MOVE_WIDE_OFFSET
+        (imm as Instr) << ImmMoveWide_offset
     }
 
     fn shift_move_wide(shift: i32) -> Instr {
         debug_assert!(is_uint2(shift as i64));
-        (shift as Instr) << SHIFT_MOVE_WIDE_OFFSET
+        (shift as Instr) << ShiftMoveWide_offset
     }
 
     pub fn is_imm_add_sub(immediate: i64) -> bool {
@@ -489,9 +491,9 @@ impl Assembler {
     pub fn appropriate_zero_reg_for(reg: impl Into<CPURegister>) -> Register {
         let reg = reg.into();
         if reg.is_64_bits() {
-            XZR
+            xzr
         } else {
-            WZR
+            wzr
         }
     }
 
@@ -499,17 +501,17 @@ impl Assembler {
         let rt = rt.into();
         debug_assert!(rt.is_valid());
         if rt.is_register() {
-            return if rt.is_64_bits() { LDR_X } else { LDR_W };
+            return if rt.is_64_bits() { LDR_x } else { LDR_w };
         }
         debug_assert!(rt.is_v_register());
         match rt.size_in_bits() as i32 {
-            K_B_REG_SIZE_IN_BITS => LDR_B,
-            K_H_REG_SIZE_IN_BITS => LDR_H,
-            K_S_REG_SIZE_IN_BITS => LDR_S,
-            K_D_REG_SIZE_IN_BITS => LDR_D,
+            kBRegSizeInBits => LDR_b,
+            kHRegSizeInBits => LDR_h,
+            kSRegSizeInBits => LDR_s,
+            kDRegSizeInBits => LDR_d,
             _ => {
                 debug_assert!(rt.is_q());
-                LDR_Q
+                LDR_q
             }
         }
     }
@@ -518,26 +520,26 @@ impl Assembler {
         let rt = rt.into();
         debug_assert!(rt.is_valid());
         if rt.is_register() {
-            return if rt.is_64_bits() { STR_X } else { STR_W };
+            return if rt.is_64_bits() { STR_x } else { STR_w };
         }
         debug_assert!(rt.is_v_register());
         match rt.size_in_bits() as i32 {
-            K_B_REG_SIZE_IN_BITS => STR_B,
-            K_H_REG_SIZE_IN_BITS => STR_H,
-            K_S_REG_SIZE_IN_BITS => STR_S,
-            K_D_REG_SIZE_IN_BITS => STR_D,
+            kBRegSizeInBits => STR_b,
+            kHRegSizeInBits => STR_h,
+            kSRegSizeInBits => STR_s,
+            kDRegSizeInBits => STR_d,
             _ => {
                 debug_assert!(rt.is_q());
-                STR_Q
+                STR_q
             }
         }
     }
 
     fn calc_ls_data_size_log2(op: Instr) -> u32 {
-        let mut size_log2 = op >> LS_SIZE_OFFSET;
-        if (op & LS_VECTOR_MASK) != 0 && size_log2 == 0 && ((op & LS_OPC_MASK) >> LS_OPC_OFFSET) >= 2
+        let mut size_log2 = op >> LSSize_offset;
+        if (op & LSVector_mask) != 0 && size_log2 == 0 && ((op & LSOpc_mask) >> LSOpc_offset) >= 2
         {
-            size_log2 = K_Q_REG_SIZE_LOG2 as u32;
+            size_log2 = kQRegSizeLog2 as u32;
         }
         size_log2
     }
@@ -553,7 +555,7 @@ impl Assembler {
     }
 
     pub fn b_cond(&mut self, imm19: i32, cond: Condition) {
-        let instruction = B_COND | Assembler::imm_cond_branch(imm19) | (cond as Instr);
+        let instruction = B_cond | Assembler::imm_cond_branch(imm19) | (cond as Instr);
         self.emit(instruction);
     }
 
@@ -602,7 +604,7 @@ impl Assembler {
 
     pub fn blr(&mut self, xn: Register) {
         debug_assert!(xn.is_64_bits());
-        debug_assert_ne!(xn, XZR);
+        debug_assert_ne!(xn, xzr);
         let instruction = BLR | Assembler::rn(xn);
         self.emit(instruction);
     }
@@ -666,34 +668,34 @@ impl Assembler {
     }
 
     pub fn ldrb(&mut self, rt: Register, src: MemOperand) {
-        self.load_store(rt, src, LDRB_W);
+        self.load_store(rt, src, LDRB_w);
     }
 
     pub fn strb(&mut self, rt: Register, src: MemOperand) {
-        self.load_store(rt, src, STRB_W);
+        self.load_store(rt, src, STRB_w);
     }
 
     pub fn ldrh(&mut self, rt: Register, src: MemOperand) {
-        self.load_store(rt, src, LDRH_W);
+        self.load_store(rt, src, LDRH_w);
     }
 
     pub fn strh(&mut self, rt: Register, src: MemOperand) {
-        self.load_store(rt, src, STRH_W);
+        self.load_store(rt, src, STRH_w);
     }
 
     pub fn ldrsb(&mut self, rt: Register, src: MemOperand) {
-        let op = if rt.is_64_bits() { LDRSB_X } else { LDRSB_W };
+        let op = if rt.is_64_bits() { LDRSB_x } else { LDRSB_w };
         self.load_store(rt, src, op);
     }
 
     pub fn ldrsh(&mut self, rt: Register, src: MemOperand) {
-        let op = if rt.is_64_bits() { LDRSH_X } else { LDRSH_W };
+        let op = if rt.is_64_bits() { LDRSH_x } else { LDRSH_w };
         self.load_store(rt, src, op);
     }
 
     pub fn ldrsw(&mut self, rt: Register, src: MemOperand) {
         debug_assert!(rt.is_64_bits());
-        self.load_store(rt, src, LDRSW_X);
+        self.load_store(rt, src, LDRSW_x);
     }
 
     pub fn brk(&mut self, code: i32) {
@@ -709,7 +711,7 @@ impl Assembler {
     }
 
     pub fn hint(&mut self, code: SystemHint) {
-        let instruction = HINT | Assembler::imm_hint(code as i32) | Assembler::rt(XZR);
+        let instruction = HINT | Assembler::imm_hint(code as i32) | Assembler::rt(xzr);
         self.emit(instruction);
     }
 
@@ -719,92 +721,92 @@ impl Assembler {
 
     fn ra(ra: impl Into<CPURegister>) -> Instr {
         let ra = ra.into();
-        debug_assert_ne!(ra.code(), K_SP_REG_INTERNAL_CODE);
-        (ra.code() as Instr) << RA_OFFSET
+        debug_assert_ne!(ra.code(), kSPRegInternalCode);
+        (ra.code() as Instr) << Ra_offset
     }
 
     fn rt2(rt2: impl Into<CPURegister>) -> Instr {
         let rt2 = rt2.into();
-        debug_assert_ne!(rt2.code(), K_SP_REG_INTERNAL_CODE);
-        (rt2.code() as Instr) << RT2_OFFSET
+        debug_assert_ne!(rt2.code(), kSPRegInternalCode);
+        (rt2.code() as Instr) << Rt2_offset
     }
 
     fn cond(cond: Condition) -> Instr {
-        (cond as Instr) << CONDITION_OFFSET
+        (cond as Instr) << Condition_offset
     }
 
     fn nzcv(nzcv: u32) -> Instr {
-        ((nzcv >> FLAGS_OFFSET) & 0xf) << NZCV_OFFSET
+        ((nzcv >> Flags_offset) & 0xf) << Nzcv_offset
     }
 
     fn imm_cond_cmp(imm: u32) -> Instr {
         debug_assert!(is_uint5(imm as i64));
-        imm << IMM_COND_CMP_OFFSET
+        imm << ImmCondCmp_offset
     }
 
     fn bit_n(bitn: u32, reg_size: u32) -> Instr {
         debug_assert!(
-            (reg_size == K_W_REG_SIZE_IN_BITS as u32)
-                || (reg_size == K_X_REG_SIZE_IN_BITS as u32)
+            (reg_size == kWRegSizeInBits as u32)
+                || (reg_size == kXRegSizeInBits as u32)
         );
-        debug_assert!((reg_size == K_X_REG_SIZE_IN_BITS as u32) || (bitn == 0));
-        bitn << BIT_N_OFFSET
+        debug_assert!((reg_size == kXRegSizeInBits as u32) || (bitn == 0));
+        bitn << BitN_offset
     }
 
     fn imm_rotate(immr: u32, reg_size: u32) -> Instr {
         debug_assert!(
-            ((reg_size == K_X_REG_SIZE_IN_BITS as u32) && is_uint6(immr as i64))
-                || ((reg_size == K_W_REG_SIZE_IN_BITS as u32) && is_uint5(immr as i64))
+            ((reg_size == kXRegSizeInBits as u32) && is_uint6(immr as i64))
+                || ((reg_size == kWRegSizeInBits as u32) && is_uint5(immr as i64))
         );
-        immr << IMM_ROTATE_OFFSET
+        immr << ImmRotate_offset
     }
 
     fn imm_set_bits(imms: u32, reg_size: u32) -> Instr {
         debug_assert!(
-            (reg_size == K_W_REG_SIZE_IN_BITS as u32)
-                || (reg_size == K_X_REG_SIZE_IN_BITS as u32)
+            (reg_size == kWRegSizeInBits as u32)
+                || (reg_size == kXRegSizeInBits as u32)
         );
         debug_assert!(is_uint6(imms as i64));
         debug_assert!(
-            (reg_size == K_X_REG_SIZE_IN_BITS as u32) || is_uint6(imms as i64 + 3)
+            (reg_size == kXRegSizeInBits as u32) || is_uint6(imms as i64 + 3)
         );
-        imms << IMM_SET_BITS_OFFSET
+        imms << ImmSetBits_offset
     }
 
     fn imm_r(immr: u32, reg_size: u32) -> Instr {
         debug_assert!(
-            ((reg_size == K_X_REG_SIZE_IN_BITS as u32) && is_uint6(immr as i64))
-                || ((reg_size == K_W_REG_SIZE_IN_BITS as u32) && is_uint5(immr as i64))
+            ((reg_size == kXRegSizeInBits as u32) && is_uint6(immr as i64))
+                || ((reg_size == kWRegSizeInBits as u32) && is_uint5(immr as i64))
         );
         debug_assert!(is_uint6(immr as i64));
-        immr << IMM_R_OFFSET
+        immr << ImmR_offset
     }
 
     fn imm_s(imms: u32, reg_size: u32) -> Instr {
         debug_assert!(
-            ((reg_size == K_X_REG_SIZE_IN_BITS as u32) && is_uint6(imms as i64))
-                || ((reg_size == K_W_REG_SIZE_IN_BITS as u32) && is_uint5(imms as i64))
+            ((reg_size == kXRegSizeInBits as u32) && is_uint6(imms as i64))
+                || ((reg_size == kWRegSizeInBits as u32) && is_uint5(imms as i64))
         );
-        imms << IMM_S_OFFSET
+        imms << ImmS_offset
     }
 
     fn imm_test_branch(imm14: i32) -> Instr {
-        (checked_truncate_to_int14(imm14 as i64) as Instr) << IMM_TEST_BRANCH_OFFSET
+        (checked_truncate_to_int14(imm14 as i64) as Instr) << ImmTestBranch_offset
     }
 
     fn imm_test_branch_bit(bit_pos: u32) -> Instr {
         debug_assert!(is_uint6(bit_pos as i64));
-        let b5 = bit_pos << (IMM_TEST_BRANCH_BIT5_OFFSET - 5);
-        let b40 = bit_pos << IMM_TEST_BRANCH_BIT40_OFFSET;
-        let b5 = b5 & IMM_TEST_BRANCH_BIT5_MASK;
-        let b40 = b40 & IMM_TEST_BRANCH_BIT40_MASK;
-        b5 | b40
+        let bit5 = bit_pos << (ImmTestBranchBit5_offset - 5);
+        let bit40 = bit_pos << ImmTestBranchBit40_offset;
+        let bit5 = bit5 & ImmTestBranchBit5_mask;
+        let bit40 = bit40 & ImmTestBranchBit40_mask;
+        bit5 | bit40
     }
 
     fn imm_ls_pair(imm7: i32, size: u32) -> Instr {
         debug_assert_eq!(imm7, (imm7 >> size) << size);
         let scaled_imm7 = imm7 >> size;
-        (checked_truncate_to_int7(scaled_imm7 as i64) as Instr) << IMM_LS_PAIR_OFFSET
+        (checked_truncate_to_int7(scaled_imm7 as i64) as Instr) << ImmLSPair_offset
     }
 
     pub fn is_imm_ls_pair(offset: i64, size: u32) -> bool {
@@ -818,29 +820,29 @@ impl Assembler {
 
     fn calc_ls_pair_data_size(op: Instr) -> u32 {
         match op {
-            STP_Q | LDP_Q => K_Q_REG_SIZE_LOG2 as u32,
-            STP_X | LDP_X | STP_D | LDP_D => K_X_REG_SIZE_LOG2 as u32,
-            _ => K_W_REG_SIZE_LOG2 as u32,
+            STP_q | LDP_q => kQRegSizeLog2 as u32,
+            STP_x | LDP_x | STP_d | LDP_d => kXRegSizeLog2 as u32,
+            _ => kWRegSizeLog2 as u32,
         }
     }
 
     fn load_pair_op_for(rt: impl Into<CPURegister>, rt2: impl Into<CPURegister>) -> Instr {
-        debug_assert_eq!(STP_W | LOAD_STORE_PAIR_L_BIT, LDP_W);
-        Assembler::store_pair_op_for(rt, rt2) | LOAD_STORE_PAIR_L_BIT
+        debug_assert_eq!(STP_w | LoadStorePairLBit, LDP_w);
+        Assembler::store_pair_op_for(rt, rt2) | LoadStorePairLBit
     }
 
     fn store_pair_op_for(rt: impl Into<CPURegister>, _rt2: impl Into<CPURegister>) -> Instr {
         let rt = rt.into();
         if rt.is_register() {
-            return if rt.is_64_bits() { STP_X } else { STP_W };
+            return if rt.is_64_bits() { STP_x } else { STP_w };
         }
         debug_assert!(rt.is_v_register());
         match rt.size_in_bits() as i32 {
-            K_S_REG_SIZE_IN_BITS => STP_S,
-            K_D_REG_SIZE_IN_BITS => STP_D,
+            kSRegSizeInBits => STP_s,
+            kDRegSizeInBits => STP_d,
             _ => {
                 debug_assert!(rt.is_q());
-                STP_Q
+                STP_q
             }
         }
     }
@@ -853,7 +855,7 @@ impl Assembler {
         imm_r: &mut u32,
     ) -> bool {
         debug_assert!(
-            (width == K_W_REG_SIZE_IN_BITS as u32) || (width == K_X_REG_SIZE_IN_BITS as u32)
+            (width == kWRegSizeInBits as u32) || (width == kXRegSizeInBits as u32)
         );
 
         let mut negate = false;
@@ -864,9 +866,9 @@ impl Assembler {
             value = !value;
         }
 
-        if width == K_W_REG_SIZE_IN_BITS as u32 {
-            value <<= K_W_REG_SIZE_IN_BITS;
-            value |= value >> K_W_REG_SIZE_IN_BITS;
+        if width == kWRegSizeInBits as u32 {
+            value <<= kWRegSizeInBits;
+            value |= value >> kWRegSizeInBits;
         }
 
         let a = largest_power_of_2_divisor(value);
@@ -881,8 +883,8 @@ impl Assembler {
         let mask;
 
         if c != 0 {
-            clz_a = count_leading_zeros(a, K_X_REG_SIZE_IN_BITS);
-            let clz_c = count_leading_zeros(c, K_X_REG_SIZE_IN_BITS);
+            clz_a = count_leading_zeros(a, kXRegSizeInBits);
+            let clz_c = count_leading_zeros(c, kXRegSizeInBits);
             d = clz_a - clz_c;
             mask = (1u64 << d) - 1;
             out_n = 0;
@@ -890,7 +892,7 @@ impl Assembler {
             if a == 0 {
                 return false;
             }
-            clz_a = count_leading_zeros(a, K_X_REG_SIZE_IN_BITS);
+            clz_a = count_leading_zeros(a, kXRegSizeInBits);
             d = 64;
             mask = !0u64;
             out_n = 1;
@@ -912,7 +914,7 @@ impl Assembler {
             0x1111111111111111,
             0x5555555555555555,
         ];
-        let multiplier_idx = count_leading_zeros(d as u64, K_X_REG_SIZE_IN_BITS) - 57;
+        let multiplier_idx = count_leading_zeros(d as u64, kXRegSizeInBits) - 57;
         debug_assert!(
             (multiplier_idx >= 0) && ((multiplier_idx as usize) < MULTIPLIERS.len())
         );
@@ -926,7 +928,7 @@ impl Assembler {
         let clz_b = if b == 0 {
             -1
         } else {
-            count_leading_zeros(b, K_X_REG_SIZE_IN_BITS)
+            count_leading_zeros(b, kXRegSizeInBits)
         };
         let mut s = clz_a - clz_b;
 
@@ -961,7 +963,7 @@ impl Assembler {
             Assembler::rd_sp(rd)
         };
         let instruction = Assembler::sf(rd)
-            | LOGICAL_IMMEDIATE_FIXED
+            | LogicalImmediateFixed
             | op
             | Assembler::bit_n(n, reg_size)
             | Assembler::imm_set_bits(imm_s, reg_size)
@@ -1046,7 +1048,7 @@ impl Assembler {
 
     pub fn bfm(&mut self, rd: Register, rn: Register, immr: u32, imms: u32) {
         debug_assert_eq!(rd.size_in_bits(), rn.size_in_bits());
-        let n = Assembler::sf(rd) >> (K_SF_OFFSET - K_BITFIELD_N_OFFSET);
+        let n = Assembler::sf(rd) >> (kSFOffset - kBitfieldNOffset);
         let instruction = Assembler::sf(rd)
             | BFM
             | n
@@ -1059,7 +1061,7 @@ impl Assembler {
 
     pub fn sbfm(&mut self, rd: Register, rn: Register, immr: u32, imms: u32) {
         debug_assert!(rd.is_64_bits() || rn.is_32_bits());
-        let n = Assembler::sf(rd) >> (K_SF_OFFSET - K_BITFIELD_N_OFFSET);
+        let n = Assembler::sf(rd) >> (kSFOffset - kBitfieldNOffset);
         let instruction = Assembler::sf(rd)
             | SBFM
             | n
@@ -1072,7 +1074,7 @@ impl Assembler {
 
     pub fn ubfm(&mut self, rd: Register, rn: Register, immr: u32, imms: u32) {
         debug_assert_eq!(rd.size_in_bits(), rn.size_in_bits());
-        let n = Assembler::sf(rd) >> (K_SF_OFFSET - K_BITFIELD_N_OFFSET);
+        let n = Assembler::sf(rd) >> (kSFOffset - kBitfieldNOffset);
         let instruction = Assembler::sf(rd)
             | UBFM
             | n
@@ -1086,7 +1088,7 @@ impl Assembler {
     pub fn extr(&mut self, rd: Register, rn: Register, rm: Register, lsb: u32) {
         debug_assert_eq!(rd.size_in_bits(), rn.size_in_bits());
         debug_assert_eq!(rd.size_in_bits(), rm.size_in_bits());
-        let n = Assembler::sf(rd) >> (K_SF_OFFSET - K_BITFIELD_N_OFFSET);
+        let n = Assembler::sf(rd) >> (kSFOffset - kBitfieldNOffset);
         let instruction = Assembler::sf(rd)
             | EXTR
             | n
@@ -1266,12 +1268,12 @@ impl Assembler {
         if operand.is_immediate() {
             let immediate = operand.immediate_value();
             debug_assert!(Assembler::is_imm_conditional_compare(immediate));
-            ccmpop = CONDITIONAL_COMPARE_IMMEDIATE_FIXED
+            ccmpop = ConditionalCompareImmediateFixed
                 | op
                 | Assembler::imm_cond_cmp(immediate as u32);
         } else {
             debug_assert!(operand.is_shifted_register() && (operand.shift_amount() == 0));
-            ccmpop = CONDITIONAL_COMPARE_REGISTER_FIXED | op | Assembler::rm(operand.reg());
+            ccmpop = ConditionalCompareRegisterFixed | op | Assembler::rm(operand.reg());
         }
         let instruction = Assembler::sf(rn)
             | ccmpop
@@ -1321,7 +1323,7 @@ impl Assembler {
     }
 
     pub fn rev(&mut self, rd: Register, rn: Register) {
-        let op = if rd.is_64_bits() { REV_X } else { REV_W };
+        let op = if rd.is_64_bits() { REV_x } else { REV_w };
         self.data_processing_1_source(rd, rn, op);
     }
 
@@ -1432,43 +1434,43 @@ impl Assembler {
     pub fn smaddl(&mut self, rd: Register, rn: Register, rm: Register, ra: Register) {
         debug_assert!(rd.is_64_bits() && ra.is_64_bits());
         debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        self.data_processing_3_source(rd, rn, rm, ra, SMADDL_X);
+        self.data_processing_3_source(rd, rn, rm, ra, SMADDL_x);
     }
 
     pub fn smsubl(&mut self, rd: Register, rn: Register, rm: Register, ra: Register) {
         debug_assert!(rd.is_64_bits() && ra.is_64_bits());
         debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        self.data_processing_3_source(rd, rn, rm, ra, SMSUBL_X);
+        self.data_processing_3_source(rd, rn, rm, ra, SMSUBL_x);
     }
 
     pub fn umaddl(&mut self, rd: Register, rn: Register, rm: Register, ra: Register) {
         debug_assert!(rd.is_64_bits() && ra.is_64_bits());
         debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        self.data_processing_3_source(rd, rn, rm, ra, UMADDL_X);
+        self.data_processing_3_source(rd, rn, rm, ra, UMADDL_x);
     }
 
     pub fn umsubl(&mut self, rd: Register, rn: Register, rm: Register, ra: Register) {
         debug_assert!(rd.is_64_bits() && ra.is_64_bits());
         debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        self.data_processing_3_source(rd, rn, rm, ra, UMSUBL_X);
+        self.data_processing_3_source(rd, rn, rm, ra, UMSUBL_x);
     }
 
     pub fn smulh(&mut self, rd: Register, rn: Register, rm: Register) {
         debug_assert!(rd.is_64_bits());
         debug_assert!(rn.is_64_bits());
         debug_assert!(rm.is_64_bits());
-        self.data_processing_3_source(rd, rn, rm, XZR, SMULH_X);
+        self.data_processing_3_source(rd, rn, rm, xzr, SMULH_x);
     }
 
     pub fn umulh(&mut self, rd: Register, rn: Register, rm: Register) {
         debug_assert!(rd.is_64_bits());
         debug_assert!(rn.is_64_bits());
         debug_assert!(rm.is_64_bits());
-        self.data_processing_3_source(rd, rn, rm, XZR, UMULH_X);
+        self.data_processing_3_source(rd, rn, rm, xzr, UMULH_x);
     }
 
     pub fn tbz(&mut self, rt: Register, bit_pos: u32, imm14: i32) {
-        debug_assert!(rt.is_64_bits() || (rt.is_32_bits() && (bit_pos < K_W_REG_SIZE_IN_BITS as u32)));
+        debug_assert!(rt.is_64_bits() || (rt.is_32_bits() && (bit_pos < kWRegSizeInBits as u32)));
         let instruction = TBZ
             | Assembler::imm_test_branch_bit(bit_pos)
             | Assembler::imm_test_branch(imm14)
@@ -1482,7 +1484,7 @@ impl Assembler {
     }
 
     pub fn tbnz(&mut self, rt: Register, bit_pos: u32, imm14: i32) {
-        debug_assert!(rt.is_64_bits() || (rt.is_32_bits() && (bit_pos < K_W_REG_SIZE_IN_BITS as u32)));
+        debug_assert!(rt.is_64_bits() || (rt.is_32_bits() && (bit_pos < kWRegSizeInBits as u32)));
         let instruction = TBNZ
             | Assembler::imm_test_branch_bit(bit_pos)
             | Assembler::imm_test_branch(imm14)
@@ -1518,7 +1520,7 @@ impl Assembler {
 
     pub fn ldpsw(&mut self, rt: Register, rt2: Register, src: MemOperand) {
         debug_assert!(rt.is_64_bits());
-        self.load_store_pair(rt, rt2, src, LDPSW_X);
+        self.load_store_pair(rt, rt2, src, LDPSW_x);
     }
 
     fn load_store_pair(
@@ -1530,7 +1532,7 @@ impl Assembler {
     ) {
         let rt = rt.into();
         let rt2 = rt2.into();
-        debug_assert!(((op & LOAD_STORE_PAIR_L_BIT) == 0) || rt != rt2);
+        debug_assert!(((op & LoadStorePairLBit) == 0) || rt != rt2);
         debug_assert_eq!(rt.size_in_bits(), rt2.size_in_bits());
         debug_assert!(Assembler::is_imm_ls_pair(
             addr.offset(),
@@ -1546,16 +1548,16 @@ impl Assembler {
 
         let addrmodeop;
         if addr.is_immediate_offset() {
-            addrmodeop = LOAD_STORE_PAIR_OFFSET_FIXED;
+            addrmodeop = LoadStorePairOffsetFixed;
         } else {
             debug_assert_ne!(rt, addr.base().into());
             debug_assert_ne!(rt2, addr.base().into());
             debug_assert_ne!(addr.offset(), 0);
             if addr.is_pre_index() {
-                addrmodeop = LOAD_STORE_PAIR_PRE_INDEX_FIXED;
+                addrmodeop = LoadStorePairPreIndexFixed;
             } else {
                 debug_assert!(addr.is_post_index());
-                addrmodeop = LOAD_STORE_PAIR_POST_INDEX_FIXED;
+                addrmodeop = LoadStorePairPostIndexFixed;
             }
         }
         self.emit(addrmodeop | memop);
@@ -1571,11 +1573,11 @@ impl Assembler {
 
     fn fp_scale(scale: u32) -> Instr {
         debug_assert!(is_uint6(scale as i64));
-        scale << FP_SCALE_OFFSET
+        scale << FPScale_offset
     }
 
     fn imm_fp(imm: f64) -> Instr {
-        Assembler::fp_to_imm8(imm) << IMM_FP_OFFSET
+        Assembler::fp_to_imm8(imm) << ImmFP_offset
     }
 
     pub fn fp_to_imm8(imm: f64) -> u32 {
@@ -1654,21 +1656,21 @@ impl Assembler {
 
     pub fn fmov_from_register(&mut self, vd: VRegister, rn: Register) {
         debug_assert_eq!(vd.size_in_bits(), rn.size_in_bits());
-        let op = if vd.is_32_bits() { FMOV_SW } else { FMOV_DX };
+        let op = if vd.is_32_bits() { FMOV_sw } else { FMOV_dx };
         let instruction = op | Assembler::rd(vd) | Assembler::rn(rn);
         self.emit(instruction);
     }
 
     pub fn fmov_to_register(&mut self, rd: Register, fn_: VRegister) {
         debug_assert_eq!(rd.size_in_bits(), fn_.size_in_bits());
-        let op = if rd.is_32_bits() { FMOV_WS } else { FMOV_XD };
+        let op = if rd.is_32_bits() { FMOV_ws } else { FMOV_xd };
         let instruction = op | Assembler::rd(rd) | Assembler::rn(fn_);
         self.emit(instruction);
     }
 
     pub fn fmov_immediate(&mut self, vd: VRegister, imm: f64) {
         debug_assert!(vd.is_scalar());
-        let op = if vd.is_1d() { FMOV_D_IMM } else { FMOV_S_IMM };
+        let op = if vd.is_1d() { FMOV_d_imm } else { FMOV_s_imm };
         debug_assert!(vd.is_1d() || vd.is_1s());
         let instruction = op | Assembler::rd(vd) | Assembler::imm_fp(imm);
         self.emit(instruction);
@@ -1683,7 +1685,7 @@ impl Assembler {
 
     pub fn fcmp_zero(&mut self, fn_: VRegister, value: f64) {
         debug_assert_eq!(value, 0.0);
-        let instruction = Assembler::fp_type(fn_) | FCMP_ZERO | Assembler::rn(fn_);
+        let instruction = Assembler::fp_type(fn_) | FCMP_zero | Assembler::rn(fn_);
         self.emit(instruction);
     }
 
@@ -1691,14 +1693,14 @@ impl Assembler {
         let op;
         if vd.is_1d() {
             debug_assert!(vn.is_1s() || vn.is_1h());
-            op = if vn.is_1s() { FCVT_DS } else { FCVT_DH };
+            op = if vn.is_1s() { FCVT_ds } else { FCVT_dh };
         } else if vd.is_1s() {
             debug_assert!(vn.is_1d() || vn.is_1h());
-            op = if vn.is_1d() { FCVT_SD } else { FCVT_SH };
+            op = if vn.is_1d() { FCVT_sd } else { FCVT_sh };
         } else {
             debug_assert!(vd.is_1h());
             debug_assert!(vn.is_1d() || vn.is_1s());
-            op = if vn.is_1d() { FCVT_HD } else { FCVT_HS };
+            op = if vn.is_1d() { FCVT_hd } else { FCVT_hs };
         }
         self.fp_data_processing_1_source(vd, vn, op);
     }
@@ -1713,7 +1715,7 @@ impl Assembler {
         } else {
             Assembler::sf(rn)
                 | Assembler::fp_type(vd)
-                | SCVTF_FIXED
+                | SCVTF_fixed
                 | Assembler::fp_scale(64 - fbits)
                 | Assembler::rn(rn)
                 | Assembler::rd(vd)
@@ -1731,7 +1733,7 @@ impl Assembler {
         } else {
             Assembler::sf(rn)
                 | Assembler::fp_type(fd)
-                | UCVTF_FIXED
+                | UCVTF_fixed
                 | Assembler::fp_scale(64 - fbits)
                 | Assembler::rn(rn)
                 | Assembler::rd(fd)
@@ -1751,7 +1753,7 @@ impl Assembler {
         } else {
             Assembler::sf(rd)
                 | Assembler::fp_type(vn)
-                | FCVTZS_FIXED
+                | FCVTZS_fixed
                 | Assembler::fp_scale(64 - fbits)
                 | Assembler::rn(vn)
                 | Assembler::rd(rd)
@@ -1771,7 +1773,7 @@ impl Assembler {
         } else {
             Assembler::sf(rd)
                 | Assembler::fp_type(vn)
-                | FCVTZU_FIXED
+                | FCVTZU_fixed
                 | Assembler::fp_scale(64 - fbits)
                 | Assembler::rn(vn)
                 | Assembler::rd(rd)
@@ -1787,7 +1789,7 @@ impl Assembler {
     }
 
     pub fn fnmul(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
-        let op = if vd.is_1s() { FNMUL_S } else { FNMUL_D };
+        let op = if vd.is_1s() { FNMUL_s } else { FNMUL_d };
         let instruction = Assembler::fp_type(vd)
             | op
             | Assembler::rm(vm)
@@ -1797,22 +1799,22 @@ impl Assembler {
     }
 
     pub fn fmadd(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
-        let op = if fd.is_32_bits() { FMADD_S } else { FMADD_D };
+        let op = if fd.is_32_bits() { FMADD_s } else { FMADD_d };
         self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
     }
 
     pub fn fmsub(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
-        let op = if fd.is_32_bits() { FMSUB_S } else { FMSUB_D };
+        let op = if fd.is_32_bits() { FMSUB_s } else { FMSUB_d };
         self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
     }
 
     pub fn fnmadd(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
-        let op = if fd.is_32_bits() { FNMADD_S } else { FNMADD_D };
+        let op = if fd.is_32_bits() { FNMADD_s } else { FNMADD_d };
         self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
     }
 
     pub fn fnmsub(&mut self, fd: VRegister, fn_: VRegister, fm: VRegister, fa: VRegister) {
-        let op = if fd.is_32_bits() { FNMSUB_S } else { FNMSUB_D };
+        let op = if fd.is_32_bits() { FNMSUB_s } else { FNMSUB_d };
         self.fp_data_processing_3_source(fd, fn_, fm, fa, op);
     }
 
@@ -1825,23 +1827,23 @@ impl Assembler {
     }
 
     pub fn imm_l_literal(imm19: i32) -> Instr {
-        (checked_truncate_to_int19(imm19 as i64) as Instr) << IMM_L_LITERAL_OFFSET
+        (checked_truncate_to_int19(imm19 as i64) as Instr) << ImmLLiteral_offset
     }
 
     pub fn is_imm_l_literal(offset: i64) -> bool {
-        crate::utils::utils::is_int19(offset >> K_LOAD_LITERAL_SCALE_LOG2)
+        crate::utils::utils::is_int19(offset >> kLoadLiteralScaleLog2)
     }
 
     fn load_literal_op_for(rt: impl Into<CPURegister>) -> Instr {
         let rt = rt.into();
         if rt.is_register() {
-            return if rt.is_64_bits() { LDR_X_LIT } else { LDR_W_LIT };
+            return if rt.is_64_bits() { LDR_x_lit } else { LDR_w_lit };
         }
         debug_assert!(rt.is_v_register());
         if rt.is_64_bits() {
-            LDR_D_LIT
+            LDR_d_lit
         } else {
-            LDR_S_LIT
+            LDR_s_lit
         }
     }
 
@@ -1865,13 +1867,13 @@ impl Assembler {
     }
 
     pub fn emit_pool_guard(&mut self) {
-        let instruction = BLR | Assembler::rn(XZR);
+        let instruction = BLR | Assembler::rn(xzr);
         self.emit(instruction);
     }
 
     pub fn align(&mut self, m: i32) {
-        debug_assert_eq!(self.pc_offset() % K_INSTR_SIZE as i32, 0);
-        debug_assert!(m >= K_INSTR_SIZE as i32 && crate::base::bits::is_power_of_two(m as u32));
+        debug_assert_eq!(self.pc_offset() % kInstrSize as i32, 0);
+        debug_assert!(m >= kInstrSize as i32 && crate::base::bits::is_power_of_two(m as u32));
         while (self.pc_offset() & (m - 1)) != 0 {
             self.nop();
         }
@@ -1986,8 +1988,8 @@ impl Assembler {
 
     fn rs(rs: impl Into<CPURegister>) -> Instr {
         let rs = rs.into();
-        debug_assert_ne!(rs.code(), K_SP_REG_INTERNAL_CODE);
-        (rs.code() as Instr) << RS_OFFSET
+        debug_assert_ne!(rs.code(), kSPRegInternalCode);
+        (rs.code() as Instr) << Rs_offset
     }
 
     pub fn are_even(reg1: Register, reg2: Register) -> bool {
@@ -1995,15 +1997,15 @@ impl Assembler {
     }
 
     pub fn are_consecutive(reg1: Register, reg2: Register) -> bool {
-        (reg1.code() + 1) % K_NUMBER_OF_REGISTERS == reg2.code()
+        (reg1.code() + 1) % kNumberOfRegisters == reg2.code()
     }
 
     pub fn ldar(&mut self, rt: Register, rn: Register) {
         debug_assert!(rn.is_64_bits());
-        let op = if rt.is_32_bits() { LDAR_W } else { LDAR_X };
+        let op = if rt.is_32_bits() { LDAR_w } else { LDAR_x };
         let instruction = op
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2011,10 +2013,10 @@ impl Assembler {
 
     pub fn ldaxr(&mut self, rt: Register, rn: Register) {
         debug_assert!(rn.is_64_bits());
-        let op = if rt.is_32_bits() { LDAXR_W } else { LDAXR_X };
+        let op = if rt.is_32_bits() { LDAXR_w } else { LDAXR_x };
         let instruction = op
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2022,10 +2024,10 @@ impl Assembler {
 
     pub fn stlr(&mut self, rt: Register, rn: Register) {
         debug_assert!(rn.is_64_bits());
-        let op = if rt.is_32_bits() { STLR_W } else { STLR_X };
+        let op = if rt.is_32_bits() { STLR_w } else { STLR_x };
         let instruction = op
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2034,10 +2036,10 @@ impl Assembler {
     pub fn stlxr(&mut self, rs: Register, rt: Register, rn: Register) {
         debug_assert!(rn.is_64_bits());
         debug_assert!(rs != rt && rs != rn);
-        let op = if rt.is_32_bits() { STLXR_W } else { STLXR_X };
+        let op = if rt.is_32_bits() { STLXR_w } else { STLXR_x };
         let instruction = op
             | Assembler::rs(rs)
-            | Assembler::rt2(X31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2046,9 +2048,9 @@ impl Assembler {
     pub fn ldarb(&mut self, rt: Register, rn: Register) {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
-        let instruction = LDAR_B
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+        let instruction = LDAR_b
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2057,9 +2059,9 @@ impl Assembler {
     pub fn ldaxrb(&mut self, rt: Register, rn: Register) {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
-        let instruction = LDAXR_B
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+        let instruction = LDAXR_b
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2068,9 +2070,9 @@ impl Assembler {
     pub fn stlrb(&mut self, rt: Register, rn: Register) {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
-        let instruction = STLR_B
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+        let instruction = STLR_b
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2081,9 +2083,9 @@ impl Assembler {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
         debug_assert!(rs != rt && rs != rn);
-        let instruction = STLXR_B
+        let instruction = STLXR_b
             | Assembler::rs(rs)
-            | Assembler::rt2(X31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2092,9 +2094,9 @@ impl Assembler {
     pub fn ldarh(&mut self, rt: Register, rn: Register) {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
-        let instruction = LDAR_H
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+        let instruction = LDAR_h
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2103,9 +2105,9 @@ impl Assembler {
     pub fn ldaxrh(&mut self, rt: Register, rn: Register) {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
-        let instruction = LDAXR_H
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+        let instruction = LDAXR_h
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2114,9 +2116,9 @@ impl Assembler {
     pub fn stlrh(&mut self, rt: Register, rn: Register) {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
-        let instruction = STLR_H
-            | Assembler::rs(X31)
-            | Assembler::rt2(X31)
+        let instruction = STLR_h
+            | Assembler::rs(x31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2127,9 +2129,9 @@ impl Assembler {
         debug_assert!(rt.is_32_bits());
         debug_assert!(rn.is_64_bits());
         debug_assert!(rs != rt && rs != rn);
-        let instruction = STLXR_H
+        let instruction = STLXR_h
             | Assembler::rs(rs)
-            | Assembler::rt2(X31)
+            | Assembler::rt2(x31)
             | Assembler::rn_sp(rn)
             | Assembler::rt(rt);
         self.emit(instruction);
@@ -2177,7 +2179,7 @@ impl Assembler {
         let format;
         let mut op = vop;
         if vd.is_scalar() {
-            op |= NEON_Q | NEON_SCALAR;
+            op |= NEON_Q | NEONScalar;
             format = Assembler::s_format(vn);
         } else {
             format = Assembler::v_format(vn);
@@ -2235,17 +2237,17 @@ impl Assembler {
 
     fn imm_barrier_domain(imm2: u32) -> Instr {
         debug_assert!(is_uint2(imm2 as i64));
-        imm2 << IMM_BARRIER_DOMAIN_OFFSET
+        imm2 << ImmBarrierDomain_offset
     }
 
     fn imm_barrier_type(imm2: u32) -> Instr {
         debug_assert!(is_uint2(imm2 as i64));
-        imm2 << IMM_BARRIER_TYPE_OFFSET
+        imm2 << ImmBarrierType_offset
     }
 
     fn imm_system_register(imm15: u32) -> Instr {
         debug_assert!(crate::utils::utils::is_uintn(imm15 as i64, 15));
-        imm15 << IMM_SYSTEM_REGISTER_OFFSET
+        imm15 << ImmSystemRegister_offset
     }
 
     pub fn dmb(&mut self, domain: BarrierDomain, barrier_type: BarrierType) {
@@ -2319,7 +2321,7 @@ impl Assembler {
         let format;
         let mut op = vop;
         if vd.is_scalar() {
-            op |= NEON_Q | NEON_SCALAR;
+            op |= NEON_Q | NEONScalar;
             format = Assembler::s_format(vd);
         } else {
             format = Assembler::v_format(vd);
@@ -2336,7 +2338,7 @@ impl Assembler {
                 || (vn.is_8h() && vd.is_1h())
                 || (vn.is_4s() && vd.is_1s())
         );
-        let instruction = if (op & NEON_ACROSS_LANES_FP_F_MASK) == NEON_ACROSS_LANES_FP_FIXED {
+        let instruction = if (op & NEONAcrossLanesFPFMask) == NEONAcrossLanesFPFixed {
             Assembler::fp_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd)
         } else {
             Assembler::v_format(vn) | op | Assembler::rn(vn) | Assembler::rd(vd)
@@ -2381,9 +2383,9 @@ impl Assembler {
             l = 0;
             m = 0;
         }
-        ((h as Instr) << NEON_H_OFFSET)
-            | ((l as Instr) << NEON_L_OFFSET)
-            | ((m as Instr) << NEON_M_OFFSET)
+        ((h as Instr) << NEONH_offset)
+            | ((l as Instr) << NEONL_offset)
+            | ((m as Instr) << NEONM_offset)
     }
 
     fn neon_by_element(
@@ -2412,7 +2414,7 @@ impl Assembler {
         let mut op = vop;
         let index_num_bits = if vm.is_1h() { 3 } else { 2 };
         if vd.is_scalar() {
-            op |= NEON_SCALAR | NEON_Q;
+            op |= NEONScalar | NEON_Q;
             format = Assembler::s_format(vn);
         } else {
             format = Assembler::v_format(vn);
@@ -2451,7 +2453,7 @@ impl Assembler {
         let mut op = vop;
         let index_num_bits = if vm.is_1h() { 3 } else { 2 };
         if vd.is_scalar() {
-            op |= NEON_SCALAR | NEON_Q;
+            op |= NEONScalar | NEON_Q;
             format = Assembler::s_format(vn);
         } else {
             format = Assembler::v_format(vn);
@@ -2486,7 +2488,7 @@ impl Assembler {
         let mut op = vop;
         let index_num_bits = if vm.is_1s() { 2 } else { 1 };
         if vd.is_scalar() {
-            op |= NEON_Q | NEON_SCALAR;
+            op |= NEON_Q | NEONScalar;
         }
         let instruction = Assembler::fp_format(vd)
             | op
@@ -2509,7 +2511,7 @@ impl Assembler {
         let scalar;
         if vn.is_scalar() {
             q = NEON_Q;
-            scalar = NEON_SCALAR;
+            scalar = NEONScalar;
         } else {
             q = if vd.is_d() { 0 } else { NEON_Q };
             scalar = 0;
@@ -2595,7 +2597,7 @@ impl Assembler {
                     || (vd.is_1s() && vn.is_1d())
             );
             q = NEON_Q;
-            scalar = NEON_SCALAR;
+            scalar = NEONScalar;
         } else {
             debug_assert!(
                 (vd.is_8b() && vn.is_8h())
@@ -2621,8 +2623,8 @@ impl Assembler {
         debug_assert!(are_same_format(vd, &[vn, vm]));
         let mut op = op;
         if vd.is_4h() || vd.is_8h() {
-            op |= NEON_SZ;
-            op ^= NEON_3_SAME_HP_MASK;
+            op |= NEON_sz;
+            op ^= NEON3SameHPMask;
         }
         let instruction = Assembler::fp_format(vd)
             | op
@@ -2637,9 +2639,9 @@ impl Assembler {
         let mut op = vop;
         if vd.is_scalar() {
             debug_assert!(vd.is_1s() || vd.is_1d());
-            op |= NEON_Q | NEON_SCALAR;
+            op |= NEON_Q | NEONScalar;
         } else if vd.is_4h() || vd.is_8h() {
-            op |= NEON_SZ | NEON_2_REG_MISC_HP_FIXED;
+            op |= NEON_sz | NEON2RegMiscHPFixed;
         } else {
             debug_assert!(vd.is_2s() || vd.is_2d() || vd.is_4s());
         }
@@ -2664,7 +2666,7 @@ impl Assembler {
                     || (vd.is_1h() && vn.is_1s())
                     || (vd.is_1s() && vn.is_1d())
             );
-            op |= NEON_Q | NEON_SCALAR;
+            op |= NEON_Q | NEONScalar;
             format = Assembler::s_format(vd);
         } else {
             debug_assert!(
@@ -2707,11 +2709,11 @@ impl Assembler {
     }
 
     pub fn tbl(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
-        self.neon_table(vd, vn, vm, NEON_TBL_1V);
+        self.neon_table(vd, vn, vm, NEON_TBL_1v);
     }
 
     pub fn tbx(&mut self, vd: VRegister, vn: VRegister, vm: VRegister) {
-        self.neon_table(vd, vn, vm, NEON_TBX_1V);
+        self.neon_table(vd, vn, vm, NEON_TBX_1v);
     }
 
     pub fn shll(&mut self, vd: VRegister, vn: VRegister, shift: i32) {
@@ -2754,14 +2756,14 @@ impl Assembler {
 
     pub fn fcvtl(&mut self, vd: VRegister, vn: VRegister) {
         debug_assert!((vd.is_4s() && vn.is_4h()) || (vd.is_2d() && vn.is_2s()));
-        let format = if vd.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let format = if vd.is_2d() { 1 << NEONSize_offset } else { 0 };
         let instruction = format | NEON_FCVTL | Assembler::rn(vn) | Assembler::rd(vd);
         self.emit(instruction);
     }
 
     pub fn fcvtl2(&mut self, vd: VRegister, vn: VRegister) {
         debug_assert!((vd.is_4s() && vn.is_8h()) || (vd.is_2d() && vn.is_4s()));
-        let format = if vd.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let format = if vd.is_2d() { 1 << NEONSize_offset } else { 0 };
         let instruction =
             NEON_Q | format | NEON_FCVTL | Assembler::rn(vn) | Assembler::rd(vd);
         self.emit(instruction);
@@ -2769,25 +2771,25 @@ impl Assembler {
 
     pub fn fcvtn(&mut self, vd: VRegister, vn: VRegister) {
         debug_assert!((vn.is_4s() && vd.is_4h()) || (vn.is_2d() && vd.is_2s()));
-        let format = if vn.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let format = if vn.is_2d() { 1 << NEONSize_offset } else { 0 };
         let instruction = format | NEON_FCVTN | Assembler::rn(vn) | Assembler::rd(vd);
         self.emit(instruction);
     }
 
     pub fn fcvtn2(&mut self, vd: VRegister, vn: VRegister) {
         debug_assert!((vn.is_4s() && vd.is_8h()) || (vn.is_2d() && vd.is_4s()));
-        let format = if vn.is_2d() { 1 << NEON_SIZE_OFFSET } else { 0 };
+        let format = if vn.is_2d() { 1 << NEONSize_offset } else { 0 };
         let instruction =
             NEON_Q | format | NEON_FCVTN | Assembler::rn(vn) | Assembler::rd(vd);
         self.emit(instruction);
     }
 
     pub fn fcvtxn(&mut self, vd: VRegister, vn: VRegister) {
-        let format = 1 << NEON_SIZE_OFFSET;
+        let format = 1 << NEONSize_offset;
         if vd.is_scalar() {
             debug_assert!(vd.is_1s() && vn.is_1d());
             let instruction =
-                format | NEON_FCVTXN_SCALAR | Assembler::rn(vn) | Assembler::rd(vd);
+                format | NEON_FCVTXN_scalar | Assembler::rn(vn) | Assembler::rd(vd);
             self.emit(instruction);
         } else {
             debug_assert!(vd.is_2s() && vn.is_2d());
@@ -2798,7 +2800,7 @@ impl Assembler {
 
     pub fn fcvtxn2(&mut self, vd: VRegister, vn: VRegister) {
         debug_assert!(vd.is_4s() && vn.is_2d());
-        let format = 1 << NEON_SIZE_OFFSET;
+        let format = 1 << NEONSize_offset;
         let instruction =
             NEON_Q | format | NEON_FCVTXN | Assembler::rn(vn) | Assembler::rd(vd);
         self.emit(instruction);
@@ -2841,7 +2843,7 @@ impl Assembler {
         debug_assert!(are_same_format(vd, &[vn]));
         debug_assert!(vd.is_1s() || vd.is_1d());
         let instruction = Assembler::fp_format(vd)
-            | NEON_FRECPX_SCALAR
+            | NEON_FRECPX_scalar
             | Assembler::rn(vn)
             | Assembler::rd(vd);
         self.emit(instruction);
@@ -2894,25 +2896,25 @@ impl Assembler {
 
     fn imm_neon_ext(imm4: i32) -> Instr {
         debug_assert!(crate::utils::utils::is_uintn(imm4 as i64, 4));
-        (imm4 as Instr) << IMM_NEON_EXT_OFFSET
+        (imm4 as Instr) << ImmNEONExt_offset
     }
 
     fn imm_neon5(format: Instr, index: i32) -> Instr {
         debug_assert!(crate::utils::utils::is_uintn(index as i64, 4));
         let s = Assembler::lane_size_in_bytes_log2_from_neon_format(format) as i32;
         let imm5 = (index << (s + 1)) | (1 << s);
-        (imm5 as Instr) << IMM_NEON5_OFFSET
+        (imm5 as Instr) << ImmNEON5_offset
     }
 
     fn imm_neon4(format: Instr, index: i32) -> Instr {
         debug_assert!(crate::utils::utils::is_uintn(index as i64, 4));
         let s = Assembler::lane_size_in_bytes_log2_from_neon_format(format) as i32;
         let imm4 = index << s;
-        (imm4 as Instr) << IMM_NEON4_OFFSET
+        (imm4 as Instr) << ImmNEON4_offset
     }
 
     fn lane_size_in_bytes_log2_from_neon_format(format: Instr) -> u32 {
-        match format & NEON_FORMAT_FIELD_MASK & !NEON_Q {
+        match format & NEONFormatFieldMask & !NEON_Q {
             NEON_8B => 0,
             NEON_4H => 1,
             NEON_2S => 2,
@@ -2923,19 +2925,19 @@ impl Assembler {
 
     fn imm_neon_abcdefgh(imm8: i32) -> Instr {
         debug_assert!(crate::utils::utils::is_uintn(imm8 as i64, 8));
-        let mut instruction = (((imm8 >> 5) & 7) as Instr) << IMM_NEON_ABC_OFFSET;
-        instruction |= ((imm8 & 0x1f) as Instr) << IMM_NEON_DEFGH_OFFSET;
+        let mut instruction = (((imm8 >> 5) & 7) as Instr) << ImmNEONabc_offset;
+        instruction |= ((imm8 & 0x1f) as Instr) << ImmNEONdefgh_offset;
         instruction
     }
 
     fn neon_cmode(cmode: i32) -> Instr {
         debug_assert!(crate::utils::utils::is_uintn(cmode as i64, 4));
-        (cmode as Instr) << NEON_CMODE_OFFSET
+        (cmode as Instr) << NEONCmode_offset
     }
 
     fn neon_mod_imm_op(op: i32) -> Instr {
         debug_assert!(is_uint1(op as i64));
-        (op as Instr) << NEON_MOD_IMM_OP_OFFSET
+        (op as Instr) << NEONModImmOp_offset
     }
 
     fn neon_format_for_lane_size(lane_size: u32) -> Instr {
@@ -2969,7 +2971,7 @@ impl Assembler {
         let cmode_2;
         let mut cmode_3;
         if vd.is_8b() || vd.is_16b() {
-            debug_assert_eq!(op, NEON_MODIFIED_IMMEDIATE_MOVI);
+            debug_assert_eq!(op, NEONModifiedImmediate_MOVI);
             cmode_1 = 1;
             cmode_2 = 1;
             cmode_3 = 1;
@@ -3031,7 +3033,7 @@ impl Assembler {
             let q = if vd.is_2d() { NEON_Q } else { 0 };
             let instruction = q
                 | Assembler::neon_mod_imm_op(1)
-                | NEON_MODIFIED_IMMEDIATE_MOVI
+                | NEONModifiedImmediate_MOVI
                 | Assembler::imm_neon_abcdefgh(imm8)
                 | Assembler::neon_cmode(0xE)
                 | Assembler::rd(vd);
@@ -3042,7 +3044,7 @@ impl Assembler {
                 vd,
                 imm as i32,
                 shift_amount,
-                NEON_MODIFIED_IMMEDIATE_MOVI,
+                NEONModifiedImmediate_MOVI,
             );
         } else {
             debug_assert!(crate::utils::utils::is_uintn(imm as i64, 8));
@@ -3050,7 +3052,7 @@ impl Assembler {
                 vd,
                 imm as i32,
                 shift_amount,
-                NEON_MODIFIED_IMMEDIATE_MOVI,
+                NEONModifiedImmediate_MOVI,
             );
         }
     }
@@ -3062,14 +3064,14 @@ impl Assembler {
                 vd,
                 imm8,
                 shift_amount,
-                NEON_MODIFIED_IMMEDIATE_MVNI,
+                NEONModifiedImmediate_MVNI,
             );
         } else {
             self.neon_modified_imm_shift_msl(
                 vd,
                 imm8,
                 shift_amount,
-                NEON_MODIFIED_IMMEDIATE_MVNI,
+                NEONModifiedImmediate_MVNI,
             );
         }
     }
@@ -3118,7 +3120,7 @@ impl Assembler {
 
         if vd.is_scalar() {
             q = NEON_Q;
-            scalar = NEON_SCALAR;
+            scalar = NEONScalar;
         } else {
             debug_assert!(!vd.is_1d());
             q = if vd.is_d() { 0 } else { NEON_Q };
@@ -3251,11 +3253,11 @@ impl Assembler {
     fn load_store_struct_addr_mode_field(addr: MemOperand) -> Instr {
         let mut addr_field = Assembler::rn_sp(addr.base());
         if addr.is_post_index() {
-            addr_field |= NEON_LOAD_STORE_MULTI_STRUCT_POST_INDEX;
+            addr_field |= NEONLoadStoreMultiStructPostIndex;
             if addr.offset() == 0 {
                 addr_field |= Assembler::rm_not31(addr.regoffset());
             } else {
-                addr_field |= 0x1F << RM_OFFSET;
+                addr_field |= 0x1F << Rm_offset;
             }
         } else {
             debug_assert!(addr.is_immediate_offset() && (addr.offset() == 0));
@@ -3265,7 +3267,7 @@ impl Assembler {
 
     fn rm_not31(rm: impl Into<CPURegister>) -> Instr {
         let rm = rm.into();
-        debug_assert_ne!(rm.code(), K_SP_REG_INTERNAL_CODE);
+        debug_assert_ne!(rm.code(), kSPRegInternalCode);
         debug_assert!(!rm.is_zero());
         Assembler::rm(rm)
     }
@@ -3300,25 +3302,25 @@ impl Assembler {
         op: Instr,
     ) {
         let lane_size = vt.lane_size_in_bytes();
-        debug_assert!(lane < (K_Q_REG_SIZE as u32) / lane_size);
+        debug_assert!(lane < (kQRegSize as u32) / lane_size);
 
         let mut lane = lane * lane_size;
         if lane_size == 8 {
             lane += 1;
         }
 
-        let size = (lane << NEON_LS_SIZE_OFFSET) & NEON_LS_SIZE_MASK;
-        let s = (lane << (NEON_S_OFFSET - 2)) & NEON_S_MASK;
-        let q = (lane << (NEON_Q_OFFSET - 3)) & NEON_Q_MASK;
+        let size = (lane << NEONLSSize_offset) & NEONLSSize_mask;
+        let s = (lane << (NEONS_offset - 2)) & NEONS_mask;
+        let q = (lane << (NEONQ_offset - 3)) & NEONQ_mask;
 
         let mut instruction = op;
         match lane_size {
-            1 => instruction |= NEON_LOAD_STORE_SINGLE_B,
-            2 => instruction |= NEON_LOAD_STORE_SINGLE_H,
-            4 => instruction |= NEON_LOAD_STORE_SINGLE_S,
+            1 => instruction |= NEONLoadStoreSingle_b,
+            2 => instruction |= NEONLoadStoreSingle_h,
+            4 => instruction |= NEONLoadStoreSingle_s,
             _ => {
                 debug_assert_eq!(lane_size, 8);
-                instruction |= NEON_LOAD_STORE_SINGLE_D;
+                instruction |= NEONLoadStoreSingle_d;
             }
         }
 
@@ -3338,7 +3340,7 @@ impl Assembler {
         let format;
         let mut op = vop;
         if vd.is_scalar() {
-            op |= NEON_Q | NEON_SCALAR;
+            op |= NEON_Q | NEONScalar;
             format = Assembler::s_format(vd);
         } else {
             format = Assembler::v_format(vd);
@@ -3370,7 +3372,7 @@ impl Assembler {
                 Assembler::rd_sp(rd)
             };
             let instruction = Assembler::sf(rd)
-                | ADD_SUB_IMMEDIATE_FIXED
+                | AddSubImmediateFixed
                 | op
                 | Assembler::flags(s)
                 | Assembler::imm_add_sub(immediate as i32)
@@ -3388,14 +3390,14 @@ impl Assembler {
                     rn,
                     operand.to_extended_register(),
                     s,
-                    ADD_SUB_EXTENDED_FIXED | op,
+                    AddSubExtendedFixed | op,
                 );
             } else {
-                self.data_proc_shifted_register(rd, rn, operand, s, ADD_SUB_SHIFTED_FIXED | op);
+                self.data_proc_shifted_register(rd, rn, operand, s, AddSubShiftedFixed | op);
             }
         } else {
             debug_assert!(operand.is_extended_register());
-            self.data_proc_extended_register(rd, rn, operand, s, ADD_SUB_EXTENDED_FIXED | op);
+            self.data_proc_extended_register(rd, rn, operand, s, AddSubExtendedFixed | op);
         }
     }
 
@@ -3415,7 +3417,7 @@ impl Assembler {
                 immediate = if rd.is_64_bits() {
                     !immediate
                 } else {
-                    !immediate & K_W_REG_MASK
+                    !immediate & kWRegMask
                 };
             }
 
@@ -3436,7 +3438,7 @@ impl Assembler {
         } else {
             debug_assert!(operand.is_shifted_register());
             debug_assert_eq!(operand.reg().size_in_bits(), rd.size_in_bits());
-            let dp_op = op | LOGICAL_SHIFTED_FIXED;
+            let dp_op = op | LogicalShiftedFixed;
             self.data_proc_shifted_register(rd, rn, operand, FlagsUpdate::LeaveFlags, dp_op);
         }
     }
@@ -3487,12 +3489,12 @@ impl Assembler {
     }
 
     fn extend_mode(extend: Extend) -> Instr {
-        (extend as Instr) << EXTEND_MODE_OFFSET
+        (extend as Instr) << ExtendMode_offset
     }
 
     fn imm_extend_shift(left_shift: u32) -> Instr {
         debug_assert!(left_shift <= 4);
-        left_shift << IMM_EXTEND_SHIFT_OFFSET
+        left_shift << ImmExtendShift_offset
     }
 
     fn move_wide(&mut self, rd: Register, imm: u64, shift: i32, mov_op: Instr) {
@@ -3500,10 +3502,10 @@ impl Assembler {
         let mut shift = shift;
         if rd.is_32_bits() {
             debug_assert!(
-                ((imm >> K_W_REG_SIZE_IN_BITS) == 0)
-                    || ((imm >> (K_W_REG_SIZE_IN_BITS - 1)) == 0x1FFFFFFFF)
+                ((imm >> kWRegSizeInBits) == 0)
+                    || ((imm >> (kWRegSizeInBits - 1)) == 0x1FFFFFFFF)
             );
-            imm &= K_W_REG_MASK as u64;
+            imm &= kWRegMask as u64;
         }
 
         if shift >= 0 {
@@ -3530,7 +3532,7 @@ impl Assembler {
         debug_assert!(is_uint16(imm as i64));
 
         let instruction = Assembler::sf(rd)
-            | MOVE_WIDE_IMMEDIATE_FIXED
+            | MoveWideImmediateFixed
             | mov_op
             | Assembler::rd(rd)
             | Assembler::imm_move_wide(imm as i32)
@@ -3563,7 +3565,7 @@ impl Assembler {
             debug_assert!(
                 shift_amount == 0 || shift_amount == Assembler::calc_ls_data_size_log2(op)
             );
-            let instruction = LOAD_STORE_REGISTER_OFFSET_FIXED
+            let instruction = LoadStoreRegisterOffsetFixed
                 | memop
                 | Assembler::rm(addr.regoffset())
                 | Assembler::extend_mode(ext)
@@ -3575,12 +3577,12 @@ impl Assembler {
             let offset = addr.offset() as i32;
             if addr.is_pre_index() {
                 let instruction =
-                    LOAD_STORE_PRE_INDEX_FIXED | memop | Assembler::imm_ls(offset);
+                    LoadStorePreIndexFixed | memop | Assembler::imm_ls(offset);
                 self.emit(instruction);
             } else {
                 debug_assert!(addr.is_post_index());
                 let instruction =
-                    LOAD_STORE_POST_INDEX_FIXED | memop | Assembler::imm_ls(offset);
+                    LoadStorePostIndexFixed | memop | Assembler::imm_ls(offset);
                 self.emit(instruction);
             }
         }
@@ -3588,11 +3590,11 @@ impl Assembler {
 
     fn imm_shift_ls(shift_amount: u32) -> Instr {
         debug_assert!(is_uint1(shift_amount as i64));
-        shift_amount << IMM_SHIFT_LS_OFFSET
+        shift_amount << ImmShiftLS_offset
     }
 
     fn load_store_scaled_imm_offset(&mut self, memop: Instr, offset: i32, size: u32) {
-        let instruction = LOAD_STORE_UNSIGNED_OFFSET_FIXED
+        let instruction = LoadStoreUnsignedOffsetFixed
             | memop
             | Assembler::imm_ls_unsigned(offset >> size);
         self.emit(instruction);
@@ -3600,7 +3602,7 @@ impl Assembler {
 
     fn load_store_unscaled_imm_offset(&mut self, memop: Instr, offset: i32) {
         let instruction =
-            LOAD_STORE_UNSCALED_OFFSET_FIXED | memop | Assembler::imm_ls(offset);
+            LoadStoreUnscaledOffsetFixed | memop | Assembler::imm_ls(offset);
         self.emit(instruction);
     }
 }
@@ -3616,7 +3618,7 @@ macro_rules! define_compare_and_swap_w_x {
                     let instruction = op
                         | Assembler::rs(rs)
                         | Assembler::rt(rt)
-                        | RT2_MASK
+                        | Rt2_mask
                         | Assembler::rn_sp(src.base());
                     self.emit(instruction);
                 }
@@ -3626,10 +3628,10 @@ macro_rules! define_compare_and_swap_w_x {
 }
 
 define_compare_and_swap_w_x!(
-    (cas, CAS_X, CAS_W),
-    (casa, CASA_X, CASA_W),
-    (casl, CASL_X, CASL_W),
-    (casal, CASAL_X, CASAL_W),
+    (cas, CAS_x, CAS_w),
+    (casa, CASA_x, CASA_w),
+    (casl, CASL_x, CASL_w),
+    (casal, CASAL_x, CASAL_w),
 );
 
 macro_rules! define_compare_and_swap_w {
@@ -3641,7 +3643,7 @@ macro_rules! define_compare_and_swap_w {
                     let instruction = $op
                         | Assembler::rs(rs)
                         | Assembler::rt(rt)
-                        | RT2_MASK
+                        | Rt2_mask
                         | Assembler::rn_sp(src.base());
                     self.emit(instruction);
                 }
@@ -3681,7 +3683,7 @@ macro_rules! define_compare_and_swap_pair {
                     let instruction = op
                         | Assembler::rs(rs)
                         | Assembler::rt(rt)
-                        | RT2_MASK
+                        | Rt2_mask
                         | Assembler::rn_sp(src.base());
                     self.emit(instruction);
                 }
@@ -3691,10 +3693,10 @@ macro_rules! define_compare_and_swap_pair {
 }
 
 define_compare_and_swap_pair!(
-    (casp, CASP_X, CASP_W),
-    (caspa, CASPA_X, CASPA_W),
-    (caspl, CASPL_X, CASPL_W),
-    (caspal, CASPAL_X, CASPAL_W),
+    (casp, CASP_x, CASP_w),
+    (caspa, CASPA_x, CASPA_w),
+    (caspl, CASPL_x, CASPL_w),
+    (caspal, CASPAL_x, CASPAL_w),
 );
 
 macro_rules! define_atomic_memory_load {
@@ -3716,98 +3718,98 @@ macro_rules! define_atomic_memory_load {
 }
 
 define_atomic_memory_load!(
-    (ldadd, LDADD_X, LDADD_W),
-    (ldaddl, LDADDL_X, LDADDL_W),
+    (ldadd, LDADD_x, LDADD_w),
+    (ldaddl, LDADDL_x, LDADDL_w),
     (ldaddb, LDADDB, LDADDB),
     (ldaddlb, LDADDLB, LDADDLB),
     (ldaddh, LDADDH, LDADDH),
     (ldaddlh, LDADDLH, LDADDLH),
-    (ldadda, LDADDA_X, LDADDA_W),
-    (ldaddal, LDADDAL_X, LDADDAL_W),
+    (ldadda, LDADDA_x, LDADDA_w),
+    (ldaddal, LDADDAL_x, LDADDAL_w),
     (ldaddab, LDADDAB, LDADDAB),
     (ldaddalb, LDADDALB, LDADDALB),
     (ldaddah, LDADDAH, LDADDAH),
     (ldaddalh, LDADDALH, LDADDALH),
-    (ldclr, LDCLR_X, LDCLR_W),
-    (ldclrl, LDCLRL_X, LDCLRL_W),
+    (ldclr, LDCLR_x, LDCLR_w),
+    (ldclrl, LDCLRL_x, LDCLRL_w),
     (ldclrb, LDCLRB, LDCLRB),
     (ldclrlb, LDCLRLB, LDCLRLB),
     (ldclrh, LDCLRH, LDCLRH),
     (ldclrlh, LDCLRLH, LDCLRLH),
-    (ldclra, LDCLRA_X, LDCLRA_W),
-    (ldclral, LDCLRAL_X, LDCLRAL_W),
+    (ldclra, LDCLRA_x, LDCLRA_w),
+    (ldclral, LDCLRAL_x, LDCLRAL_w),
     (ldclrab, LDCLRAB, LDCLRAB),
     (ldclralb, LDCLRALB, LDCLRALB),
     (ldclrah, LDCLRAH, LDCLRAH),
     (ldclralh, LDCLRALH, LDCLRALH),
-    (ldeor, LDEOR_X, LDEOR_W),
-    (ldeorl, LDEORL_X, LDEORL_W),
+    (ldeor, LDEOR_x, LDEOR_w),
+    (ldeorl, LDEORL_x, LDEORL_w),
     (ldeorb, LDEORB, LDEORB),
     (ldeorlb, LDEORLB, LDEORLB),
     (ldeorh, LDEORH, LDEORH),
     (ldeorlh, LDEORLH, LDEORLH),
-    (ldeora, LDEORA_X, LDEORA_W),
-    (ldeoral, LDEORAL_X, LDEORAL_W),
+    (ldeora, LDEORA_x, LDEORA_w),
+    (ldeoral, LDEORAL_x, LDEORAL_w),
     (ldeorab, LDEORAB, LDEORAB),
     (ldeoralb, LDEORALB, LDEORALB),
     (ldeorah, LDEORAH, LDEORAH),
     (ldeoralh, LDEORALH, LDEORALH),
-    (ldset, LDSET_X, LDSET_W),
-    (ldsetl, LDSETL_X, LDSETL_W),
+    (ldset, LDSET_x, LDSET_w),
+    (ldsetl, LDSETL_x, LDSETL_w),
     (ldsetb, LDSETB, LDSETB),
     (ldsetlb, LDSETLB, LDSETLB),
     (ldseth, LDSETH, LDSETH),
     (ldsetlh, LDSETLH, LDSETLH),
-    (ldseta, LDSETA_X, LDSETA_W),
-    (ldsetal, LDSETAL_X, LDSETAL_W),
+    (ldseta, LDSETA_x, LDSETA_w),
+    (ldsetal, LDSETAL_x, LDSETAL_w),
     (ldsetab, LDSETAB, LDSETAB),
     (ldsetalb, LDSETALB, LDSETALB),
     (ldsetah, LDSETAH, LDSETAH),
     (ldsetalh, LDSETALH, LDSETALH),
-    (ldsmax, LDSMAX_X, LDSMAX_W),
-    (ldsmaxl, LDSMAXL_X, LDSMAXL_W),
+    (ldsmax, LDSMAX_x, LDSMAX_w),
+    (ldsmaxl, LDSMAXL_x, LDSMAXL_w),
     (ldsmaxb, LDSMAXB, LDSMAXB),
     (ldsmaxlb, LDSMAXLB, LDSMAXLB),
     (ldsmaxh, LDSMAXH, LDSMAXH),
     (ldsmaxlh, LDSMAXLH, LDSMAXLH),
-    (ldsmaxa, LDSMAXA_X, LDSMAXA_W),
-    (ldsmaxal, LDSMAXAL_X, LDSMAXAL_W),
+    (ldsmaxa, LDSMAXA_x, LDSMAXA_w),
+    (ldsmaxal, LDSMAXAL_x, LDSMAXAL_w),
     (ldsmaxab, LDSMAXAB, LDSMAXAB),
     (ldsmaxalb, LDSMAXALB, LDSMAXALB),
     (ldsmaxah, LDSMAXAH, LDSMAXAH),
     (ldsmaxalh, LDSMAXALH, LDSMAXALH),
-    (ldsmin, LDSMIN_X, LDSMIN_W),
-    (ldsminl, LDSMINL_X, LDSMINL_W),
+    (ldsmin, LDSMIN_x, LDSMIN_w),
+    (ldsminl, LDSMINL_x, LDSMINL_w),
     (ldsminb, LDSMINB, LDSMINB),
     (ldsminlb, LDSMINLB, LDSMINLB),
     (ldsminh, LDSMINH, LDSMINH),
     (ldsminlh, LDSMINLH, LDSMINLH),
-    (ldsmina, LDSMINA_X, LDSMINA_W),
-    (ldsminal, LDSMINAL_X, LDSMINAL_W),
+    (ldsmina, LDSMINA_x, LDSMINA_w),
+    (ldsminal, LDSMINAL_x, LDSMINAL_w),
     (ldsminab, LDSMINAB, LDSMINAB),
     (ldsminalb, LDSMINALB, LDSMINALB),
     (ldsminah, LDSMINAH, LDSMINAH),
     (ldsminalh, LDSMINALH, LDSMINALH),
-    (ldumax, LDUMAX_X, LDUMAX_W),
-    (ldumaxl, LDUMAXL_X, LDUMAXL_W),
+    (ldumax, LDUMAX_x, LDUMAX_w),
+    (ldumaxl, LDUMAXL_x, LDUMAXL_w),
     (ldumaxb, LDUMAXB, LDUMAXB),
     (ldumaxlb, LDUMAXLB, LDUMAXLB),
     (ldumaxh, LDUMAXH, LDUMAXH),
     (ldumaxlh, LDUMAXLH, LDUMAXLH),
-    (ldumaxa, LDUMAXA_X, LDUMAXA_W),
-    (ldumaxal, LDUMAXAL_X, LDUMAXAL_W),
+    (ldumaxa, LDUMAXA_x, LDUMAXA_w),
+    (ldumaxal, LDUMAXAL_x, LDUMAXAL_w),
     (ldumaxab, LDUMAXAB, LDUMAXAB),
     (ldumaxalb, LDUMAXALB, LDUMAXALB),
     (ldumaxah, LDUMAXAH, LDUMAXAH),
     (ldumaxalh, LDUMAXALH, LDUMAXALH),
-    (ldumin, LDUMIN_X, LDUMIN_W),
-    (lduminl, LDUMINL_X, LDUMINL_W),
+    (ldumin, LDUMIN_x, LDUMIN_w),
+    (lduminl, LDUMINL_x, LDUMINL_w),
     (lduminb, LDUMINB, LDUMINB),
     (lduminlb, LDUMINLB, LDUMINLB),
     (lduminh, LDUMINH, LDUMINH),
     (lduminlh, LDUMINLH, LDUMINLH),
-    (ldumina, LDUMINA_X, LDUMINA_W),
-    (lduminal, LDUMINAL_X, LDUMINAL_W),
+    (ldumina, LDUMINA_x, LDUMINA_w),
+    (lduminal, LDUMINAL_x, LDUMINAL_w),
     (lduminab, LDUMINAB, LDUMINAB),
     (lduminalb, LDUMINALB, LDUMINALB),
     (lduminah, LDUMINAH, LDUMINAH),
@@ -3879,14 +3881,14 @@ define_atomic_memory_store!(
 );
 
 define_atomic_memory_load!(
-    (swp, SWP_X, SWP_W),
-    (swpl, SWPL_X, SWPL_W),
+    (swp, SWP_x, SWP_w),
+    (swpl, SWPL_x, SWPL_w),
     (swpb, SWPB, SWPB),
     (swplb, SWPLB, SWPLB),
     (swph, SWPH, SWPH),
     (swplh, SWPLH, SWPLH),
-    (swpa, SWPA_X, SWPA_W),
-    (swpal, SWPAL_X, SWPAL_W),
+    (swpa, SWPA_x, SWPA_w),
+    (swpal, SWPAL_x, SWPAL_w),
     (swpab, SWPAB, SWPAB),
     (swpalb, SWPALB, SWPALB),
     (swpah, SWPAH, SWPAH),
@@ -4004,14 +4006,14 @@ impl Arithmetic for Register {
         let rm = operand.reg();
         debug_assert!(rd.is_64_bits());
         debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        asm.data_processing_3_source(rd, rn, rm, XZR, SMADDL_X);
+        asm.data_processing_3_source(rd, rn, rm, xzr, SMADDL_x);
     }
 
     fn umull(asm: &mut Assembler, rd: Register, rn: Register, operand: Operand) {
         let rm = operand.reg();
         debug_assert!(rd.is_64_bits());
         debug_assert!(rn.is_32_bits() && rm.is_32_bits());
-        asm.data_processing_3_source(rd, rn, rm, XZR, UMADDL_X);
+        asm.data_processing_3_source(rd, rn, rm, xzr, UMADDL_x);
     }
 }
 
@@ -4034,7 +4036,7 @@ impl Arithmetic for VRegister {
         let vm = operand.reg();
         if operand.has_lane() {
             debug_assert!(vn.is_vector());
-            asm.neon_by_element(vd, vn, vm, operand.index(), NEON_MUL_BYELEMENT);
+            asm.neon_by_element(vd, vn, vm, operand.index(), NEON_MUL_byelement);
             return;
         }
         debug_assert!(vd.is_vector() && !vd.is_lane_size_d());
@@ -4075,7 +4077,7 @@ impl Arithmetic for VRegister {
         let vm = operand.reg();
         debug_assert!(vn.is_vector() && vn.is_d());
         if operand.has_lane() {
-            asm.neon_by_element_l(vd, vn, vm, operand.index(), NEON_SMULL_BYELEMENT);
+            asm.neon_by_element_l(vd, vn, vm, operand.index(), NEON_SMULL_byelement);
             return;
         }
         asm.neon_3_different_l(vd, vn, vm, NEON_SMULL);
@@ -4085,7 +4087,7 @@ impl Arithmetic for VRegister {
         let vm = operand.reg();
         debug_assert!(vn.is_vector() && vn.is_d());
         if operand.has_lane() {
-            asm.neon_by_element_l(vd, vn, vm, operand.index(), NEON_UMULL_BYELEMENT);
+            asm.neon_by_element_l(vd, vn, vm, operand.index(), NEON_UMULL_byelement);
             return;
         }
         asm.neon_3_different_l(vd, vn, vm, NEON_UMULL);
@@ -4329,13 +4331,13 @@ macro_rules! define_neon_dual_3_same {
 }
 
 define_neon_dual_3_same!(
-    (mla, NEON_MLA, NEON_MLA_BYELEMENT, vd, vn, vm,
+    (mla, NEON_MLA, NEON_MLA_byelement, vd, vn, vm,
      vd.is_vector() && !vd.is_lane_size_d(), vn.is_vector()),
-    (mls, NEON_MLS, NEON_MLS_BYELEMENT, vd, vn, vm,
+    (mls, NEON_MLS, NEON_MLS_byelement, vd, vn, vm,
      vd.is_vector() && !vd.is_lane_size_d(), vn.is_vector()),
-    (sqdmulh, NEON_SQDMULH, NEON_SQDMULH_BYELEMENT, vd, vn, vm,
+    (sqdmulh, NEON_SQDMULH, NEON_SQDMULH_byelement, vd, vn, vm,
      vd.is_lane_size_h() || vd.is_lane_size_s(), true),
-    (sqrdmulh, NEON_SQRDMULH, NEON_SQRDMULH_BYELEMENT, vd, vn, vm,
+    (sqrdmulh, NEON_SQRDMULH, NEON_SQRDMULH_byelement, vd, vn, vm,
      vd.is_lane_size_h() || vd.is_lane_size_s(), true),
 );
 
@@ -4366,37 +4368,37 @@ macro_rules! define_neon_dual_3_different_l {
 }
 
 define_neon_dual_3_different_l!(
-    (smlal, NEON_SMLAL, NEON_SMLAL_BYELEMENT, vd, vn, vm,
+    (smlal, NEON_SMLAL, NEON_SMLAL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
-    (smlal2, NEON_SMLAL2, NEON_SMLAL_BYELEMENT, vd, vn, vm,
+    (smlal2, NEON_SMLAL2, NEON_SMLAL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
-    (umlal, NEON_UMLAL, NEON_UMLAL_BYELEMENT, vd, vn, vm,
+    (umlal, NEON_UMLAL, NEON_UMLAL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
-    (umlal2, NEON_UMLAL2, NEON_UMLAL_BYELEMENT, vd, vn, vm,
+    (umlal2, NEON_UMLAL2, NEON_UMLAL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
-    (smlsl, NEON_SMLSL, NEON_SMLSL_BYELEMENT, vd, vn, vm,
+    (smlsl, NEON_SMLSL, NEON_SMLSL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
-    (smlsl2, NEON_SMLSL2, NEON_SMLSL_BYELEMENT, vd, vn, vm,
+    (smlsl2, NEON_SMLSL2, NEON_SMLSL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
-    (umlsl, NEON_UMLSL, NEON_UMLSL_BYELEMENT, vd, vn, vm,
+    (umlsl, NEON_UMLSL, NEON_UMLSL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_d(), vn.is_vector() && vn.is_d()),
-    (umlsl2, NEON_UMLSL2, NEON_UMLSL_BYELEMENT, vd, vn, vm,
+    (umlsl2, NEON_UMLSL2, NEON_UMLSL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
-    (smull2, NEON_SMULL2, NEON_SMULL_BYELEMENT, vd, vn, vm,
+    (smull2, NEON_SMULL2, NEON_SMULL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
-    (umull2, NEON_UMULL2, NEON_UMULL_BYELEMENT, vd, vn, vm,
+    (umull2, NEON_UMULL2, NEON_UMULL_byelement, vd, vn, vm,
      vn.is_vector() && vn.is_q(), vn.is_vector() && vn.is_q()),
-    (sqdmull, NEON_SQDMULL, NEON_SQDMULL_BYELEMENT, vd, vn, vm,
+    (sqdmull, NEON_SQDMULL, NEON_SQDMULL_byelement, vd, vn, vm,
      vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s(), vn.is_scalar() || vn.is_d()),
-    (sqdmull2, NEON_SQDMULL2, NEON_SQDMULL_BYELEMENT, vd, vn, vm,
+    (sqdmull2, NEON_SQDMULL2, NEON_SQDMULL_byelement, vd, vn, vm,
      vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s(), vn.is_vector() && vn.is_q()),
-    (sqdmlal, NEON_SQDMLAL, NEON_SQDMLAL_BYELEMENT, vd, vn, vm,
+    (sqdmlal, NEON_SQDMLAL, NEON_SQDMLAL_byelement, vd, vn, vm,
      vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s(), vn.is_scalar() || vn.is_d()),
-    (sqdmlal2, NEON_SQDMLAL2, NEON_SQDMLAL_BYELEMENT, vd, vn, vm,
+    (sqdmlal2, NEON_SQDMLAL2, NEON_SQDMLAL_byelement, vd, vn, vm,
      vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s(), vn.is_vector() && vn.is_q()),
-    (sqdmlsl, NEON_SQDMLSL, NEON_SQDMLSL_BYELEMENT, vd, vn, vm,
+    (sqdmlsl, NEON_SQDMLSL, NEON_SQDMLSL_byelement, vd, vn, vm,
      vn.is_1h() || vn.is_1s() || vn.is_4h() || vn.is_2s(), vn.is_scalar() || vn.is_d()),
-    (sqdmlsl2, NEON_SQDMLSL2, NEON_SQDMLSL_BYELEMENT, vd, vn, vm,
+    (sqdmlsl2, NEON_SQDMLSL2, NEON_SQDMLSL_byelement, vd, vn, vm,
      vn.is_1h() || vn.is_1s() || vn.is_8h() || vn.is_4s(), vn.is_vector() && vn.is_q()),
 );
 
@@ -4432,7 +4434,7 @@ macro_rules! define_neon_dual_fp {
 }
 
 define_neon_dual_fp!(
-    (fmul, FMUL, NEON_FMUL, NEON_FMUL_BYELEMENT),
+    (fmul, FMUL, NEON_FMUL, NEON_FMUL_byelement),
 );
 
 macro_rules! define_neon_fp_by_element {
@@ -4454,8 +4456,8 @@ macro_rules! define_neon_fp_by_element {
 }
 
 define_neon_fp_by_element!(
-    (fmla, NEON_FMLA_BYELEMENT),
-    (fmls, NEON_FMLS_BYELEMENT),
+    (fmla, NEON_FMLA_byelement),
+    (fmls, NEON_FMLS_byelement),
 );
 
 macro_rules! define_neon_shift_left {
@@ -4571,11 +4573,11 @@ impl NeonShift for VRegister {
 
 impl NeonShift for i32 {
     fn sqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, shift: i32) {
-        asm.neon_shift_left_immediate(vd, vn, shift, NEON_SQSHL_IMM);
+        asm.neon_shift_left_immediate(vd, vn, shift, NEON_SQSHL_imm);
     }
 
     fn uqshl(asm: &mut Assembler, vd: VRegister, vn: VRegister, shift: i32) {
-        asm.neon_shift_left_immediate(vd, vn, shift, NEON_UQSHL_IMM);
+        asm.neon_shift_left_immediate(vd, vn, shift, NEON_UQSHL_imm);
     }
 }
 
@@ -4620,14 +4622,14 @@ define_neon_fp_3_same!(
     (fmaxnm, NEON_FMAXNM, FMAXNM),
     (fmin, NEON_FMIN, FMIN),
     (fminnm, NEON_FMINNM, FMINNM),
-    (frecps, NEON_FRECPS, NEON_FRECPS_SCALAR),
-    (frsqrts, NEON_FRSQRTS, NEON_FRSQRTS_SCALAR),
-    (fabd, NEON_FABD, NEON_FABD_SCALAR),
-    (facge, NEON_FACGE, NEON_FACGE_SCALAR),
-    (facgt, NEON_FACGT, NEON_FACGT_SCALAR),
-    (fcmeq, NEON_FCMEQ, NEON_FCMEQ_SCALAR),
-    (fcmge, NEON_FCMGE, NEON_FCMGE_SCALAR),
-    (fcmgt, NEON_FCMGT, NEON_FCMGT_SCALAR),
+    (frecps, NEON_FRECPS, NEON_FRECPS_scalar),
+    (frsqrts, NEON_FRSQRTS, NEON_FRSQRTS_scalar),
+    (fabd, NEON_FABD, NEON_FABD_scalar),
+    (facge, NEON_FACGE, NEON_FACGE_scalar),
+    (facgt, NEON_FACGT, NEON_FACGT_scalar),
+    (fcmeq, NEON_FCMEQ, NEON_FCMEQ_scalar),
+    (fcmge, NEON_FCMGE, NEON_FCMGE_scalar),
+    (fcmgt, NEON_FCMGT, NEON_FCMGT_scalar),
 );
 
 macro_rules! define_neon_fp_3_same_vector_only {
@@ -4672,9 +4674,9 @@ macro_rules! define_neon_fp_2_reg_misc {
 }
 
 define_neon_fp_2_reg_misc!(
-    (fabs, NEON_FABS_V, FABS),
-    (fneg, NEON_FNEG_V, FNEG),
-    (fsqrt, NEON_FSQRT_V, FSQRT),
+    (fabs, NEON_FABS, FABS),
+    (fneg, NEON_FNEG, FNEG),
+    (fsqrt, NEON_FSQRT, FSQRT),
     (frintn, NEON_FRINTN, FRINTN),
     (frinta, NEON_FRINTA, FRINTA),
     (frintp, NEON_FRINTP, FRINTP),
@@ -4682,8 +4684,8 @@ define_neon_fp_2_reg_misc!(
     (frintx, NEON_FRINTX, FRINTX),
     (frintz, NEON_FRINTZ, FRINTZ),
     (frinti, NEON_FRINTI, FRINTI),
-    (frsqrte, NEON_FRSQRTE, NEON_FRSQRTE_SCALAR),
-    (frecpe, NEON_FRECPE, NEON_FRECPE_SCALAR),
+    (frsqrte, NEON_FRSQRTE, NEON_FRSQRTE_scalar),
+    (frecpe, NEON_FRECPE, NEON_FRECPE_scalar),
 );
 
 macro_rules! define_neon_fp_convert {
@@ -4699,14 +4701,14 @@ macro_rules! define_neon_fp_convert {
 }
 
 define_neon_fp_convert!(
-    (fcvtns, NEON_FCVTNS_V),
-    (fcvtnu, NEON_FCVTNU_V),
-    (fcvtps, NEON_FCVTPS_V),
-    (fcvtpu, NEON_FCVTPU_V),
-    (fcvtms, NEON_FCVTMS_V),
-    (fcvtmu, NEON_FCVTMU_V),
-    (fcvtas, NEON_FCVTAS_V),
-    (fcvtau, NEON_FCVTAU_V),
+    (fcvtns, NEON_FCVTNS),
+    (fcvtnu, NEON_FCVTNU),
+    (fcvtps, NEON_FCVTPS),
+    (fcvtpu, NEON_FCVTPU),
+    (fcvtms, NEON_FCVTMS),
+    (fcvtmu, NEON_FCVTMU),
+    (fcvtas, NEON_FCVTAS),
+    (fcvtau, NEON_FCVTAU),
 );
 
 impl Assembler {
@@ -4714,13 +4716,13 @@ impl Assembler {
         let operand = operand.into();
         let vm = operand.reg();
         if operand.has_lane() {
-            self.neon_fp_by_element(vd, vn, vm, operand.index(), NEON_FMULX_BYELEMENT);
+            self.neon_fp_by_element(vd, vn, vm, operand.index(), NEON_FMULX_byelement);
             return;
         }
         let op;
         if vd.is_scalar() {
             debug_assert!(vd.is_1s() || vd.is_1d());
-            op = NEON_FMULX_SCALAR;
+            op = NEON_FMULX_scalar;
         } else {
             debug_assert!(vd.is_vector());
             op = NEON_FMULX;
@@ -4768,8 +4770,8 @@ macro_rules! define_neon_compare_zero {
 }
 
 define_neon_compare_zero!(
-    (cmle, NEON_CMLE_ZERO),
-    (cmlt, NEON_CMLT_ZERO),
+    (cmle, NEON_CMLE_zero),
+    (cmlt, NEON_CMLT_zero),
 );
 
 macro_rules! define_neon_fp_compare_zero {
@@ -4786,8 +4788,8 @@ macro_rules! define_neon_fp_compare_zero {
 }
 
 define_neon_fp_compare_zero!(
-    (fcmle, NEON_FCMLE_ZERO),
-    (fcmlt, NEON_FCMLT_ZERO),
+    (fcmle, NEON_FCMLE_zero),
+    (fcmlt, NEON_FCMLT_zero),
 );
 
 pub trait LoadStoreStructOperand {
@@ -4841,8 +4843,8 @@ macro_rules! define_load_store_struct {
 }
 
 define_load_store_struct!(
-    (ld1, NEON_LD1_1V, NEON_LD1_2V, NEON_LD1_3V, NEON_LD1_4V),
-    (st1, NEON_ST1_1V, NEON_ST1_2V, NEON_ST1_3V, NEON_ST1_4V),
+    (ld1, NEON_LD1_1v, NEON_LD1_2v, NEON_LD1_3v, NEON_LD1_4v),
+    (st1, NEON_ST1_1v, NEON_ST1_2v, NEON_ST1_3v, NEON_ST1_4v),
 );
 
 macro_rules! define_load_store_struct_fixed {
@@ -4904,10 +4906,10 @@ impl LoadStoreStructOperand for VOperand {
         _op3: Instr,
         _op4: Instr,
     ) {
-        let single = if op1 == NEON_LD1_1V {
-            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD1
+        let single = if op1 == NEON_LD1_1v {
+            NEONLoadStoreSingleStructLoad1
         } else {
-            NEON_LOAD_STORE_SINGLE_STRUCT_STORE1
+            NEONLoadStoreSingleStructStore1
         };
         asm.load_store_struct_single(
             operand.reg(),
@@ -4920,7 +4922,7 @@ impl LoadStoreStructOperand for VOperand {
 
 impl Assembler {
     pub fn are_consecutive_v(reg1: VRegister, reg2: VRegister) -> bool {
-        (reg1.code() + 1) % K_NUMBER_OF_V_REGISTERS == reg2.code()
+        (reg1.code() + 1) % kNumberOfVRegisters == reg2.code()
     }
 
     pub fn ld2_lane(&mut self, operand: VOperand, src: MemOperand) {
@@ -4928,7 +4930,7 @@ impl Assembler {
             operand.reg(),
             operand.index() as u32,
             src,
-            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD2,
+            NEONLoadStoreSingleStructLoad2,
         );
     }
 
@@ -4937,7 +4939,7 @@ impl Assembler {
             operand.reg(),
             operand.index() as u32,
             src,
-            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD3,
+            NEONLoadStoreSingleStructLoad3,
         );
     }
 
@@ -4946,7 +4948,7 @@ impl Assembler {
             operand.reg(),
             operand.index() as u32,
             src,
-            NEON_LOAD_STORE_SINGLE_STRUCT_LOAD4,
+            NEONLoadStoreSingleStructLoad4,
         );
     }
 
@@ -4955,7 +4957,7 @@ impl Assembler {
             operand.reg(),
             operand.index() as u32,
             dst,
-            NEON_LOAD_STORE_SINGLE_STRUCT_STORE2,
+            NEONLoadStoreSingleStructStore2,
         );
     }
 
@@ -4964,7 +4966,7 @@ impl Assembler {
             operand.reg(),
             operand.index() as u32,
             dst,
-            NEON_LOAD_STORE_SINGLE_STRUCT_STORE3,
+            NEONLoadStoreSingleStructStore3,
         );
     }
 
@@ -4973,7 +4975,7 @@ impl Assembler {
             operand.reg(),
             operand.index() as u32,
             dst,
-            NEON_LOAD_STORE_SINGLE_STRUCT_STORE4,
+            NEONLoadStoreSingleStructStore4,
         );
     }
 
@@ -5001,7 +5003,7 @@ impl Assembler {
         debug_assert!(vd.is_2d() && vn.is_2d() && vm.is_2d());
         debug_assert!(crate::utils::utils::is_uintn(rotate as i64, 6));
         let instruction = NEON_XAR
-            | ((rotate as Instr) << IMM_NEON_IMM6_OFFSET)
+            | ((rotate as Instr) << 10)
             | Assembler::rm(vm)
             | Assembler::rn(vn)
             | Assembler::rd(vd);
